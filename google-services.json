@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "920607361037",
+    "project_id": "ginnva-79b3a",
+    "storage_bucket": "ginnva-79b3a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:920607361037:android:3104238f93bcd1e3e12d44",
+        "android_client_info": {
+          "package_name": "id.ginnva.shield"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCJiTaAwsMZ-cVi0_mjOvGGsE6h-HK8m58"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
