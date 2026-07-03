@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Ginnva Shield Indonesia",
+    "name": "Ginnva House",
     "slug": "ginnva-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,6 +8,8 @@
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "ios": {
@@ -17,6 +19,7 @@
     "android": {
       "package": "id.ginnva.shield",
       "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
       "permissions": [
@@ -39,7 +42,7 @@
         "expo-notifications",
         {
           "icon": "./assets/notification-icon.png",
-          "color": "#C8A96E",
+          "color": "#ed1651",
           "defaultChannel": "default"
         }
       ]
@@ -50,6 +53,7 @@
         "projectId": "1ce0b9a5-5ece-4fdb-833b-e30d224b6e36"
       }
     },
-    "owner": "afedryandi"
+    "owner": "afedryandi",
+    "icon": "./assets/icon.png"
   }
 }

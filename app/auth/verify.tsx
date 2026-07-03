@@ -7,8 +7,9 @@ import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Button } from '@/components/ui/Button';
 import { colors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
-import { useAuth } from '@/lib/auth-context';
 import { getCurrentPushToken, linkTokenToCustomer } from '@/lib/notifications';
+import { hapticSuccess, hapticError } from '@/lib/haptics';
+import { useAuth } from '@/lib/auth-context';
 
 interface VerifyOtpResponse {
   message: string;
@@ -45,13 +46,21 @@ export default function VerifyOtpScreen() {
       body: JSON.stringify({ email, code: code.trim() }),
     })
       .then(async (res) => {
+        hapticSuccess();
         await login(res.token, res.data);
+
+        // Link push token yang sudah terdaftar sebagai guest ke customer
+        // yang baru saja login, supaya notifikasi targeted bisa dikirim
+        // ke perangkat ini. Fire-and-forget — tidak perlu await, gagal
+        // pun tidak mengganggu flow login.
         getCurrentPushToken().then((pushToken) => {
           if (pushToken) linkTokenToCustomer(pushToken);
         });
+
         router.replace('/(tabs)/account' as never);
       })
       .catch((err) => {
+        hapticError();
         setError(
           err instanceof ApiError
             ? err.message

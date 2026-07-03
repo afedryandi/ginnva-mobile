@@ -11,7 +11,7 @@ import {
   PanResponder,
   Share,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
@@ -19,6 +19,8 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { colors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
+import { useFadeIn } from '@/lib/useFadeIn';
+import { hapticLight, hapticMedium, hapticSuccess, hapticError } from '@/lib/haptics';
 
 interface VehicleOption {
   id: number;
@@ -51,6 +53,7 @@ const TOTAL_STEPS = STEP_TITLES.length;
 const SWIPE_THRESHOLD = 60;
 
 export default function QuotationScreen() {
+  const insets = useSafeAreaInsets();
   const [phase, setPhase] = useState<Phase>('loading');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
@@ -70,6 +73,7 @@ export default function QuotationScreen() {
   const [quotationNumber, setQuotationNumber] = useState<string | null>(null);
 
   const slideAnim = useRef(new Animated.Value(0)).current;
+  const successOpacity = useFadeIn(400);
 
   useEffect(() => {
     loadOptions();
@@ -131,6 +135,7 @@ export default function QuotationScreen() {
   const isFormValid = stepValid[0] && stepValid[1] && stepValid[2];
 
   const animateTo = (next: number) => {
+    hapticLight();
     setStepIndex(next);
     slideAnim.setValue(next > stepIndex ? 24 : -24);
     Animated.spring(slideAnim, {
@@ -191,9 +196,11 @@ export default function QuotationScreen() {
       .then((res) => {
         setQuotationNumber(res.data.quotation_number);
         setPhase('success');
+        hapticSuccess();
       })
       .catch((err) => {
-        setSubmitError(
+        hapticError();
+      setSubmitError(
           err instanceof ApiError
             ? err.message
             : 'Gagal mengirim permintaan. Periksa koneksi internet Anda dan coba lagi.'
@@ -245,7 +252,7 @@ export default function QuotationScreen() {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
         <ScreenHeader title="Ajukan Penawaran" />
-        <ScrollView contentContainerStyle={styles.centerState}>
+        <Animated.ScrollView contentContainerStyle={styles.centerState} style={{ opacity: successOpacity }}>
           <View style={styles.successIconWrap}>
             <Ionicons name="checkmark" size={36} color={colors.white} />
           </View>
@@ -260,6 +267,9 @@ export default function QuotationScreen() {
             {customerEmail.trim().length > 0
               ? `\n\nEmail konfirmasi telah dikirim ke ${customerEmail}.`
               : ''}
+          </Text>
+          <Text style={styles.successNextStep}>
+            💡 Setelah tim kami menghubungi Anda dan harga disepakati, Anda bisa melanjutkan dengan membuat booking jadwal instalasi di menu <Text style={styles.successNextStepBold}>Booking</Text>.
           </Text>
 
           <Button
@@ -279,7 +289,7 @@ export default function QuotationScreen() {
             onPress={() => router.replace('/(tabs)' as never)}
             style={styles.successButton}
           />
-        </ScrollView>
+        </Animated.ScrollView>
       </SafeAreaView>
     );
   }
@@ -522,7 +532,7 @@ export default function QuotationScreen() {
       </Animated.View>
 
       {/* ===== Navigasi bawah ===== */}
-      <View style={styles.navRow}>
+      <View style={[styles.navRow, { paddingBottom: insets.bottom > 0 ? insets.bottom : spacing.md }]}>
         {stepIndex > 0 ? (
           <Button
             label="Kembali"
@@ -725,7 +735,8 @@ const styles = StyleSheet.create({
   navRow: {
     flexDirection: 'row',
     gap: spacing.sm,
-    padding: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
     borderTopWidth: 1,
     borderTopColor: colors.line,
     backgroundColor: colors.white,
@@ -812,6 +823,21 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: spacing.sm,
     lineHeight: 19,
+  },
+  successNextStep: {
+    fontSize: fontSize.xs,
+    color: colors.muted,
+    textAlign: 'center',
+    marginTop: spacing.md,
+    lineHeight: 18,
+    backgroundColor: colors.alt,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  successNextStepBold: {
+    fontWeight: '700',
+    color: colors.ink,
   },
   successButton: {
     marginTop: spacing.sm,

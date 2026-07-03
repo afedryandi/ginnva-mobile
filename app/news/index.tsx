@@ -14,6 +14,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { colors, fontSize, spacing, radius, shadow } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
+import { SkeletonNewsCard } from '@/components/ui/Skeleton';
+import { hapticSuccess, hapticError, hapticLight } from '@/lib/haptics';
 
 interface NewsItem {
   id: number;
@@ -35,19 +37,28 @@ function formatDate(iso: string | null): string {
 export default function NewsListScreen() {
   const [news, setNews] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = () => {
-    setLoading(true);
+  const load = (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
     setError(null);
     apiFetch<{ data: NewsItem[] }>('/api/news', { skipAuth: true })
-      .then((res) => setNews(res.data))
+      .then((res) => {
+        setNews(res.data);
+        if (isRefresh) hapticSuccess();
+      })
       .catch((err) => {
         setError(
           err instanceof ApiError ? err.message : 'Gagal memuat berita.'
         );
+        if (isRefresh) hapticError();
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setLoading(false);
+        setRefreshing(false);
+      });
   };
 
   useEffect(() => {
@@ -59,14 +70,14 @@ export default function NewsListScreen() {
       <ScreenHeader title="Berita & Info" />
 
       {loading ? (
-        <View style={styles.centerState}>
-          <ActivityIndicator color={colors.accent} />
+        <View style={styles.skeletonList}>
+          {[1, 2, 3].map((i) => <SkeletonNewsCard key={i} style={styles.skeletonItem} />)}
         </View>
       ) : error ? (
         <View style={styles.centerState}>
           <Ionicons name="cloud-offline-outline" size={32} color={colors.mutedLight} />
           <Text style={styles.centerStateText}>{error}</Text>
-          <Pressable style={styles.retryButton} onPress={load}>
+          <Pressable style={styles.retryButton} onPress={() => { hapticLight(); load(); }}>
             <Text style={styles.retryText}>Coba Lagi</Text>
           </Pressable>
         </View>
@@ -82,6 +93,14 @@ export default function NewsListScreen() {
         <FlatList
           data={news}
           keyExtractor={(item) => String(item.id)}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => load(true)}
+              colors={[colors.accent]}
+              tintColor={colors.accent}
+            />
+          }
           contentContainerStyle={styles.listContent}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
           renderItem={({ item }) => (
@@ -202,5 +221,12 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     color: colors.accent,
     fontWeight: '600',
+  },
+  skeletonList: {
+    padding: 16,
+    gap: 16,
+  },
+  skeletonItem: {
+    marginBottom: 4,
   },
 });

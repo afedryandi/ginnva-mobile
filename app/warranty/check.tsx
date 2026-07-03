@@ -25,6 +25,8 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { colors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError, API_BASE_URL, getToken } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
+import { hapticLight, hapticSuccess, hapticError } from '@/lib/haptics';
 
 interface WarrantyData {
   id: number;
@@ -51,6 +53,7 @@ interface WarrantyData {
   status: string;
   review_status: string;
   remaining_days: number;
+  has_owner: boolean;
 }
 
 // Status yang dikembalikan accessor getStatusAttribute() di backend.
@@ -95,6 +98,9 @@ export default function WarrantyCheckScreen() {
 
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [claiming, setClaiming] = useState(false);
+  const [claimSuccess, setClaimSuccess] = useState(false);
+  const { isLoggedIn } = useAuth();
 
   const [permission, requestPermission] = useCameraPermissions();
   const [scanLocked, setScanLocked] = useState(false);
@@ -119,6 +125,7 @@ export default function WarrantyCheckScreen() {
       { skipAuth: true }
     )
       .then((res) => {
+        hapticSuccess();
         setResult(res.data);
         successScale.setValue(0.6);
         successOpacity.setValue(0);
@@ -137,6 +144,7 @@ export default function WarrantyCheckScreen() {
         ]).start();
       })
       .catch((err) => {
+        hapticError();
         setError(
           err instanceof ApiError
             ? err.message
@@ -151,12 +159,26 @@ export default function WarrantyCheckScreen() {
   // QR/barcode di stiker pemasangan berisi teks polos warranty_code yang
   // sama dengan yang bisa diketik manual — jadi hasil scan langsung dipakai
   // sebagai query ke endpoint yang sama, tidak ada endpoint terpisah.
+  // QR di sertifikat PDF berisi URL lengkap (https://ginnva.id/warranty?code=GNV-xxx)
+  // supaya bisa dibuka di browser. Saat di-scan di app, kita extract kode-nya saja.
+  const extractWarrantyCode = (raw: string): string => {
+    try {
+      const url = new URL(raw);
+      const code = url.searchParams.get('code');
+      if (code) return code;
+    } catch {
+      // Bukan URL — langsung pakai nilai mentah (input manual / QR lama)
+    }
+    return raw.trim();
+  };
+
   const handleBarcodeScanned = (scan: BarcodeScanningResult) => {
     if (scanLocked) return;
     setScanLocked(true);
-    setCode(scan.data);
+    const extracted = extractWarrantyCode(scan.data);
+    setCode(extracted);
     setMode('manual');
-    runSearch(scan.data);
+    runSearch(extracted);
     // Re-lock dilepas saat user balik ke mode scan lagi lewat toggle,
     // supaya satu kali scan tidak memicu pencarian berulang-ulang.
     setTimeout(() => setScanLocked(false), 1500);
@@ -168,6 +190,27 @@ export default function WarrantyCheckScreen() {
       if (!res.granted) return;
     }
     setMode('scan');
+  };
+
+  const handleClaim = async () => {
+    if (!result) return;
+    setClaiming(true);
+    try {
+      await apiFetch('/api/warranty/claim', {
+        method: 'POST',
+        body: JSON.stringify({ warranty_code: result.warranty_code }),
+      });
+      hapticSuccess();
+      setClaimSuccess(true);
+      // Update local state supaya tombol hilang
+      setResult((prev) => prev ? { ...prev, has_owner: true } : prev);
+    } catch (err) {
+      setDownloadError(
+        err instanceof ApiError ? err.message : 'Gagal menghubungkan garansi. Coba lagi.'
+      );
+    } finally {
+      setClaiming(false);
+    }
   };
 
   const handleDownload = async () => {
@@ -432,6 +475,30 @@ export default function WarrantyCheckScreen() {
                     <Text style={styles.remainingText}>
                       Sisa {result.remaining_days} hari masa garansi
                     </Text>
+                  </View>
+                )}
+
+                {/* Tombol hubungkan ke akun — muncul kalau login & warranty belum ada pemilik */}
+                {isLoggedIn && !result.has_owner && !claimSuccess && (
+                  <Pressable
+                    style={[styles.claimButton, claiming && styles.downloadButtonDisabled]}
+                    onPress={handleClaim}
+                    disabled={claiming}
+                  >
+                    {claiming ? (
+                      <ActivityIndicator color={colors.white} />
+                    ) : (
+                      <>
+                        <Ionicons name="link-outline" size={18} color={colors.white} />
+                        <Text style={styles.downloadButtonText}>Hubungkan ke Akun Saya</Text>
+                      </>
+                    )}
+                  </Pressable>
+                )}
+                {claimSuccess && (
+                  <View style={styles.claimSuccessBox}>
+                    <Ionicons name="checkmark-circle" size={16} color={colors.success} />
+                    <Text style={styles.claimSuccessText}>Garansi berhasil dihubungkan ke akun Anda!</Text>
                   </View>
                 )}
 
@@ -709,6 +776,31 @@ const styles = StyleSheet.create({
     color: colors.danger,
     textAlign: 'center',
     marginTop: spacing.sm,
+  },
+  claimButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.ink,
+    borderRadius: radius.pill,
+    height: 46,
+    marginTop: spacing.sm,
+  },
+  claimSuccessBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: '#e7f8ef',
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  claimSuccessText: {
+    flex: 1,
+    fontSize: fontSize.sm,
+    color: colors.success,
+    fontWeight: '600',
   },
   techSection: {
     backgroundColor: colors.alt,

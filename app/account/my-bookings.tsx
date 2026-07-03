@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
+import { View, Text, FlatList, StyleSheet, Pressable, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Card } from '@/components/ui/Card';
 import { colors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
+import { SkeletonCard } from '@/components/ui/Skeleton';
+import { hapticSuccess, hapticError, hapticLight } from '@/lib/haptics';
 
 interface MyBooking {
   id: number;
@@ -48,19 +50,28 @@ function formatDate(dateStr: string) {
 export default function MyBookingsScreen() {
   const [bookings, setBookings] = useState<MyBooking[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = () => {
-    setLoading(true);
+  const load = (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
     setError(null);
     apiFetch<{ data: MyBooking[] }>('/api/customer/bookings')
-      .then((res) => setBookings(res.data))
+      .then((res) => {
+        setBookings(res.data);
+        if (isRefresh) hapticSuccess();
+      })
       .catch((err) => {
         setError(
           err instanceof ApiError ? err.message : 'Gagal memuat data booking Anda.'
         );
+        if (isRefresh) hapticError();
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setLoading(false);
+        setRefreshing(false);
+      });
   };
 
   useEffect(() => {
@@ -72,14 +83,14 @@ export default function MyBookingsScreen() {
       <ScreenHeader title="Booking Saya" />
 
       {loading ? (
-        <View style={styles.centerState}>
-          <ActivityIndicator color={colors.accent} />
+        <View style={styles.skeletonList}>
+          {[1, 2, 3].map((i) => <SkeletonCard key={i} style={styles.skeletonItem} />)}
         </View>
       ) : error ? (
         <View style={styles.centerState}>
           <Ionicons name="cloud-offline-outline" size={32} color={colors.mutedLight} />
           <Text style={styles.centerStateText}>{error}</Text>
-          <Pressable style={styles.retryButton} onPress={load}>
+          <Pressable style={styles.retryButton} onPress={() => { hapticLight(); load(); }}>
             <Text style={styles.retryText}>Coba Lagi</Text>
           </Pressable>
         </View>
@@ -95,6 +106,14 @@ export default function MyBookingsScreen() {
           data={bookings}
           keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => load(true)}
+              colors={[colors.accent]}
+              tintColor={colors.accent}
+            />
+          }
           renderItem={({ item }) => {
             const meta = STATUS_META[item.status] ?? STATUS_META.pending;
             return (
@@ -233,5 +252,12 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     color: colors.ink,
     lineHeight: 20,
+  },
+  skeletonList: {
+    padding: 16,
+    gap: 12,
+  },
+  skeletonItem: {
+    marginBottom: 4,
   },
 });

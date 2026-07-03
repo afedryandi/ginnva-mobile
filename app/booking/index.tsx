@@ -2,15 +2,14 @@ import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
   Pressable,
   ScrollView,
   StyleSheet,
   ActivityIndicator,
-  Alert,
-  Platform,
+  TextInput,
+  Animated,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
@@ -18,6 +17,8 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { colors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
+import { useFadeIn } from '@/lib/useFadeIn';
+import { hapticLight, hapticSuccess, hapticError } from '@/lib/haptics';
 import { useAuth } from '@/lib/auth-context';
 
 interface StoreOption {
@@ -26,8 +27,6 @@ interface StoreOption {
   city: string;
 }
 
-// Slot waktu yang ditawarkan — teks bebas supaya toko fleksibel
-// mengatur jadwal tanpa perlu konfigurasi backend tambahan.
 const TIME_SLOTS = [
   '08:00 - 10:00',
   '10:00 - 12:00',
@@ -35,95 +34,96 @@ const TIME_SLOTS = [
   '15:00 - 17:00',
 ];
 
+// Color Change Film sengaja dihapus — belum dijual di Indonesia
 const SERVICE_TYPES = [
   'Kaca Film (Window Film)',
   'Pelindung Cat (PPF)',
-  'Color Change Film',
   'Konsultasi Produk',
   'Klaim Garansi',
   'Lainnya',
 ];
 
-function getTodayString() {
-  return new Date().toISOString().split('T')[0];
+// Generate 14 hari ke depan sebagai pilihan tanggal
+function generateDateOptions(): { label: string; value: string }[] {
+  const options = [];
+  const today = new Date();
+  for (let i = 1; i <= 14; i++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
+    const value = d.toISOString().split('T')[0];
+    const label = d.toLocaleDateString('id-ID', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+    });
+    options.push({ label, value });
+  }
+  return options;
 }
 
-function formatDisplayDate(dateStr: string) {
-  if (!dateStr) return '';
-  try {
-    return new Date(dateStr + 'T00:00:00').toLocaleDateString('id-ID', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-    });
-  } catch {
-    return dateStr;
-  }
-}
+const DATE_OPTIONS = generateDateOptions();
 
 type Phase = 'form' | 'submitting' | 'success';
+type Step = 0 | 1 | 2 | 3;
+
+const STEP_TITLES = ['Toko', 'Layanan', 'Jadwal', 'Ringkasan'];
+const TOTAL_STEPS = STEP_TITLES.length;
 
 export default function BookingScreen() {
   const params = useLocalSearchParams<{ store_id?: string; store_name?: string }>();
   const { isLoggedIn } = useAuth();
+  const insets = useSafeAreaInsets();
+  const successOpacity = useFadeIn(400);
 
   const [phase, setPhase] = useState<Phase>('form');
+  const [stepIndex, setStepIndex] = useState<Step>(0);
   const [stores, setStores] = useState<StoreOption[]>([]);
   const [storesLoading, setStoresLoading] = useState(true);
 
-  // Form state
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(
     params.store_id ? Number(params.store_id) : null
   );
   const [selectedStoreName, setSelectedStoreName] = useState<string>(
     params.store_name ?? ''
   );
-  const [showStorePicker, setShowStorePicker] = useState(false);
-
   const [serviceType, setServiceType] = useState('');
-  const [showServicePicker, setShowServicePicker] = useState(false);
-
   const [preferredDate, setPreferredDate] = useState('');
   const [preferredTime, setPreferredTime] = useState('');
-  const [showTimePicker, setShowTimePicker] = useState(false);
   const [notes, setNotes] = useState('');
-
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
-
   const [bookingNumber, setBookingNumber] = useState('');
 
   useEffect(() => {
     if (!isLoggedIn) {
-      // Redirect ke login dengan return path
       router.replace('/auth/login' as never);
       return;
     }
     apiFetch<{ data: StoreOption[] }>('/api/stores', { skipAuth: true })
       .then((res) => setStores(res.data))
-      .catch(() => {}) // biarkan kosong, user bisa ketik manual
+      .catch(() => {})
       .finally(() => setStoresLoading(false));
   }, [isLoggedIn]);
 
-  const validate = () => {
-    const errors: Record<string, string> = {};
-    if (!selectedStoreId) errors.store = 'Pilih toko tujuan.';
-    if (!serviceType) errors.service_type = 'Pilih jenis layanan.';
-    if (!preferredDate) {
-      errors.preferred_date = 'Pilih tanggal kunjungan.';
-    } else if (preferredDate < getTodayString()) {
-      errors.preferred_date = 'Tanggal tidak boleh di masa lalu.';
-    }
-    setFieldErrors(errors);
-    return Object.keys(errors).length === 0;
+  const stepValid = [
+    selectedStoreId !== null,
+    serviceType.length > 0,
+    preferredDate.length > 0,
+    true,
+  ];
+
+  const goNext = () => {
+    if (!stepValid[stepIndex]) return;
+    hapticLight();
+    if (stepIndex < TOTAL_STEPS - 1) setStepIndex((s) => (s + 1) as Step);
+  };
+
+  const goBack = () => {
+    if (stepIndex > 0) setStepIndex((s) => (s - 1) as Step);
   };
 
   const handleSubmit = async () => {
-    if (!validate()) return;
     setPhase('submitting');
     setSubmitError(null);
-
     try {
       const res = await apiFetch<{ success: boolean; data: { booking_number: string } }>(
         '/api/customer/bookings',
@@ -140,458 +140,370 @@ export default function BookingScreen() {
       );
       setBookingNumber(res.data.booking_number);
       setPhase('success');
+      hapticSuccess();
     } catch (err) {
       setPhase('form');
-      if (err instanceof ApiError && err.errors) {
-        const mapped: Record<string, string> = {};
-        Object.entries(err.errors).forEach(([k, v]) => {
-          mapped[k] = Array.isArray(v) ? v[0] : String(v);
-        });
-        setFieldErrors(mapped);
-      } else {
-        setSubmitError(
-          err instanceof ApiError
-            ? err.message
-            : 'Terjadi kesalahan. Periksa koneksi internet Anda.'
-        );
-      }
+      hapticError();
+      setSubmitError(
+        err instanceof ApiError
+          ? err.message
+          : 'Terjadi kesalahan. Periksa koneksi internet Anda.'
+      );
     }
   };
 
-  // ===== Success state =====
+  const selectedDateLabel = DATE_OPTIONS.find((d) => d.value === preferredDate)?.label ?? '';
+
+  // ===== Success =====
   if (phase === 'success') {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
         <ScreenHeader title="Buat Booking" />
-        <View style={styles.successState}>
+        <Animated.View style={[styles.centerState, { opacity: successOpacity }]}>
           <View style={styles.successIcon}>
-            <Ionicons name="checkmark-circle" size={56} color={colors.success} />
+            <Ionicons name="checkmark" size={36} color={colors.white} />
           </View>
           <Text style={styles.successTitle}>Booking Diterima!</Text>
-          <Text style={styles.successSub}>
+          <Text style={styles.centerStateText}>
             Nomor booking Anda:{'\n'}
             <Text style={styles.successCode}>{bookingNumber}</Text>
           </Text>
           <Text style={styles.successNote}>
-            Tim toko akan menghubungi Anda untuk konfirmasi jadwal. Pantau status booking
-            di menu <Text style={{ fontWeight: '700' }}>Booking Saya</Text>.
+            Tim toko akan menghubungi Anda untuk konfirmasi jadwal.
           </Text>
           <Button
             label="Lihat Booking Saya"
             onPress={() => router.replace('/account/my-bookings' as never)}
             style={styles.successButton}
           />
-          <Pressable onPress={() => router.back()} style={styles.backLink}>
-            <Text style={styles.backLinkText}>Kembali ke Toko</Text>
-          </Pressable>
-        </View>
+          <Button
+            label="Kembali"
+            variant="ghost"
+            onPress={() => router.back()}
+            style={styles.successButton}
+          />
+        </Animated.View>
       </SafeAreaView>
     );
   }
 
-  // ===== Form =====
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScreenHeader title="Buat Booking" />
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-      >
-        <Text style={styles.intro}>
-          Buat jadwal kunjungan ke dealer Ginnva. Tim toko akan menghubungi Anda untuk
-          konfirmasi setelah booking diterima.
-        </Text>
 
-        {/* ===== Pilih Toko ===== */}
-        <View style={styles.field}>
-          <Text style={styles.fieldLabel}>Toko Tujuan *</Text>
-          <Pressable
-            style={[styles.picker, fieldErrors.store && styles.pickerError]}
-            onPress={() => setShowStorePicker(!showStorePicker)}
-          >
-            <Text style={selectedStoreId ? styles.pickerValue : styles.pickerPlaceholder}>
-              {selectedStoreName || 'Pilih toko...'}
-            </Text>
-            <Ionicons
-              name={showStorePicker ? 'chevron-up' : 'chevron-down'}
-              size={16}
-              color={colors.mutedLight}
-            />
-          </Pressable>
-          {fieldErrors.store ? <Text style={styles.errorText}>{fieldErrors.store}</Text> : null}
-          {showStorePicker && (
-            <Card style={styles.dropdownCard}>
-              {storesLoading ? (
-                <ActivityIndicator color={colors.accent} style={{ padding: spacing.sm }} />
-              ) : stores.length === 0 ? (
-                <Text style={styles.dropdownEmpty}>Toko tidak tersedia.</Text>
+      {/* Progress */}
+      <View style={styles.progressRow}>
+        {STEP_TITLES.map((title, i) => (
+          <View key={title} style={styles.progressItem}>
+            <View style={[
+              styles.progressDot,
+              i === stepIndex && styles.progressDotActive,
+              i < stepIndex && styles.progressDotDone,
+            ]}>
+              {i < stepIndex ? (
+                <Ionicons name="checkmark" size={12} color={colors.white} />
               ) : (
-                stores.map((s) => (
+                <Text style={[styles.progressDotText, i === stepIndex && styles.progressDotTextActive]}>
+                  {i + 1}
+                </Text>
+              )}
+            </View>
+            <Text style={[styles.progressLabel, i === stepIndex && styles.progressLabelActive]} numberOfLines={1}>
+              {title}
+            </Text>
+            {i < STEP_TITLES.length - 1 && (
+              <View style={[styles.progressLine, i < stepIndex && styles.progressLineDone]} />
+            )}
+          </View>
+        ))}
+      </View>
+
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+
+        {/* Step 0 — Pilih Toko */}
+        {stepIndex === 0 && (
+          <View>
+            <Text style={styles.introContext}>
+              Sudah sepakat harga dengan tim kami? Buat jadwal instalasi di sini.
+            </Text>
+            <Text style={styles.intro}>Pilih dealer Ginnva yang ingin Anda kunjungi.</Text>
+            <Text style={styles.sectionLabel}>Toko Tujuan</Text>
+            {storesLoading ? (
+              <ActivityIndicator color={colors.accent} style={{ marginTop: spacing.md }} />
+            ) : stores.length === 0 ? (
+              <Text style={styles.emptyText}>Tidak ada toko tersedia.</Text>
+            ) : (
+              <View style={styles.chipWrap}>
+                {stores.map((s) => (
                   <Pressable
                     key={s.id}
-                    style={[
-                      styles.dropdownItem,
-                      selectedStoreId === s.id && styles.dropdownItemActive,
-                    ]}
+                    style={[styles.storeChip, selectedStoreId === s.id && styles.storeChipActive]}
                     onPress={() => {
                       setSelectedStoreId(s.id);
                       setSelectedStoreName(`${s.name} — ${s.city}`);
-                      setShowStorePicker(false);
-                      setFieldErrors((e) => ({ ...e, store: '' }));
                     }}
                   >
-                    <Text
-                      style={[
-                        styles.dropdownItemText,
-                        selectedStoreId === s.id && styles.dropdownItemTextActive,
-                      ]}
-                    >
+                    <Text style={[styles.storeChipName, selectedStoreId === s.id && styles.storeChipNameActive]}>
                       {s.name}
                     </Text>
-                    <Text style={styles.dropdownItemSub}>{s.city}</Text>
+                    <Text style={[styles.storeChipCity, selectedStoreId === s.id && styles.storeChipCityActive]}>
+                      {s.city}
+                    </Text>
                   </Pressable>
-                ))
-              )}
-            </Card>
-          )}
-        </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
 
-        {/* ===== Jenis Layanan ===== */}
-        <View style={styles.field}>
-          <Text style={styles.fieldLabel}>Jenis Layanan *</Text>
-          <Pressable
-            style={[styles.picker, fieldErrors.service_type && styles.pickerError]}
-            onPress={() => setShowServicePicker(!showServicePicker)}
-          >
-            <Text style={serviceType ? styles.pickerValue : styles.pickerPlaceholder}>
-              {serviceType || 'Pilih layanan...'}
-            </Text>
-            <Ionicons
-              name={showServicePicker ? 'chevron-up' : 'chevron-down'}
-              size={16}
-              color={colors.mutedLight}
-            />
-          </Pressable>
-          {fieldErrors.service_type ? (
-            <Text style={styles.errorText}>{fieldErrors.service_type}</Text>
-          ) : null}
-          {showServicePicker && (
-            <Card style={styles.dropdownCard}>
+        {/* Step 1 — Pilih Layanan */}
+        {stepIndex === 1 && (
+          <View>
+            <Text style={styles.sectionLabel}>Jenis Layanan</Text>
+            <View style={styles.chipWrap}>
               {SERVICE_TYPES.map((s) => (
                 <Pressable
                   key={s}
-                  style={[
-                    styles.dropdownItem,
-                    serviceType === s && styles.dropdownItemActive,
-                  ]}
-                  onPress={() => {
-                    setServiceType(s);
-                    setShowServicePicker(false);
-                    setFieldErrors((e) => ({ ...e, service_type: '' }));
-                  }}
+                  style={[styles.chip, serviceType === s && styles.chipActive]}
+                  onPress={() => setServiceType(s)}
                 >
-                  <Text
-                    style={[
-                      styles.dropdownItemText,
-                      serviceType === s && styles.dropdownItemTextActive,
-                    ]}
-                  >
+                  <Text style={[styles.chipText, serviceType === s && styles.chipTextActive]}>
                     {s}
                   </Text>
                 </Pressable>
               ))}
-            </Card>
-          )}
-        </View>
+            </View>
+          </View>
+        )}
 
-        {/* ===== Tanggal ===== */}
-        <View style={styles.field}>
-          <Text style={styles.fieldLabel}>Tanggal Kunjungan *</Text>
-          <TextInput
-            style={[styles.input, fieldErrors.preferred_date && styles.inputError]}
-            placeholder="YYYY-MM-DD (mis. 2026-07-18)"
-            placeholderTextColor={colors.mutedLight}
-            value={preferredDate}
-            onChangeText={(v) => {
-              setPreferredDate(v);
-              setFieldErrors((e) => ({ ...e, preferred_date: '' }));
-            }}
-            keyboardType="numeric"
-            maxLength={10}
-          />
-          {preferredDate.length === 10 && !fieldErrors.preferred_date ? (
-            <Text style={styles.datePreview}>{formatDisplayDate(preferredDate)}</Text>
-          ) : null}
-          {fieldErrors.preferred_date ? (
-            <Text style={styles.errorText}>{fieldErrors.preferred_date}</Text>
-          ) : null}
-        </View>
+        {/* Step 2 — Pilih Jadwal */}
+        {stepIndex === 2 && (
+          <View>
+            <Text style={styles.sectionLabel}>Tanggal Kunjungan</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dateScroll}>
+              <View style={styles.dateRow}>
+                {DATE_OPTIONS.map((d) => (
+                  <Pressable
+                    key={d.value}
+                    style={[styles.dateChip, preferredDate === d.value && styles.dateChipActive]}
+                    onPress={() => setPreferredDate(d.value)}
+                  >
+                    <Text style={[styles.dateChipText, preferredDate === d.value && styles.dateChipTextActive]}>
+                      {d.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </ScrollView>
 
-        {/* ===== Jam Preferensi ===== */}
-        <View style={styles.field}>
-          <Text style={styles.fieldLabel}>Jam Preferensi <Text style={styles.optional}>(opsional)</Text></Text>
-          <Pressable
-            style={styles.picker}
-            onPress={() => setShowTimePicker(!showTimePicker)}
-          >
-            <Text style={preferredTime ? styles.pickerValue : styles.pickerPlaceholder}>
-              {preferredTime || 'Pilih slot waktu...'}
+            <Text style={[styles.sectionLabel, { marginTop: spacing.md }]}>
+              Jam Preferensi <Text style={styles.optional}>(opsional)</Text>
             </Text>
-            <Ionicons
-              name={showTimePicker ? 'chevron-up' : 'chevron-down'}
-              size={16}
-              color={colors.mutedLight}
-            />
-          </Pressable>
-          {showTimePicker && (
-            <Card style={styles.dropdownCard}>
-              {preferredTime ? (
-                <Pressable
-                  style={styles.dropdownItem}
-                  onPress={() => {
-                    setPreferredTime('');
-                    setShowTimePicker(false);
-                  }}
-                >
-                  <Text style={[styles.dropdownItemText, { color: colors.muted }]}>
-                    — Tidak ada preferensi
-                  </Text>
-                </Pressable>
-              ) : null}
+            <View style={styles.chipWrap}>
               {TIME_SLOTS.map((slot) => (
                 <Pressable
                   key={slot}
-                  style={[
-                    styles.dropdownItem,
-                    preferredTime === slot && styles.dropdownItemActive,
-                  ]}
-                  onPress={() => {
-                    setPreferredTime(slot);
-                    setShowTimePicker(false);
-                  }}
+                  style={[styles.chip, preferredTime === slot && styles.chipActive]}
+                  onPress={() => setPreferredTime(preferredTime === slot ? '' : slot)}
                 >
-                  <Text
-                    style={[
-                      styles.dropdownItemText,
-                      preferredTime === slot && styles.dropdownItemTextActive,
-                    ]}
-                  >
+                  <Text style={[styles.chipText, preferredTime === slot && styles.chipTextActive]}>
                     {slot}
                   </Text>
                 </Pressable>
               ))}
-            </Card>
-          )}
-        </View>
-
-        {/* ===== Catatan ===== */}
-        <View style={styles.field}>
-          <Text style={styles.fieldLabel}>
-            Catatan <Text style={styles.optional}>(opsional)</Text>
-          </Text>
-          <TextInput
-            style={[styles.input, styles.textArea]}
-            placeholder="mis. tipe mobil, warna, atau permintaan khusus..."
-            placeholderTextColor={colors.mutedLight}
-            value={notes}
-            onChangeText={setNotes}
-            multiline
-            numberOfLines={3}
-            textAlignVertical="top"
-          />
-        </View>
-
-        {submitError ? (
-          <View style={styles.errorBanner}>
-            <Ionicons name="alert-circle" size={16} color={colors.danger} />
-            <Text style={styles.errorBannerText}>{submitError}</Text>
+            </View>
           </View>
-        ) : null}
+        )}
 
-        <Button
-          label={phase === 'submitting' ? 'Mengirim...' : 'Kirim Booking'}
-          onPress={handleSubmit}
-          loading={phase === 'submitting'}
-          style={styles.submitButton}
-        />
+        {/* Step 3 — Ringkasan + Catatan */}
+        {stepIndex === 3 && (
+          <View>
+            <Text style={styles.sectionLabel}>Catatan <Text style={styles.optional}>(opsional)</Text></Text>
+            <Card style={styles.formCard}>
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                placeholder="mis. tipe mobil, warna, atau permintaan khusus..."
+                placeholderTextColor={colors.mutedLight}
+                value={notes}
+                onChangeText={setNotes}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+              />
+            </Card>
+
+            <Text style={styles.sectionLabel}>Ringkasan</Text>
+            <Card style={styles.formCard}>
+              {[
+                { label: 'Toko', value: selectedStoreName },
+                { label: 'Layanan', value: serviceType },
+                { label: 'Tanggal', value: selectedDateLabel },
+                { label: 'Jam', value: preferredTime || 'Tidak ada preferensi' },
+              ].map((row) => (
+                <View key={row.label} style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>{row.label}</Text>
+                  <Text style={styles.summaryValue}>{row.value}</Text>
+                </View>
+              ))}
+            </Card>
+
+            {submitError && (
+              <View style={styles.errorBanner}>
+                <Ionicons name="alert-circle" size={16} color={colors.danger} />
+                <Text style={styles.errorBannerText}>{submitError}</Text>
+              </View>
+            )}
+          </View>
+        )}
       </ScrollView>
+
+      {/* Nav bawah */}
+      <View style={[styles.navRow, { paddingBottom: insets.bottom > 0 ? insets.bottom : spacing.md }]}>
+        {stepIndex > 0 ? (
+          <Button label="Kembali" variant="outline" onPress={goBack} style={styles.navButton} />
+        ) : (
+          <View style={styles.navButton} />
+        )}
+        {stepIndex < TOTAL_STEPS - 1 ? (
+          <Button
+            label="Lanjut"
+            onPress={goNext}
+            disabled={!stepValid[stepIndex]}
+            style={styles.navButton}
+          />
+        ) : (
+          <Button
+            label="Kirim Booking"
+            onPress={handleSubmit}
+            loading={phase === 'submitting'}
+            style={styles.navButton}
+          />
+        )}
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.white,
+  container: { flex: 1, backgroundColor: colors.white },
+  scrollContent: { padding: spacing.md, paddingBottom: spacing.xxl },
+  centerState: {
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    gap: spacing.md, padding: spacing.xl,
   },
-  scrollContent: {
-    padding: spacing.md,
-    paddingBottom: spacing.xxl,
-    gap: spacing.xs,
-  },
-  intro: {
+  centerStateText: { fontSize: fontSize.sm, color: colors.muted, textAlign: 'center' },
+  introContext: {
     fontSize: fontSize.sm,
-    color: colors.muted,
-    lineHeight: 20,
-    marginBottom: spacing.md,
-  },
-  field: {
-    marginBottom: spacing.md,
-  },
-  fieldLabel: {
-    fontSize: fontSize.sm,
+    color: colors.accent,
     fontWeight: '600',
-    color: colors.ink,
-    marginBottom: spacing.xs,
-  },
-  optional: {
-    fontWeight: '400',
-    color: colors.mutedLight,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.line,
+    lineHeight: 20,
+    marginBottom: spacing.sm,
+    backgroundColor: '#fce8ed',
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    fontSize: fontSize.sm,
-    color: colors.ink,
   },
-  inputError: {
-    borderColor: colors.danger,
+  intro: { fontSize: fontSize.sm, color: colors.muted, lineHeight: 20, marginBottom: spacing.md },
+  sectionLabel: { fontSize: fontSize.base, fontWeight: '700', color: colors.ink, marginBottom: spacing.sm },
+  optional: { fontWeight: '400', color: colors.mutedLight, fontSize: fontSize.sm },
+  emptyText: { fontSize: fontSize.sm, color: colors.mutedLight, textAlign: 'center', marginTop: spacing.lg },
+
+  // Progress
+  progressRow: {
+    flexDirection: 'row', alignItems: 'flex-start',
+    paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.md,
   },
-  textArea: {
-    minHeight: 80,
-    paddingTop: spacing.sm,
+  progressItem: { flex: 1, alignItems: 'center', position: 'relative' },
+  progressDot: {
+    width: 24, height: 24, borderRadius: 12,
+    backgroundColor: colors.alt, alignItems: 'center', justifyContent: 'center',
   },
-  picker: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    height: 48,
+  progressDotActive: { backgroundColor: colors.accent },
+  progressDotDone: { backgroundColor: colors.success },
+  progressDotText: { fontSize: fontSize.xs, fontWeight: '700', color: colors.mutedLight },
+  progressDotTextActive: { color: colors.white },
+  progressLabel: { fontSize: 10, color: colors.mutedLight, marginTop: spacing.xs },
+  progressLabelActive: { color: colors.ink, fontWeight: '700' },
+  progressLine: {
+    position: 'absolute', top: 11, left: '60%', right: '-40%',
+    height: 2, backgroundColor: colors.line,
   },
-  pickerError: {
-    borderColor: colors.danger,
+  progressLineDone: { backgroundColor: colors.success },
+
+  // Store chips
+  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
+  storeChip: {
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    backgroundColor: colors.alt, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.line,
+    minWidth: '45%',
   },
-  pickerValue: {
-    fontSize: fontSize.sm,
-    color: colors.ink,
-    flex: 1,
+  storeChipActive: { backgroundColor: '#fce8ed', borderColor: colors.accent },
+  storeChipName: { fontSize: fontSize.sm, fontWeight: '700', color: colors.ink },
+  storeChipNameActive: { color: colors.accent },
+  storeChipCity: { fontSize: fontSize.xs, color: colors.muted, marginTop: 2 },
+  storeChipCityActive: { color: colors.accent },
+
+  // Service/time chips
+  chip: {
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    backgroundColor: colors.alt, borderRadius: radius.pill,
   },
-  pickerPlaceholder: {
-    fontSize: fontSize.sm,
-    color: colors.mutedLight,
-    flex: 1,
+  chipActive: { backgroundColor: colors.accent },
+  chipText: { fontSize: fontSize.sm, color: colors.ink, fontWeight: '600' },
+  chipTextActive: { color: colors.white },
+
+  // Date chips
+  dateScroll: { marginBottom: spacing.sm },
+  dateRow: { flexDirection: 'row', gap: spacing.sm, paddingBottom: spacing.xs },
+  dateChip: {
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    backgroundColor: colors.alt, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.line, alignItems: 'center',
+    minWidth: 80,
   },
-  dropdownCard: {
-    marginTop: spacing.xs,
-    padding: 0,
-    overflow: 'hidden',
+  dateChipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+  dateChipText: { fontSize: fontSize.xs, fontWeight: '600', color: colors.ink },
+  dateChipTextActive: { color: colors.white },
+
+  // Form
+  formCard: { marginBottom: spacing.md },
+  input: {
+    borderWidth: 1, borderColor: colors.line, borderRadius: radius.md,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    fontSize: fontSize.sm, color: colors.ink,
   },
-  dropdownItem: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.line,
+  textArea: { minHeight: 80, paddingTop: spacing.sm },
+  summaryRow: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    gap: spacing.sm, paddingVertical: spacing.xs,
   },
-  dropdownItemActive: {
-    backgroundColor: '#fce8ed',
-  },
-  dropdownItemText: {
-    fontSize: fontSize.sm,
-    color: colors.ink,
-  },
-  dropdownItemTextActive: {
-    color: colors.accent,
-    fontWeight: '700',
-  },
-  dropdownItemSub: {
-    fontSize: fontSize.xs,
-    color: colors.muted,
-    marginTop: 2,
-  },
-  dropdownEmpty: {
-    padding: spacing.md,
-    fontSize: fontSize.sm,
-    color: colors.mutedLight,
-    textAlign: 'center',
-  },
-  datePreview: {
-    fontSize: fontSize.xs,
-    color: colors.success,
-    marginTop: spacing.xs,
-  },
-  errorText: {
-    fontSize: fontSize.xs,
-    color: colors.danger,
-    marginTop: spacing.xs,
-  },
+  summaryLabel: { fontSize: fontSize.sm, color: colors.mutedLight },
+  summaryValue: { flex: 1, fontSize: fontSize.sm, color: colors.ink, fontWeight: '600', textAlign: 'right' },
   errorBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    backgroundColor: '#fde8e8',
-    borderRadius: radius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.sm,
+    flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
+    backgroundColor: '#fde8e8', borderRadius: radius.md,
+    padding: spacing.sm, marginBottom: spacing.sm,
   },
-  errorBannerText: {
-    flex: 1,
-    fontSize: fontSize.sm,
-    color: colors.danger,
+  errorBannerText: { flex: 1, fontSize: fontSize.sm, color: colors.danger },
+
+  // Nav
+  navRow: {
+    flexDirection: 'row', gap: spacing.sm,
+    paddingHorizontal: spacing.md, paddingTop: spacing.md,
+    borderTopWidth: 1, borderTopColor: colors.line,
+    backgroundColor: colors.white,
   },
-  submitButton: {
-    marginTop: spacing.sm,
-  },
-  // Success state
-  successState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing.xl,
-    gap: spacing.md,
-  },
+  navButton: { flex: 1 },
+
+  // Success
   successIcon: {
+    width: 64, height: 64, borderRadius: 32,
+    backgroundColor: colors.success, alignItems: 'center', justifyContent: 'center',
     marginBottom: spacing.sm,
   },
-  successTitle: {
-    fontSize: fontSize.xl,
-    fontWeight: '800',
-    color: colors.ink,
-  },
-  successSub: {
-    fontSize: fontSize.base,
-    color: colors.muted,
-    textAlign: 'center',
-    lineHeight: 26,
-  },
-  successCode: {
-    fontWeight: '800',
-    color: colors.ink,
-    fontSize: fontSize.lg,
-  },
-  successNote: {
-    fontSize: fontSize.sm,
-    color: colors.muted,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  successButton: {
-    width: '100%',
-    marginTop: spacing.sm,
-  },
-  backLink: {
-    marginTop: spacing.xs,
-    padding: spacing.sm,
-  },
-  backLinkText: {
-    fontSize: fontSize.sm,
-    color: colors.accent,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
+  successTitle: { fontSize: fontSize.xl, fontWeight: '800', color: colors.ink },
+  successCode: { fontWeight: '800', color: colors.accent, fontSize: fontSize.base },
+  successNote: { fontSize: fontSize.sm, color: colors.muted, textAlign: 'center', lineHeight: 20 },
+  successButton: { marginTop: spacing.sm, width: '100%' },
 });

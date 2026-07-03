@@ -24,7 +24,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, fontSize, radius, spacing } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
@@ -103,6 +103,7 @@ function TypingIndicator() {
 // ─── Main Screen ─────────────────────────────────────────────────────────────
 
 export default function ChatScreen() {
+  const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -204,8 +205,8 @@ export default function ChatScreen() {
 
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={0}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
       >
         {/* Message list */}
         <FlatList
@@ -215,6 +216,8 @@ export default function ChatScreen() {
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
           onContentSizeChange={scrollToBottom}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
           ListFooterComponent={loading ? <TypingIndicator /> : null}
         />
 
@@ -233,7 +236,7 @@ export default function ChatScreen() {
         )}
 
         {/* Input */}
-        <View style={styles.inputWrap}>
+        <View style={[styles.inputWrap, { paddingBottom: insets.bottom > 0 ? insets.bottom : spacing.sm }]}>
           <TextInput
             style={styles.input}
             value={input}
@@ -448,7 +451,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingTop: spacing.sm,
     backgroundColor: colors.white,
     borderTopWidth: 1,
     borderTopColor: colors.line,
