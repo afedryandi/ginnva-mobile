@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
+import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -51,7 +52,16 @@ export default function BrandScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScreenHeader title="Tentang Ginnva" />
       <ScrollView contentContainerStyle={styles.scrollContent}>
+        {/* ===== Gedung Ginnva Indonesia ===== */}
+        <Image
+          source={require('@/assets/building-indo.webp')}
+          style={styles.buildingImage}
+          contentFit="cover"
+          transition={300}
+        />
+
         {/* ===== Profil Perusahaan ===== */}
+        <View style={styles.content}>
         <Text style={styles.sectionTitle}>Profil Perusahaan</Text>
         <Text style={styles.paragraph}>
           PT. Ginnva Shield Indonesia merupakan mitra resmi dan perwakilan dari
@@ -115,6 +125,7 @@ export default function BrandScreen() {
           </View>
           <Ionicons name="chevron-forward" size={18} color={colors.white} />
         </Pressable>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -126,8 +137,15 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
   },
   scrollContent: {
-    padding: spacing.md,
     paddingBottom: spacing.xxl,
+  },
+  buildingImage: {
+    width: '100%',
+    height: 220,
+    marginBottom: spacing.md,
+  },
+  content: {
+    paddingHorizontal: spacing.md,
   },
   sectionTitle: {
     fontSize: fontSize.lg,
