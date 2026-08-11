@@ -122,11 +122,22 @@ export default function StaffBookingListScreen() {
     ]);
   };
 
+  // 3 menu inventaris dijadikan 1 tombol (bukan 3 ikon terpisah — slot
+  // header cuma 2) supaya tidak perlu ubah layout header sama sekali.
+  const handleOpenInventoryMenu = () => {
+    Alert.alert('Inventaris', 'Pilih menu yang ingin dibuka', [
+      { text: 'Barang (Scan QR)', onPress: () => router.push('/staff/inventory/scan' as never) },
+      { text: 'Aset (Scan QR)', onPress: () => router.push('/staff/assets/scan' as never) },
+      { text: 'Bahan Baku (Cari)', onPress: () => router.push('/staff/materials' as never) },
+      { text: 'Batal', style: 'cancel' },
+    ]);
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
-        <Pressable onPress={() => router.push('/staff/inventory/scan' as never)} style={styles.sideButton}>
+        <Pressable onPress={handleOpenInventoryMenu} style={styles.sideButton}>
           <Ionicons name="cube-outline" size={22} color={colors.textPrimary} />
         </Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>Booking Toko</Text>
