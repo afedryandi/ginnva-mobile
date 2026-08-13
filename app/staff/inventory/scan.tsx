@@ -11,9 +11,11 @@ import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'ex
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { useAppTheme } from '@/lib/theme-context';
 
-// Layar scan QR aset — pola kamera/scanner PERSIS sama dengan
-// app/staff/inventory/scan.tsx, cuma diarahkan ke halaman detail aset.
-export default function AssetScanScreen() {
+// Layar scan QR barang inventaris — pola kamera/scanner sama persis
+// dengan app/warranty/check.tsx (sudah teruji), bedanya hasil scan di
+// sini langsung dianggap KODE barang (bukan URL/warranty code) dan
+// diarahkan ke halaman detail barang, bukan query warranty.
+export default function InventoryScanScreen() {
   const { theme, colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
@@ -32,7 +34,7 @@ export default function AssetScanScreen() {
     if (scanLocked) return;
     setScanLocked(true);
     const code = scan.data.trim();
-    router.replace({ pathname: '/staff/assets/[code]', params: { code } } as never);
+    router.replace({ pathname: '/staff/inventory/[code]', params: { code } } as never);
   };
 
   return (
@@ -42,7 +44,7 @@ export default function AssetScanScreen() {
         <Pressable onPress={() => router.back()} style={styles.sideButton}>
           <Ionicons name="chevron-back" size={26} color="#ffffff" />
         </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>Scan Aset Tetap</Text>
+        <Text style={styles.headerTitle} numberOfLines={1}>Scan Barang</Text>
         <View style={styles.sideButton} />
       </View>
 
@@ -52,8 +54,8 @@ export default function AssetScanScreen() {
             <Ionicons name="camera-outline" size={32} color={colors.textMuted} />
             <Text style={styles.permissionText}>
               {permission && !permission.canAskAgain
-                ? 'Izin kamera ditolak permanen. Aktifkan lewat Pengaturan untuk memindai QR aset.'
-                : 'Izin kamera diperlukan untuk memindai QR aset.'}
+                ? 'Izin kamera ditolak permanen. Aktifkan lewat Pengaturan untuk memindai QR barang.'
+                : 'Izin kamera diperlukan untuk memindai QR barang.'}
             </Text>
             <Pressable
               style={styles.retryButton}
@@ -86,7 +88,7 @@ export default function AssetScanScreen() {
             <View style={styles.scanFrameContainer} pointerEvents="none">
               <View style={styles.scanFrame} />
             </View>
-            <Text style={styles.scanHint}>Arahkan kamera ke QR pada aset</Text>
+            <Text style={styles.scanHint}>Arahkan kamera ke QR pada kardus/barang</Text>
           </>
         )}
       </View>

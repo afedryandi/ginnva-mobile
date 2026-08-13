@@ -124,22 +124,40 @@ export default function StaffBookingListScreen() {
 
   // 3 menu inventaris dijadikan 1 tombol (bukan 3 ikon terpisah — slot
   // header cuma 2) supaya tidak perlu ubah layout header sama sekali.
+  // Opsi yang ditawarkan cuma yang benar-benar diakses akun ini (sama
+  // seperti filter di app/staff/inventory/index.tsx) — supaya tidak ada
+  // yang bisa di-tap tapi ujungnya ditolak 403 oleh backend.
   const handleOpenInventoryMenu = () => {
-    Alert.alert('Inventaris', 'Pilih menu yang ingin dibuka', [
-      { text: 'Barang (Scan QR)', onPress: () => router.push('/staff/inventory/scan' as never) },
-      { text: 'Aset (Scan QR)', onPress: () => router.push('/staff/assets/scan' as never) },
-      { text: 'Bahan Baku (Cari)', onPress: () => router.push('/staff/materials' as never) },
-      { text: 'Batal', style: 'cancel' },
-    ]);
+    const options: { text: string; onPress?: () => void; style?: 'cancel' | 'destructive' }[] = [];
+
+    if (staff?.has_ppf_wf_access) {
+      options.push({ text: 'Barang (Scan QR)', onPress: () => router.push('/staff/inventory/scan' as never) });
+    }
+    if (staff?.has_asset_access) {
+      options.push({ text: 'Aset Tetap (Scan QR)', onPress: () => router.push('/staff/assets/scan' as never) });
+    }
+    if (staff?.has_material_access) {
+      options.push({ text: 'Bahan Baku (Cari)', onPress: () => router.push('/staff/materials' as never) });
+    }
+    if (staff?.has_consumable_access) {
+      options.push({ text: 'Barang Habis Pakai (Cari)', onPress: () => router.push('/staff/consumables' as never) });
+    }
+    options.push({ text: 'Batal', style: 'cancel' });
+
+    Alert.alert('Inventaris', 'Pilih menu yang ingin dibuka', options);
   };
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
-        <Pressable onPress={handleOpenInventoryMenu} style={styles.sideButton}>
-          <Ionicons name="cube-outline" size={22} color={colors.textPrimary} />
-        </Pressable>
+        {staff?.has_inventory_access ? (
+          <Pressable onPress={handleOpenInventoryMenu} style={styles.sideButton}>
+            <Ionicons name="cube-outline" size={22} color={colors.textPrimary} />
+          </Pressable>
+        ) : (
+          <View style={styles.sideButton} />
+        )}
         <Text style={styles.headerTitle} numberOfLines={1}>Booking Toko</Text>
         <Pressable onPress={handleLogout} style={styles.sideButton}>
           <Ionicons name="log-out-outline" size={22} color={colors.accent} />

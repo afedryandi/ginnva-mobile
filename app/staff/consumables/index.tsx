@@ -8,7 +8,7 @@ import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
 
-interface MaterialListItem {
+interface ConsumableListItem {
   id: number;
   name: string;
   code: string | null;
@@ -18,41 +18,42 @@ interface MaterialListItem {
   reorder_point: string | null;
 }
 
-// Bahan baku TIDAK punya kode fisik per unit (beda dari Barang/Aset yang
-// bisa discan QR) — jadi dicari lewat nama di sini, bukan scan kamera.
-export default function MaterialsSearchScreen() {
+// Barang Habis Pakai (lakban, lap, cutter, dll) — sama pola dengan Bahan
+// Baku: tidak ada kode fisik per unit, jadi dicari lewat nama/kode, bukan
+// scan kamera.
+export default function ConsumablesSearchScreen() {
   const { theme, colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [search, setSearch] = useState('');
-  const [materials, setMaterials] = useState<MaterialListItem[]>([]);
+  const [items, setItems] = useState<ConsumableListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchMaterials = useCallback((query: string) => {
+  const fetchItems = useCallback((query: string) => {
     setError(null);
-    return staffApiFetch<{ data: MaterialListItem[] }>(`/api/staff/materials?search=${encodeURIComponent(query)}`)
-      .then((res) => setMaterials(res.data))
+    return staffApiFetch<{ data: ConsumableListItem[] }>(`/api/staff/consumables?search=${encodeURIComponent(query)}`)
+      .then((res) => setItems(res.data))
       .catch((err) => {
-        setError(err instanceof ApiError ? err.message : 'Gagal memuat daftar bahan baku.');
+        setError(err instanceof ApiError ? err.message : 'Gagal memuat daftar barang.');
       });
   }, []);
 
   useEffect(() => {
     setLoading(true);
-    const timeout = setTimeout(() => fetchMaterials(search).finally(() => setLoading(false)), 300);
+    const timeout = setTimeout(() => fetchItems(search).finally(() => setLoading(false)), 300);
     return () => clearTimeout(timeout);
-  }, [search, fetchMaterials]);
+  }, [search, fetchItems]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchMaterials(search);
+    await fetchItems(search);
     setRefreshing(false);
-  }, [fetchMaterials, search]);
+  }, [fetchItems, search]);
 
-  const isLowStock = (m: MaterialListItem) =>
-    m.reorder_point !== null && parseFloat(m.current_stock) <= parseFloat(m.reorder_point);
+  const isLowStock = (item: ConsumableListItem) =>
+    item.reorder_point !== null && parseFloat(item.current_stock) <= parseFloat(item.reorder_point);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -61,7 +62,7 @@ export default function MaterialsSearchScreen() {
         <Pressable onPress={() => router.back()} style={styles.sideButton}>
           <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
         </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>Bahan Baku</Text>
+        <Text style={styles.headerTitle} numberOfLines={1}>Barang Habis Pakai</Text>
         <View style={styles.sideButton} />
       </View>
 
@@ -69,7 +70,7 @@ export default function MaterialsSearchScreen() {
         <Ionicons name="search" size={18} color={colors.textMuted} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Cari nama atau kode bahan..."
+          placeholder="Cari nama atau kode barang..."
           placeholderTextColor={colors.textMuted}
           value={search}
           onChangeText={setSearch}
@@ -86,20 +87,20 @@ export default function MaterialsSearchScreen() {
           <Ionicons name="alert-circle" size={32} color={colors.danger} />
           <Text style={styles.centerStateText}>{error}</Text>
         </View>
-      ) : materials.length === 0 ? (
+      ) : items.length === 0 ? (
         <View style={styles.centerState}>
-          <Text style={styles.centerStateText}>Tidak ada bahan baku ditemukan.</Text>
+          <Text style={styles.centerStateText}>Tidak ada barang ditemukan.</Text>
         </View>
       ) : (
         <FlatList
-          data={materials}
+          data={items}
           keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.listContent}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
           renderItem={({ item }) => (
             <Pressable
               style={styles.row}
-              onPress={() => router.push({ pathname: '/staff/materials/[id]', params: { id: String(item.id) } } as never)}
+              onPress={() => router.push({ pathname: '/staff/consumables/[id]', params: { id: String(item.id) } } as never)}
             >
               <View style={{ flex: 1 }}>
                 <Text style={styles.rowName}>{item.name}</Text>

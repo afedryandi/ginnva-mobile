@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, ActivityIndicator, Alert, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,6 +9,7 @@ import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
 import { hapticSuccess, hapticError } from '@/lib/haptics';
+import { useStaffAuth } from '@/lib/staff-auth-context';
 
 type AssetStatus = 'aktif' | 'diperbaiki' | 'rusak' | 'dijual' | 'hilang';
 
@@ -53,10 +54,15 @@ export default function AssetDetailScreen() {
   const { code } = useLocalSearchParams<{ code: string }>();
   const { theme, colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { staff } = useStaffAuth();
+  // Sama seperti User::isFullAccess() di backend — cuma super_admin/direksi
+  // yang boleh pindahkan aset antar toko (lihat AssetController::update()).
+  const isFullAccess = staff?.role === 'super_admin' || staff?.role === 'direksi';
 
   const [asset, setAsset] = useState<AssetData | null>(null);
   const [stores, setStores] = useState<Store[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [editing, setEditing] = useState(false);
@@ -81,6 +87,12 @@ export default function AssetDetailScreen() {
   useEffect(() => {
     setLoading(true);
     fetchAsset().finally(() => setLoading(false));
+  }, [fetchAsset]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchAsset();
+    setRefreshing(false);
   }, [fetchAsset]);
 
   const openEdit = () => {
@@ -124,7 +136,7 @@ export default function AssetDetailScreen() {
         <Pressable onPress={() => router.back()} style={styles.sideButton}>
           <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
         </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>Detail Aset</Text>
+        <Text style={styles.headerTitle} numberOfLines={1}>Detail Aset Tetap</Text>
         <Pressable onPress={() => router.replace('/staff/assets/scan' as never)} style={styles.sideButton}>
           <Ionicons name="scan-outline" size={22} color={colors.accent} />
         </Pressable>
@@ -144,7 +156,10 @@ export default function AssetDetailScreen() {
           </Pressable>
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
+        >
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <View style={{ flex: 1 }}>
@@ -194,24 +209,28 @@ export default function AssetDetailScreen() {
                 ))}
               </View>
 
-              <Text style={styles.fieldLabel}>Lokasi (Toko)</Text>
-              <View style={styles.chipRow}>
-                <Pressable
-                  style={[styles.chip, formStoreId === null && styles.chipActive]}
-                  onPress={() => setFormStoreId(null)}
-                >
-                  <Text style={[styles.chipText, formStoreId === null && styles.chipTextActive]}>Kantor Pusat</Text>
-                </Pressable>
-                {stores.map((s) => (
-                  <Pressable
-                    key={s.id}
-                    style={[styles.chip, formStoreId === s.id && styles.chipActive]}
-                    onPress={() => setFormStoreId(s.id)}
-                  >
-                    <Text style={[styles.chipText, formStoreId === s.id && styles.chipTextActive]}>{s.name}</Text>
-                  </Pressable>
-                ))}
-              </View>
+              {isFullAccess && (
+                <>
+                  <Text style={styles.fieldLabel}>Lokasi (Toko)</Text>
+                  <View style={styles.chipRow}>
+                    <Pressable
+                      style={[styles.chip, formStoreId === null && styles.chipActive]}
+                      onPress={() => setFormStoreId(null)}
+                    >
+                      <Text style={[styles.chipText, formStoreId === null && styles.chipTextActive]}>Kantor Pusat</Text>
+                    </Pressable>
+                    {stores.map((s) => (
+                      <Pressable
+                        key={s.id}
+                        style={[styles.chip, formStoreId === s.id && styles.chipActive]}
+                        onPress={() => setFormStoreId(s.id)}
+                      >
+                        <Text style={[styles.chipText, formStoreId === s.id && styles.chipTextActive]}>{s.name}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
+              )}
 
               <Text style={styles.fieldLabel}>Catatan (opsional)</Text>
               <TextInput

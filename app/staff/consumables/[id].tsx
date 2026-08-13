@@ -19,7 +19,7 @@ interface Movement {
   created_at: string;
 }
 
-interface MaterialData {
+interface ConsumableData {
   id: number;
   name: string;
   code: string | null;
@@ -48,12 +48,12 @@ function movementLabel(type: Movement['type']): string {
   return 'Penyesuaian';
 }
 
-export default function MaterialDetailScreen() {
+export default function ConsumableDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { theme, colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  const [material, setMaterial] = useState<MaterialData | null>(null);
+  const [item, setItem] = useState<ConsumableData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,25 +62,25 @@ export default function MaterialDetailScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const fetchMaterial = useCallback(() => {
+  const fetchItem = useCallback(() => {
     setError(null);
-    return staffApiFetch<{ data: MaterialData }>(`/api/staff/materials/${id}`)
-      .then((res) => setMaterial(res.data))
+    return staffApiFetch<{ data: ConsumableData }>(`/api/staff/consumables/${id}`)
+      .then((res) => setItem(res.data))
       .catch((err) => {
-        setError(err instanceof ApiError ? err.message : 'Bahan baku tidak ditemukan atau koneksi bermasalah.');
+        setError(err instanceof ApiError ? err.message : 'Barang tidak ditemukan atau koneksi bermasalah.');
       });
   }, [id]);
 
   useEffect(() => {
     setLoading(true);
-    fetchMaterial().finally(() => setLoading(false));
-  }, [fetchMaterial]);
+    fetchItem().finally(() => setLoading(false));
+  }, [fetchItem]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchMaterial();
+    await fetchItem();
     setRefreshing(false);
-  }, [fetchMaterial]);
+  }, [fetchItem]);
 
   const openForm = (type: 'in' | 'out') => {
     setForm({ type, quantity: '', note: '' });
@@ -99,13 +99,13 @@ export default function MaterialDetailScreen() {
     setSubmitting(true);
     setFormError(null);
 
-    staffApiFetch<{ message: string; data: MaterialData }>(`/api/staff/materials/${id}/movement`, {
+    staffApiFetch<{ message: string; data: ConsumableData }>(`/api/staff/consumables/${id}/movement`, {
       method: 'POST',
       body: JSON.stringify({ type: form.type, quantity, note: form.note.trim() || undefined }),
     })
       .then((res) => {
         hapticSuccess();
-        fetchMaterial();
+        fetchItem();
         setForm(null);
         Alert.alert('Berhasil', res.message);
       })
@@ -116,8 +116,8 @@ export default function MaterialDetailScreen() {
       .finally(() => setSubmitting(false));
   };
 
-  const isLowStock = material?.reorder_point !== null && material
-    ? parseFloat(material.current_stock) <= parseFloat(material.reorder_point ?? '0')
+  const isLowStock = item?.reorder_point !== null && item
+    ? parseFloat(item.current_stock) <= parseFloat(item.reorder_point ?? '0')
     : false;
 
   return (
@@ -127,19 +127,19 @@ export default function MaterialDetailScreen() {
         <Pressable onPress={() => router.back()} style={styles.sideButton}>
           <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
         </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>Detail Bahan Baku</Text>
+        <Text style={styles.headerTitle} numberOfLines={1}>Detail Barang</Text>
         <View style={styles.sideButton} />
       </View>
 
       {loading ? (
         <View style={styles.centerState}>
           <ActivityIndicator color={colors.accent} />
-          <Text style={styles.centerStateText}>Memuat data bahan baku...</Text>
+          <Text style={styles.centerStateText}>Memuat data barang...</Text>
         </View>
-      ) : error || !material ? (
+      ) : error || !item ? (
         <View style={styles.centerState}>
           <Ionicons name="alert-circle" size={32} color={colors.danger} />
-          <Text style={styles.centerStateText}>{error ?? 'Bahan baku tidak ditemukan.'}</Text>
+          <Text style={styles.centerStateText}>{error ?? 'Barang tidak ditemukan.'}</Text>
         </View>
       ) : (
         <ScrollView
@@ -149,13 +149,13 @@ export default function MaterialDetailScreen() {
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <View style={{ flex: 1 }}>
-                {material.code && <Text style={styles.codeText}>{material.code}</Text>}
-                <Text style={styles.nameText}>{material.name}</Text>
-                {material.category && <Text style={styles.categoryText}>{material.category}</Text>}
+                {item.code && <Text style={styles.codeText}>{item.code}</Text>}
+                <Text style={styles.nameText}>{item.name}</Text>
+                {item.category && <Text style={styles.categoryText}>{item.category}</Text>}
               </View>
               <View style={[styles.statusBadge, isLowStock ? styles.statusLow : styles.statusOk]}>
                 <Text style={[styles.statusText, { color: isLowStock ? colors.danger : colors.success }]}>
-                  {parseFloat(material.current_stock).toLocaleString('id-ID')} {material.unit}
+                  {parseFloat(item.current_stock).toLocaleString('id-ID')} {item.unit}
                 </Text>
               </View>
             </View>
@@ -170,10 +170,10 @@ export default function MaterialDetailScreen() {
           {form ? (
             <View style={styles.card}>
               <Text style={styles.formTitle}>
-                {form.type === 'in' ? 'Catat Bahan Masuk' : 'Catat Bahan Keluar'}
+                {form.type === 'in' ? 'Catat Barang Masuk' : 'Catat Barang Keluar'}
               </Text>
 
-              <Text style={styles.fieldLabel}>Jumlah ({material.unit})</Text>
+              <Text style={styles.fieldLabel}>Jumlah ({item.unit})</Text>
               <TextInput
                 style={styles.input}
                 placeholder="0"
@@ -187,7 +187,7 @@ export default function MaterialDetailScreen() {
               <Text style={styles.fieldLabel}>Catatan (opsional)</Text>
               <TextInput
                 style={styles.input}
-                placeholder="Mis. nomor PO, nama supplier, dipakai untuk apa"
+                placeholder="Mis. dipakai untuk booking apa, alasan keluar"
                 placeholderTextColor={colors.textMuted}
                 value={form.note}
                 onChangeText={(v) => setForm((f) => f && { ...f, note: v })}
@@ -221,10 +221,10 @@ export default function MaterialDetailScreen() {
           )}
 
           <Text style={styles.historyTitle}>Riwayat Terbaru</Text>
-          {material.movements.length === 0 ? (
-            <Text style={styles.emptyHistoryText}>Belum ada riwayat keluar/masuk untuk bahan ini.</Text>
+          {item.movements.length === 0 ? (
+            <Text style={styles.emptyHistoryText}>Belum ada riwayat keluar/masuk untuk barang ini.</Text>
           ) : (
-            material.movements.map((m) => (
+            item.movements.map((m) => (
               <View key={m.id} style={styles.historyRow}>
                 <Ionicons
                   name={m.type === 'in' ? 'arrow-down-circle' : m.type === 'out' ? 'arrow-up-circle' : 'swap-vertical'}
@@ -234,7 +234,7 @@ export default function MaterialDetailScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.historyText}>
                     {movementLabel(m.type)} {parseFloat(m.quantity) > 0 && m.type === 'adjustment' ? '+' : ''}
-                    {parseFloat(m.quantity).toLocaleString('id-ID')} {material.unit}
+                    {parseFloat(m.quantity).toLocaleString('id-ID')} {item.unit}
                     {m.user ? ` — ${m.user.name}` : ''}
                   </Text>
                   {m.note && <Text style={styles.historyNote}>{m.note}</Text>}
