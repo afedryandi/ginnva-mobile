@@ -15,7 +15,9 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "id.ginnva.shield",
-      "associatedDomains": ["applinks:api.ginnva.id"],
+      "associatedDomains": [
+        "applinks:api.ginnva.id"
+      ],
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -36,9 +38,16 @@
           "action": "VIEW",
           "autoVerify": true,
           "data": [
-            { "scheme": "https", "host": "api.ginnva.id", "pathPrefix": "/r" }
+            {
+              "scheme": "https",
+              "host": "api.ginnva.id",
+              "pathPrefix": "/r"
+            }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
@@ -68,6 +77,15 @@
           "photosPermission": "Ginnva memerlukan akses galeri untuk menyimpan foto mobil Anda ke perangkat.",
           "savePhotosPermission": "Ginnva memerlukan akses galeri untuk menyimpan foto mobil Anda ke perangkat.",
           "granularPermissions": []
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
+          }
         }
       ]
     ],
