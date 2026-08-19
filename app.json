@@ -14,7 +14,11 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "id.ginnva.shield"
+      "bundleIdentifier": "id.ginnva.shield",
+      "associatedDomains": ["applinks:api.ginnva.id"],
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "id.ginnva.shield",
@@ -24,10 +28,19 @@
       },
       "permissions": [
         "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
         "android.permission.POST_NOTIFICATIONS"
       ],
-      "googleServicesFile": "./google-services.json"
+      "googleServicesFile": "./google-services.json",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            { "scheme": "https", "host": "api.ginnva.id", "pathPrefix": "/r" }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "plugins": [
       "expo-router",
@@ -35,7 +48,9 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Ginnva memerlukan akses kamera untuk memindai kode QR/barcode garansi pada stiker pemasangan."
+          "cameraPermission": "Ginnva memerlukan akses kamera untuk memindai kode QR/barcode garansi pada stiker pemasangan.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
         }
       ],
       [
@@ -45,15 +60,24 @@
           "color": "#ed1651",
           "defaultChannel": "default"
         }
+      ],
+      "expo-video",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Ginnva memerlukan akses galeri untuk menyimpan foto mobil Anda ke perangkat.",
+          "savePhotosPermission": "Ginnva memerlukan akses galeri untuk menyimpan foto mobil Anda ke perangkat.",
+          "granularPermissions": []
+        }
       ]
     ],
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "1ce0b9a5-5ece-4fdb-833b-e30d224b6e36"
+        "projectId": "5b242ce4-4686-4ca9-8d01-5d9408ca8377"
       }
     },
-    "owner": "afedryandi",
+    "owner": "itsupportginnvas-team",
     "icon": "./assets/icon.png"
   }
 }

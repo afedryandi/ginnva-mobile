@@ -19,6 +19,14 @@ interface Movement {
   created_at: string;
 }
 
+interface Batch {
+  id: number;
+  quantity: string;
+  received_date: string;
+  expiry_date: string | null;
+  is_adjustment: boolean;
+}
+
 interface MaterialData {
   id: number;
   name: string;
@@ -28,9 +36,27 @@ interface MaterialData {
   current_stock: string;
   reorder_point: string | null;
   movements: Movement[];
+  batches: Batch[];
+  active_batches_count: number;
 }
 
-type MovementForm = { type: 'in' | 'out'; quantity: string; note: string } | null;
+type MovementForm = { type: 'in' | 'out'; quantity: string; containerCount: string; note: string; receivedDate: string; expiryDate: string } | null;
+
+// DD/MM/YYYY — sama format dengan template import Excel. Kosong = valid
+// (artinya pakai default backend: hari ini / tanpa kedaluwarsa).
+function parseDDMMYYYY(value: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+
+  const match = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return 'invalid';
+
+  const [, d, m, y] = match;
+  const date = new Date(Number(y), Number(m) - 1, Number(d));
+  const valid = date.getFullYear() === Number(y) && date.getMonth() === Number(m) - 1 && date.getDate() === Number(d);
+
+  return valid ? `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}` : 'invalid';
+}
 
 function formatDateTime(dateString: string): string {
   return new Date(dateString).toLocaleDateString('id-ID', {
@@ -40,6 +66,24 @@ function formatDateTime(dateString: string): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function formatDate(dateString: string): string {
+  return new Date(dateString).toLocaleDateString('id-ID', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+function isExpired(dateString: string): boolean {
+  return new Date(dateString) < new Date(new Date().toDateString());
+}
+
+function isNearExpiry(dateString: string): boolean {
+  const in30Days = new Date();
+  in30Days.setDate(in30Days.getDate() + 30);
+  return new Date(dateString) <= in30Days;
 }
 
 function movementLabel(type: Movement['type']): string {
@@ -62,6 +106,12 @@ export default function MaterialDetailScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const [adjustFormOpen, setAdjustFormOpen] = useState(false);
+  const [adjustQuantity, setAdjustQuantity] = useState('');
+  const [adjustNote, setAdjustNote] = useState('');
+  const [adjustError, setAdjustError] = useState<string | null>(null);
+  const [adjustSubmitting, setAdjustSubmitting] = useState(false);
+
   const fetchMaterial = useCallback(() => {
     setError(null);
     return staffApiFetch<{ data: MaterialData }>(`/api/staff/materials/${id}`)
@@ -83,7 +133,7 @@ export default function MaterialDetailScreen() {
   }, [fetchMaterial]);
 
   const openForm = (type: 'in' | 'out') => {
-    setForm({ type, quantity: '', note: '' });
+    setForm({ type, quantity: '', containerCount: '1', note: '', receivedDate: '', expiryDate: '' });
     setFormError(null);
   };
 
@@ -96,24 +146,116 @@ export default function MaterialDetailScreen() {
       return;
     }
 
-    setSubmitting(true);
-    setFormError(null);
+    const containerCount = form.type === 'in' ? parseInt(form.containerCount || '1', 10) : 1;
+    if (form.type === 'in' && (!containerCount || containerCount < 1)) {
+      setFormError('Isi Jumlah Botol/Wadah minimal 1.');
+      return;
+    }
 
-    staffApiFetch<{ message: string; data: MaterialData }>(`/api/staff/materials/${id}/movement`, {
-      method: 'POST',
-      body: JSON.stringify({ type: form.type, quantity, note: form.note.trim() || undefined }),
-    })
-      .then((res) => {
-        hapticSuccess();
-        fetchMaterial();
-        setForm(null);
-        Alert.alert('Berhasil', res.message);
+    const receivedDate = form.type === 'in' ? parseDDMMYYYY(form.receivedDate) : null;
+    const expiryDate = form.type === 'in' ? parseDDMMYYYY(form.expiryDate) : null;
+
+    if (receivedDate === 'invalid') {
+      setFormError('Format Tanggal Masuk harus DD/MM/YYYY, mis. 14/08/2026.');
+      return;
+    }
+    if (expiryDate === 'invalid') {
+      setFormError('Format Tanggal Kedaluwarsa harus DD/MM/YYYY, mis. 14/08/2026.');
+      return;
+    }
+
+    const submit = () => {
+      setSubmitting(true);
+      setFormError(null);
+
+      staffApiFetch<{ message: string; data: MaterialData }>(`/api/staff/materials/${id}/movement`, {
+        method: 'POST',
+        body: JSON.stringify({
+          type: form.type,
+          quantity,
+          container_count: form.type === 'in' ? containerCount : undefined,
+          note: form.note.trim() || undefined,
+          received_date: receivedDate ?? undefined,
+          expiry_date: expiryDate ?? undefined,
+        }),
       })
-      .catch((err) => {
-        hapticError();
-        setFormError(err instanceof ApiError ? err.message : 'Gagal mencatat transaksi. Periksa koneksi internet Anda.');
+        .then((res) => {
+          hapticSuccess();
+          fetchMaterial();
+          setForm(null);
+          Alert.alert('Berhasil', res.message);
+        })
+        .catch((err) => {
+          hapticError();
+          setFormError(err instanceof ApiError ? err.message : 'Gagal mencatat transaksi. Periksa koneksi internet Anda.');
+        })
+        .finally(() => setSubmitting(false));
+    };
+
+    // Catat Keluar mengurangi stok asli — minta konfirmasi dulu. Catat
+    // Masuk tidak perlu (menambah stok, gampang dikoreksi kalau salah).
+    if (form.type === 'out') {
+      Alert.alert(
+        'Catat Bahan Keluar',
+        `Catat ${quantity.toLocaleString('id-ID')} ${material?.unit ?? ''} keluar dari stok?`,
+        [
+          { text: 'Batal', style: 'cancel' },
+          { text: 'Catat', style: 'destructive', onPress: submit },
+        ]
+      );
+      return;
+    }
+
+    submit();
+  };
+
+  const handleAdjustStock = () => {
+    const actualQuantity = parseFloat(adjustQuantity.replace(',', '.'));
+    if (adjustQuantity.trim() === '' || isNaN(actualQuantity) || actualQuantity < 0) {
+      setAdjustError('Isi hasil hitung fisik yang valid (0 atau lebih).');
+      return;
+    }
+
+    const submit = () => {
+      setAdjustSubmitting(true);
+      setAdjustError(null);
+
+      staffApiFetch<{ message: string; data: MaterialData }>(`/api/staff/materials/${id}/adjust`, {
+        method: 'POST',
+        body: JSON.stringify({ actual_quantity: actualQuantity, note: adjustNote.trim() || undefined }),
       })
-      .finally(() => setSubmitting(false));
+        .then((res) => {
+          hapticSuccess();
+          setMaterial(res.data);
+          setAdjustFormOpen(false);
+          setAdjustQuantity('');
+          setAdjustNote('');
+          Alert.alert('Berhasil', res.message);
+        })
+        .catch((err) => {
+          hapticError();
+          setAdjustError(err instanceof ApiError ? err.message : 'Gagal mencatat penyesuaian. Periksa koneksi internet Anda.');
+        })
+        .finally(() => setAdjustSubmitting(false));
+    };
+
+    // Kalau hasil hitung sama dengan stok sistem, backend tidak mencatat
+    // apa-apa (no-op) — langsung submit tanpa nanya konfirmasi "timpa
+    // jadi X", karena tidak ada yang benar-benar berubah.
+    const currentStock = material ? parseFloat(material.current_stock) : 0;
+    if (Math.abs(actualQuantity - currentStock) < 0.01) {
+      submit();
+      return;
+    }
+
+    Alert.alert(
+      'Sesuaikan Stok',
+      `Stok di sistem saat ini: ${currentStock.toLocaleString('id-ID')} ${material?.unit ?? ''}. Timpa jadi ${actualQuantity.toLocaleString('id-ID')} ${material?.unit ?? ''} berdasarkan hitung fisik?`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        { text: 'Sesuaikan', style: 'destructive', onPress: submit },
+      ]
+    );
   };
 
   const isLowStock = material?.reorder_point !== null && material
@@ -153,10 +295,13 @@ export default function MaterialDetailScreen() {
                 <Text style={styles.nameText}>{material.name}</Text>
                 {material.category && <Text style={styles.categoryText}>{material.category}</Text>}
               </View>
-              <View style={[styles.statusBadge, isLowStock ? styles.statusLow : styles.statusOk]}>
-                <Text style={[styles.statusText, { color: isLowStock ? colors.danger : colors.success }]}>
-                  {parseFloat(material.current_stock).toLocaleString('id-ID')} {material.unit}
-                </Text>
+              <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                <View style={[styles.statusBadge, isLowStock ? styles.statusLow : styles.statusOk]}>
+                  <Text style={[styles.statusText, { color: isLowStock ? colors.danger : colors.success }]}>
+                    {parseFloat(material.current_stock).toLocaleString('id-ID')} {material.unit}
+                  </Text>
+                </View>
+                <Text style={styles.categoryText}>{material.active_batches_count} botol/wadah</Text>
               </View>
             </View>
             {isLowStock && (
@@ -173,7 +318,23 @@ export default function MaterialDetailScreen() {
                 {form.type === 'in' ? 'Catat Bahan Masuk' : 'Catat Bahan Keluar'}
               </Text>
 
-              <Text style={styles.fieldLabel}>Jumlah ({material.unit})</Text>
+              {form.type === 'in' && (
+                <>
+                  <Text style={styles.fieldLabel}>Jumlah Botol/Wadah</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="1"
+                    placeholderTextColor={colors.textMuted}
+                    value={form.containerCount}
+                    onChangeText={(v) => setForm((f) => f && { ...f, containerCount: v })}
+                    keyboardType="number-pad"
+                  />
+                </>
+              )}
+
+              <Text style={styles.fieldLabel}>
+                {form.type === 'in' ? `Jumlah Total, Semua Botol/Wadah (${material.unit})` : `Jumlah (${material.unit})`}
+              </Text>
               <TextInput
                 style={styles.input}
                 placeholder="0"
@@ -183,6 +344,35 @@ export default function MaterialDetailScreen() {
                 keyboardType="decimal-pad"
                 autoFocus
               />
+              {form.type === 'in' && parseInt(form.containerCount || '1', 10) > 1 && parseFloat(form.quantity.replace(',', '.')) > 0 && (
+                <Text style={styles.helperInline}>
+                  Otomatis dibagi rata: ±{(parseFloat(form.quantity.replace(',', '.')) / parseInt(form.containerCount || '1', 10)).toFixed(2)} per botol/wadah.
+                </Text>
+              )}
+
+              {form.type === 'in' && (
+                <>
+                  <Text style={styles.fieldLabel}>Tanggal Masuk Batch Ini (opsional)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="DD/MM/YYYY — kosong = hari ini"
+                    placeholderTextColor={colors.textMuted}
+                    value={form.receivedDate}
+                    onChangeText={(v) => setForm((f) => f && { ...f, receivedDate: v })}
+                    keyboardType="numbers-and-punctuation"
+                  />
+
+                  <Text style={styles.fieldLabel}>Tanggal Kedaluwarsa Batch Ini (opsional)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="DD/MM/YYYY — kosong = tidak ada"
+                    placeholderTextColor={colors.textMuted}
+                    value={form.expiryDate}
+                    onChangeText={(v) => setForm((f) => f && { ...f, expiryDate: v })}
+                    keyboardType="numbers-and-punctuation"
+                  />
+                </>
+              )}
 
               <Text style={styles.fieldLabel}>Catatan (opsional)</Text>
               <TextInput
@@ -218,6 +408,85 @@ export default function MaterialDetailScreen() {
                 <Text style={styles.actionButtonText}>Catat Keluar</Text>
               </Pressable>
             </View>
+          )}
+
+          {!form && (
+            adjustFormOpen ? (
+              <View style={styles.card}>
+                <Text style={styles.formTitle}>Sesuaikan Stok (Opname)</Text>
+                <Text style={styles.fieldLabel}>Hasil Hitung Fisik Sebenarnya ({material.unit})</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="0"
+                  placeholderTextColor={colors.textMuted}
+                  value={adjustQuantity}
+                  onChangeText={setAdjustQuantity}
+                  keyboardType="decimal-pad"
+                  autoFocus
+                />
+                <Text style={styles.helperInline}>
+                  Stok di sistem saat ini: {parseFloat(material.current_stock).toLocaleString('id-ID')} {material.unit}. Isi jumlah hasil hitung fisik yang SEBENARNYA — selisihnya dihitung otomatis.
+                </Text>
+
+                <Text style={styles.fieldLabel}>Catatan (opsional)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Mis. hasil stock opname, alasan selisih"
+                  placeholderTextColor={colors.textMuted}
+                  value={adjustNote}
+                  onChangeText={setAdjustNote}
+                />
+
+                {adjustError && <Text style={styles.errorText}>{adjustError}</Text>}
+                <View style={styles.formActions}>
+                  <Pressable
+                    style={styles.cancelButton}
+                    onPress={() => { setAdjustFormOpen(false); setAdjustQuantity(''); setAdjustNote(''); setAdjustError(null); }}
+                    disabled={adjustSubmitting}
+                  >
+                    <Text style={styles.cancelButtonText}>Batal</Text>
+                  </Pressable>
+                  <Button
+                    label={adjustSubmitting ? 'Menyimpan...' : 'Simpan'}
+                    onPress={handleAdjustStock}
+                    loading={adjustSubmitting}
+                    style={{ flex: 1 }}
+                  />
+                </View>
+              </View>
+            ) : (
+              <Button label="Sesuaikan Stok (Opname)" variant="outline" onPress={() => setAdjustFormOpen(true)} />
+            )
+          )}
+
+          {material.batches.length > 0 && (
+            <>
+              <Text style={styles.historyTitle}>Sisa Batch (FIFO)</Text>
+              {material.batches.map((b) => {
+                const expired = b.expiry_date ? isExpired(b.expiry_date) : false;
+                const nearExpiry = b.expiry_date ? isNearExpiry(b.expiry_date) : false;
+                return (
+                  <View key={b.id} style={styles.batchRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.batchQuantity}>
+                        {parseFloat(b.quantity).toLocaleString('id-ID')} {material.unit}
+                      </Text>
+                      <Text style={styles.historyDate}>
+                        Masuk {formatDate(b.received_date)}
+                        {b.is_adjustment ? ' · Dari penyesuaian stok' : ''}
+                      </Text>
+                    </View>
+                    {b.expiry_date && (
+                      <View style={[styles.expiryBadge, expired ? styles.expiryDanger : nearExpiry ? styles.expiryWarning : styles.expiryNeutral]}>
+                        <Text style={[styles.expiryText, { color: expired ? colors.danger : nearExpiry ? colors.warning : colors.textSecondary }]}>
+                          {expired ? 'Lewat' : 'Exp'} {formatDate(b.expiry_date)}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </>
           )}
 
           <Text style={styles.historyTitle}>Riwayat Terbaru</Text>
@@ -311,10 +580,27 @@ function createStyles(colors: typeof darkColors) {
       marginBottom: spacing.sm,
     },
     errorText: { fontSize: fontSize.sm, color: colors.danger, marginTop: spacing.xs },
+    helperInline: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: -spacing.xs, marginBottom: spacing.sm },
     formActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
     cancelButton: { paddingHorizontal: spacing.lg, alignItems: 'center', justifyContent: 'center' },
     cancelButtonText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
     historyTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary, marginTop: spacing.sm },
+    batchRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      backgroundColor: colors.surface,
+      borderRadius: radius.md,
+      padding: spacing.sm,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    batchQuantity: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
+    expiryBadge: { paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill },
+    expiryNeutral: { backgroundColor: colors.border },
+    expiryWarning: { backgroundColor: colors.warningBg },
+    expiryDanger: { backgroundColor: colors.dangerBg },
+    expiryText: { fontSize: fontSize.xs, fontWeight: '700' },
     emptyHistoryText: { fontSize: fontSize.sm, color: colors.textMuted },
     historyRow: {
       flexDirection: 'row',

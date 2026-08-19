@@ -1,20 +1,24 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
   FlatList,
   StyleSheet,
-  ActivityIndicator,
   Pressable,
   Modal,
   Dimensions,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import { ScreenHeader } from '@/components/ui/ScreenHeader';
-import { colors, fontSize, spacing, radius } from '@/constants/theme';
+import { router } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
+import { useAppTheme } from '@/lib/theme-context';
+import { PinchZoomImage } from '@/components/ui/PinchZoomImage';
 
 interface CaseStudyItem {
   id: number;
@@ -25,17 +29,26 @@ interface CaseStudyItem {
   film_product: { id: number; name: string } | null;
 }
 
-const FALLBACK_IMAGE = 'https://via.placeholder.com/400x300?text=Ginnva';
+// Sama gaya dengan FALLBACK_IMAGE di app/(tabs)/index.tsx (placehold.co,
+// warna brand) — bukan via.placeholder.com yang beda gaya & pernah tidak
+// stabil/down di masa lalu.
+const FALLBACK_IMAGE = 'https://placehold.co/400x300/161226/e8c078?text=Ginnva';
 const SCREEN_WIDTH = Dimensions.get('window').width;
+const SCREEN_HEIGHT = Dimensions.get('window').height;
 
 export default function CaseGalleryScreen() {
+  const { theme, colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   const [cases, setCases] = useState<CaseStudyItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<CaseStudyItem | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const load = () => {
-    setLoading(true);
+  const load = (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
     setError(null);
     apiFetch<{ data: CaseStudyItem[] }>('/api/case-studies', { skipAuth: true })
       .then((res) => setCases(res.data))
@@ -44,7 +57,10 @@ export default function CaseGalleryScreen() {
           err instanceof ApiError ? err.message : 'Gagal memuat galeri pemasangan.'
         );
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setLoading(false);
+        setRefreshing(false);
+      });
   };
 
   useEffect(() => {
@@ -53,7 +69,18 @@ export default function CaseGalleryScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScreenHeader title="Galeri Pemasangan" />
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <View style={styles.header}>
+        {router.canGoBack() ? (
+          <Pressable onPress={() => router.back()} style={styles.sideButton}>
+            <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+          </Pressable>
+        ) : (
+          <View style={styles.sideButton} />
+        )}
+        <Text style={styles.headerTitle} numberOfLines={1}>Galeri Pemasangan</Text>
+        <View style={styles.sideButton} />
+      </View>
 
       {loading ? (
         <View style={styles.centerState}>
@@ -61,15 +88,15 @@ export default function CaseGalleryScreen() {
         </View>
       ) : error ? (
         <View style={styles.centerState}>
-          <Ionicons name="cloud-offline-outline" size={32} color={colors.mutedLight} />
+          <Ionicons name="cloud-offline-outline" size={32} color={colors.textMuted} />
           <Text style={styles.centerStateText}>{error}</Text>
-          <Pressable style={styles.retryButton} onPress={load}>
+          <Pressable style={styles.retryButton} onPress={() => load()}>
             <Text style={styles.retryText}>Coba Lagi</Text>
           </Pressable>
         </View>
       ) : cases.length === 0 ? (
         <View style={styles.centerState}>
-          <Ionicons name="images-outline" size={32} color={colors.mutedLight} />
+          <Ionicons name="images-outline" size={32} color={colors.textMuted} />
           <Text style={styles.centerStateText}>Belum ada galeri pemasangan.</Text>
         </View>
       ) : (
@@ -79,6 +106,14 @@ export default function CaseGalleryScreen() {
           numColumns={2}
           columnWrapperStyle={styles.row}
           contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => load(true)}
+              colors={[colors.accent]}
+              tintColor={colors.accent}
+            />
+          }
           renderItem={({ item }) => (
             <Pressable style={styles.card} onPress={() => setSelected(item)}>
               <Image
@@ -114,15 +149,17 @@ export default function CaseGalleryScreen() {
         <Pressable style={styles.modalBackdrop} onPress={() => setSelected(null)}>
           <Pressable style={styles.modalCard} onPress={() => {}}>
             <Pressable style={styles.modalClose} onPress={() => setSelected(null)}>
-              <Ionicons name="close" size={22} color={colors.white} />
+              <Ionicons name="close" size={22} color="#ffffff" />
             </Pressable>
             {selected && (
               <>
-                <Image
-                  source={{ uri: selected.image || FALLBACK_IMAGE }}
-                  style={styles.modalImage}
-                  contentFit="cover"
-                />
+                {/* Bisa pinch-zoom & geser — galeri showcase yang tujuannya
+                    justru menonjolkan detail hasil pemasangan (kerapian,
+                    kejernihan tint, dll), sama seperti komponen yang sudah
+                    dipakai di Seri Produk (app/seri-produk/view.tsx). */}
+                <View style={styles.modalImageWrap}>
+                  <PinchZoomImage uri={selected.image ?? ''} fallback={FALLBACK_IMAGE} />
+                </View>
                 <View style={styles.modalBody}>
                   <Text style={styles.modalTitle}>{selected.title}</Text>
                   {(selected.vehicle || selected.film_product) && (
@@ -147,11 +184,24 @@ export default function CaseGalleryScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: typeof darkColors) {
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.white,
+    backgroundColor: colors.bg,
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.bg,
+  },
+  sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
   centerState: {
     flex: 1,
     alignItems: 'center',
@@ -161,7 +211,7 @@ const styles = StyleSheet.create({
   },
   centerStateText: {
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
     textAlign: 'center',
   },
   retryButton: {
@@ -172,7 +222,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
   },
   retryText: {
-    color: colors.white,
+    color: '#ffffff',
     fontSize: fontSize.sm,
     fontWeight: '600',
   },
@@ -190,17 +240,17 @@ const styles = StyleSheet.create({
     width: '100%',
     aspectRatio: 4 / 3,
     borderRadius: radius.md,
-    backgroundColor: colors.alt,
+    backgroundColor: colors.surface,
   },
   cardTitle: {
     fontSize: fontSize.sm,
     fontWeight: '700',
-    color: colors.ink,
+    color: colors.textPrimary,
     marginTop: spacing.xs,
   },
   cardSubtitle: {
     fontSize: fontSize.xs,
-    color: colors.muted,
+    color: colors.textSecondary,
     marginTop: 2,
   },
   modalBackdrop: {
@@ -212,7 +262,7 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     width: SCREEN_WIDTH - spacing.lg * 2,
-    backgroundColor: colors.white,
+    backgroundColor: colors.surface,
     borderRadius: radius.lg,
     overflow: 'hidden',
   },
@@ -228,10 +278,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  modalImage: {
+  modalImageWrap: {
     width: '100%',
-    aspectRatio: 4 / 3,
-    backgroundColor: colors.alt,
+    height: SCREEN_HEIGHT * 0.5,
+    backgroundColor: colors.bg,
   },
   modalBody: {
     padding: spacing.md,
@@ -239,11 +289,12 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: fontSize.base,
     fontWeight: '700',
-    color: colors.ink,
+    color: colors.textPrimary,
   },
   modalSubtitle: {
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
     marginTop: spacing.xs,
   },
-});
+  });
+}

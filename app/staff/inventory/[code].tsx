@@ -24,12 +24,23 @@ interface Store {
   name: string;
 }
 
+interface ScrollCodeUsageEntry {
+  id: number;
+  meters: string;
+  note: string | null;
+  user: { id: number; name: string } | null;
+  created_at: string;
+}
+
 interface ScrollCodeInfo {
   id: number;
   code: string;
   status: 'unallocated' | 'allocated' | 'used';
   film_product: { name: string } | null;
   store: Store | null;
+  total_length_meters: string | null;
+  remaining_length_meters: string | null;
+  usages: ScrollCodeUsageEntry[];
 }
 
 interface InventoryItemData {
@@ -78,6 +89,12 @@ export default function InventoryItemScreen() {
   const [formError, setFormError] = useState<string | null>(null);
   const [markingUsed, setMarkingUsed] = useState(false);
 
+  const [usageFormOpen, setUsageFormOpen] = useState(false);
+  const [usageMeters, setUsageMeters] = useState('');
+  const [usageNote, setUsageNote] = useState('');
+  const [usageError, setUsageError] = useState<string | null>(null);
+  const [recordingUsage, setRecordingUsage] = useState(false);
+
   const fetchItem = useCallback(() => {
     setError(null);
     return staffApiFetch<{ data: InventoryItemData; stores: Store[] }>(`/api/staff/inventory/${encodeURIComponent(code)}`)
@@ -117,31 +134,47 @@ export default function InventoryItemScreen() {
       return;
     }
 
-    setSubmitting(true);
-    setFormError(null);
+    const submit = () => {
+      setSubmitting(true);
+      setFormError(null);
 
-    staffApiFetch<{ message: string; data: InventoryItemData }>(
-      `/api/staff/inventory/${encodeURIComponent(code)}/movement`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          type: form.type,
-          note: form.note.trim() || undefined,
-          store_id: needsStorePicker(form.type) ? form.storeId : undefined,
-        }),
-      }
-    )
-      .then((res) => {
-        hapticSuccess();
-        setItem(res.data);
-        setForm(null);
-        Alert.alert('Berhasil', res.message);
-      })
-      .catch((err) => {
-        hapticError();
-        setFormError(err instanceof ApiError ? err.message : 'Gagal mencatat transaksi. Periksa koneksi internet Anda.');
-      })
-      .finally(() => setSubmitting(false));
+      staffApiFetch<{ message: string; data: InventoryItemData }>(
+        `/api/staff/inventory/${encodeURIComponent(code)}/movement`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            type: form.type,
+            note: form.note.trim() || undefined,
+            store_id: needsStorePicker(form.type) ? form.storeId : undefined,
+          }),
+        }
+      )
+        .then((res) => {
+          hapticSuccess();
+          setItem(res.data);
+          setForm(null);
+          Alert.alert('Berhasil', res.message);
+        })
+        .catch((err) => {
+          hapticError();
+          setFormError(err instanceof ApiError ? err.message : 'Gagal mencatat transaksi. Periksa koneksi internet Anda.');
+        })
+        .finally(() => setSubmitting(false));
+    };
+
+    if (form.type === 'out') {
+      Alert.alert(
+        'Catat Barang Keluar',
+        'Tandai barang ini sudah keluar dari gudang?',
+        [
+          { text: 'Batal', style: 'cancel' },
+          { text: 'Catat', style: 'destructive', onPress: submit },
+        ]
+      );
+      return;
+    }
+
+    submit();
   };
 
   const handleMarkUsed = () => {
@@ -173,6 +206,35 @@ export default function InventoryItemScreen() {
         },
       ]
     );
+  };
+
+  const handleRecordUsage = () => {
+    const meters = parseFloat(usageMeters.replace(',', '.'));
+    if (!meters || meters <= 0) {
+      setUsageError('Isi jumlah meter yang valid (lebih dari 0).');
+      return;
+    }
+
+    setRecordingUsage(true);
+    setUsageError(null);
+
+    staffApiFetch<{ message: string; data: InventoryItemData }>(
+      `/api/staff/inventory/${encodeURIComponent(code)}/record-usage`,
+      { method: 'POST', body: JSON.stringify({ meters, note: usageNote.trim() || undefined }) }
+    )
+      .then((res) => {
+        hapticSuccess();
+        setItem(res.data);
+        setUsageFormOpen(false);
+        setUsageMeters('');
+        setUsageNote('');
+        Alert.alert('Berhasil', res.message);
+      })
+      .catch((err) => {
+        hapticError();
+        setUsageError(err instanceof ApiError ? err.message : 'Gagal mencatat pemakaian. Periksa koneksi internet Anda.');
+      })
+      .finally(() => setRecordingUsage(false));
   };
 
   return (
@@ -225,7 +287,7 @@ export default function InventoryItemScreen() {
                     { color: item.status === 'in_stock' ? colors.success : colors.danger },
                   ]}
                 >
-                  {item.status === 'in_stock' ? 'Ada di Gudang' : 'Sudah Keluar'}
+                  {item.status === 'in_stock' ? 'Ada Stok' : 'Sudah Keluar'}
                 </Text>
               </View>
             </View>
@@ -242,12 +304,63 @@ export default function InventoryItemScreen() {
                         ? `Dialokasikan ke ${item.scroll_code.store.name}`
                         : 'Belum dialokasikan ke toko'}
                   </Text>
+                  {item.scroll_code.total_length_meters !== null && (
+                    <Text style={styles.scrollCodeMeta}>
+                      Sisa Panjang: {parseFloat(item.scroll_code.remaining_length_meters ?? '0').toLocaleString('id-ID')} / {parseFloat(item.scroll_code.total_length_meters).toLocaleString('id-ID')} m
+                    </Text>
+                  )}
                 </View>
               </View>
             )}
           </View>
 
-          {item.scroll_code?.status === 'allocated' && !form && (
+          {item.scroll_code?.total_length_meters !== null && item.scroll_code?.status !== 'used' && !form && (
+            usageFormOpen ? (
+              <View style={styles.card}>
+                <Text style={styles.formTitle}>Catat Pemakaian</Text>
+                <Text style={styles.fieldLabel}>Meter Dipakai</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="0"
+                  placeholderTextColor={colors.textMuted}
+                  value={usageMeters}
+                  onChangeText={setUsageMeters}
+                  keyboardType="decimal-pad"
+                  autoFocus
+                />
+
+                <Text style={styles.fieldLabel}>Catatan (opsional)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Mis. dipakai untuk mobil apa, no. polisi, nama customer"
+                  placeholderTextColor={colors.textMuted}
+                  value={usageNote}
+                  onChangeText={setUsageNote}
+                />
+
+                {usageError && <Text style={styles.errorText}>{usageError}</Text>}
+                <View style={styles.formActions}>
+                  <Pressable
+                    style={styles.cancelButton}
+                    onPress={() => { setUsageFormOpen(false); setUsageMeters(''); setUsageNote(''); setUsageError(null); }}
+                    disabled={recordingUsage}
+                  >
+                    <Text style={styles.cancelButtonText}>Batal</Text>
+                  </Pressable>
+                  <Button
+                    label={recordingUsage ? 'Menyimpan...' : 'Simpan'}
+                    onPress={handleRecordUsage}
+                    loading={recordingUsage}
+                    style={{ flex: 1 }}
+                  />
+                </View>
+              </View>
+            ) : (
+              <Button label="Catat Pemakaian (Meter)" variant="outline" onPress={() => setUsageFormOpen(true)} />
+            )
+          )}
+
+          {item.scroll_code?.status === 'allocated' && !form && !usageFormOpen && (
             <Button
               label={markingUsed ? 'Memproses...' : 'Tandai Habis'}
               variant="outline"
@@ -322,6 +435,25 @@ export default function InventoryItemScreen() {
                 <Text style={styles.actionButtonText}>Catat Keluar</Text>
               </Pressable>
             </View>
+          )}
+
+          {item.scroll_code && item.scroll_code.usages.length > 0 && (
+            <>
+              <Text style={styles.historyTitle}>Riwayat Pemakaian Meter</Text>
+              {item.scroll_code.usages.map((u) => (
+                <View key={u.id} style={styles.historyRow}>
+                  <Ionicons name="cut-outline" size={20} color={colors.warning} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.historyText}>
+                      {parseFloat(u.meters).toLocaleString('id-ID')} meter
+                      {u.user ? ` — ${u.user.name}` : ''}
+                    </Text>
+                    {u.note && <Text style={styles.historyNote}>{u.note}</Text>}
+                    <Text style={styles.historyDate}>{formatDateTime(u.created_at)}</Text>
+                  </View>
+                </View>
+              ))}
+            </>
           )}
 
           <Text style={styles.historyTitle}>Riwayat Terbaru</Text>

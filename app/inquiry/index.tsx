@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -6,15 +6,17 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { ScreenHeader } from '@/components/ui/ScreenHeader';
-import { Card } from '@/components/ui/Card';
+import { StatusBar } from 'expo-status-bar';
 import { Button } from '@/components/ui/Button';
-import { colors, fontSize, spacing, radius } from '@/constants/theme';
+import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
+import { useAppTheme } from '@/lib/theme-context';
 
 // Halaman ini KHUSUS untuk produk yang belum dijual di Indonesia (Color
 // Change Film & Architectural Film) — sengaja terpisah dari /quotation
@@ -22,8 +24,21 @@ import { apiFetch, ApiError } from '@/lib/api';
 // + catatan bebas. Memetakan langsung ke ProductInquiryController di
 // backend (bukan QuotationController).
 export default function ProductInquiryScreen() {
+  const { theme, colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  // Dikirim dari CTA "Daftarkan Minat Saya" di halaman detail produk
+  // (app/products/[category].tsx) — ProductInquiry tidak punya kolom
+  // produk sendiri, jadi nama produknya di-prefill ke catatan supaya tim
+  // tetap tahu produk mana yang diminati tanpa customer perlu ketik ulang.
+  const { product } = useLocalSearchParams<{ product?: string }>();
+
   const [customerName, setCustomerName] = useState('');
   const [customerContact, setCustomerContact] = useState('');
+  // Kosong murni untuk catatan bebas customer — nama produk TIDAK lagi
+  // di-prefill ke sini (field ini bisa diedit/dihapus bebas, sempat
+  // berisiko info produk hilang tanpa sengaja). Ditampilkan sebagai badge
+  // read-only terpisah (lihat JSX) dan digabung ke pesan final saat
+  // submit, lihat handleSubmit().
   const [message, setMessage] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
@@ -39,6 +54,14 @@ export default function ProductInquiryScreen() {
     setSubmitting(true);
     setSubmitError(null);
 
+    // Info produk (kalau ada) SELALU disertakan di pesan yang dikirim,
+    // terlepas apa pun yang diketik/dihapus customer di field Catatan —
+    // supaya konteks produk yang diminati tidak pernah hilang begitu saja.
+    const finalMessage = [
+      product ? `Produk yang diminati: ${product}` : null,
+      message.trim() || null,
+    ].filter(Boolean).join('\n');
+
     apiFetch<{ success: boolean; message: string; data: { inquiry_number: string } }>(
       '/api/inquiry/submit',
       {
@@ -47,7 +70,7 @@ export default function ProductInquiryScreen() {
         body: JSON.stringify({
           customer_name: customerName.trim(),
           customer_contact: customerContact.trim(),
-          message: message.trim() || undefined,
+          message: finalMessage || undefined,
         }),
       }
     )
@@ -65,13 +88,28 @@ export default function ProductInquiryScreen() {
       .finally(() => setSubmitting(false));
   };
 
+  const HeaderBar = () => (
+    <View style={styles.header}>
+      {router.canGoBack() ? (
+        <Pressable onPress={() => router.back()} style={styles.sideButton}>
+          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+        </Pressable>
+      ) : (
+        <View style={styles.sideButton} />
+      )}
+      <Text style={styles.headerTitle} numberOfLines={1}>Tanya Produk</Text>
+      <View style={styles.sideButton} />
+    </View>
+  );
+
   if (success) {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
-        <ScreenHeader title="Tanya Produk" />
+        <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+        <HeaderBar />
         <View style={styles.centerState}>
           <View style={styles.successIconWrap}>
-            <Ionicons name="checkmark" size={36} color={colors.white} />
+            <Ionicons name="checkmark" size={36} color="#ffffff" />
           </View>
           <Text style={styles.successTitle}>Pertanyaan Terkirim</Text>
           {inquiryNumber && (
@@ -95,23 +133,32 @@ export default function ProductInquiryScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScreenHeader title="Tanya Produk" />
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <HeaderBar />
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <View style={styles.noticeBox}>
           <Ionicons name="information-circle" size={20} color={colors.accent} />
           <Text style={styles.noticeText}>
-            Color Change Film dan Architectural Film belum dijual secara resmi
-            di Indonesia. Daftarkan minat Anda dan tim kami akan menghubungi
-            begitu produk tersedia.
+            {product
+              ? `${product} belum dijual secara resmi di Indonesia. Daftarkan minat Anda dan tim kami akan menghubungi begitu produk tersedia.`
+              : 'Color Change Film dan Architectural Film belum dijual secara resmi di Indonesia. Daftarkan minat Anda dan tim kami akan menghubungi begitu produk tersedia.'}
           </Text>
         </View>
 
-        <Card style={styles.formCard}>
+        {!!product && (
+          <View style={styles.productBadge}>
+            <Ionicons name="pricetag-outline" size={14} color={colors.accent} />
+            <Text style={styles.productBadgeText}>Produk yang diminati: {product}</Text>
+          </View>
+        )}
+
+        <View style={styles.formCard}>
           <Text style={styles.fieldLabel}>Nama Lengkap *</Text>
           <TextInput
             style={styles.input}
             placeholder="Nama Anda"
-            placeholderTextColor={colors.mutedLight}
+            placeholderTextColor={colors.textMuted}
             value={customerName}
             onChangeText={setCustomerName}
           />
@@ -119,7 +166,7 @@ export default function ProductInquiryScreen() {
           <TextInput
             style={styles.input}
             placeholder="08xxxxxxxxxx atau email Anda"
-            placeholderTextColor={colors.mutedLight}
+            placeholderTextColor={colors.textMuted}
             value={customerContact}
             onChangeText={setCustomerContact}
           />
@@ -127,13 +174,13 @@ export default function ProductInquiryScreen() {
           <TextInput
             style={[styles.input, styles.textArea]}
             placeholder="Mis. produk yang diminati, kota Anda, dsb."
-            placeholderTextColor={colors.mutedLight}
+            placeholderTextColor={colors.textMuted}
             value={message}
             onChangeText={setMessage}
             multiline
             numberOfLines={3}
           />
-        </Card>
+        </View>
 
         {submitError && (
           <View style={styles.submitErrorBox}>
@@ -153,15 +200,30 @@ export default function ProductInquiryScreen() {
           <Text style={styles.hintText}>Lengkapi nama dan kontak Anda.</Text>
         )}
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: typeof darkColors) {
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.white,
+    backgroundColor: colors.bg,
   },
+  flex: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.bg,
+  },
+  sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
   scrollContent: {
     padding: spacing.md,
     paddingBottom: spacing.xxl,
@@ -175,14 +237,14 @@ const styles = StyleSheet.create({
   },
   centerStateText: {
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
     textAlign: 'center',
   },
   noticeBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: spacing.sm,
-    backgroundColor: colors.alt,
+    backgroundColor: colors.accentSoft,
     borderRadius: radius.md,
     padding: spacing.md,
     marginBottom: spacing.md,
@@ -190,26 +252,47 @@ const styles = StyleSheet.create({
   noticeText: {
     flex: 1,
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
     lineHeight: 19,
+  },
+  productBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    alignSelf: 'flex-start',
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    marginBottom: spacing.md,
+  },
+  productBadgeText: {
+    fontSize: fontSize.xs,
+    fontWeight: '600',
+    color: colors.accent,
   },
   formCard: {
     marginBottom: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   fieldLabel: {
     fontSize: fontSize.xs,
-    color: colors.mutedLight,
+    color: colors.textMuted,
     marginBottom: spacing.xs,
     marginTop: spacing.sm,
   },
   input: {
     height: 44,
     borderWidth: 1,
-    borderColor: colors.line,
+    borderColor: colors.border,
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     fontSize: fontSize.sm,
-    color: colors.ink,
+    color: colors.textPrimary,
   },
   textArea: {
     height: 80,
@@ -220,7 +303,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-    backgroundColor: '#fde8e8',
+    backgroundColor: colors.dangerBg,
     borderRadius: radius.md,
     padding: spacing.sm,
     marginBottom: spacing.sm,
@@ -235,7 +318,7 @@ const styles = StyleSheet.create({
   },
   hintText: {
     fontSize: fontSize.xs,
-    color: colors.mutedLight,
+    color: colors.textMuted,
     textAlign: 'center',
     marginTop: spacing.sm,
   },
@@ -243,7 +326,7 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: colors.success,
+    backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.sm,
@@ -251,7 +334,7 @@ const styles = StyleSheet.create({
   successTitle: {
     fontSize: fontSize.xl,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.textPrimary,
   },
   inquiryNumber: {
     fontWeight: '800',
@@ -259,7 +342,7 @@ const styles = StyleSheet.create({
   },
   successNote: {
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
     textAlign: 'center',
     marginTop: spacing.sm,
     lineHeight: 19,
@@ -268,4 +351,5 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
     width: '100%',
   },
-});
+  });
+}

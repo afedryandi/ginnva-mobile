@@ -16,6 +16,7 @@ interface MaterialListItem {
   unit: string;
   current_stock: string;
   reorder_point: string | null;
+  active_batches_count: number;
 }
 
 // Bahan baku TIDAK punya kode fisik per unit (beda dari Barang/Aset yang
@@ -109,9 +110,12 @@ export default function MaterialsSearchScreen() {
                   </Text>
                 )}
               </View>
-              <Text style={[styles.rowStock, isLowStock(item) && { color: colors.danger }]}>
-                {parseFloat(item.current_stock).toLocaleString('id-ID')} {item.unit}
-              </Text>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={[styles.rowStock, isLowStock(item) && { color: colors.danger }]}>
+                  {parseFloat(item.current_stock).toLocaleString('id-ID')} {item.unit}
+                </Text>
+                <Text style={styles.rowBottles}>{item.active_batches_count} botol/wadah</Text>
+              </View>
               <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
             </Pressable>
           )}
@@ -166,5 +170,6 @@ function createStyles(colors: typeof darkColors) {
     rowName: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
     rowCategory: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
     rowStock: { fontSize: fontSize.sm, fontWeight: '700', color: colors.success },
+    rowBottles: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: 2 },
   });
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -8,10 +8,16 @@ import {
   StyleSheet,
   ActivityIndicator,
   Animated,
+  Dimensions,
   Platform,
+  Linking,
 } from 'react-native';
+
+const SCAN_FRAME_SIZE = Math.round(Dimensions.get('window').width * 0.62);
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { StatusBar } from 'expo-status-bar';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 // SDK 54 memindahkan API utama expo-file-system ke sistem baru
 // (File/Directory classes). Import default sekarang cuma lewat shim
@@ -20,12 +26,11 @@ import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'ex
 // subpath /legacy supaya pakai implementasi penuh yang teruji.
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import { ScreenHeader } from '@/components/ui/ScreenHeader';
-import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { colors, fontSize, spacing, radius } from '@/constants/theme';
+import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError, API_BASE_URL, getToken } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { useAppTheme } from '@/lib/theme-context';
 import { hapticLight, hapticSuccess, hapticError } from '@/lib/haptics';
 
 interface WarrantyData {
@@ -41,12 +46,6 @@ interface WarrantyData {
   // PPF
   installation_position: string | null;
   installation_position_detail: string | null;
-  roll_number: string | null;
-  // Window Film
-  roll_number_front: string | null;
-  roll_number_side_rear: string | null;
-  film_model_front: string | null;
-  film_model_side_rear: string | null;
   installation_date: string;
   expiry_date: string;
   dealer_name: string;
@@ -56,23 +55,32 @@ interface WarrantyData {
   has_owner: boolean;
 }
 
-// Status yang dikembalikan accessor getStatusAttribute() di backend.
-// Mapping label & warna supaya konsisten dengan arti sebenarnya —
-// bukan cuma menampilkan status mentah dari kolom database.
-const STATUS_META: Record<
+function getStatusMeta(colors: typeof darkColors): Record<
   string,
   { label: string; color: string; bg: string; icon: keyof typeof Ionicons.glyphMap }
-> = {
-  active: { label: 'Aktif', color: colors.success, bg: '#e7f8ef', icon: 'checkmark-circle' },
-  pending_review: {
-    label: 'Menunggu Review Admin',
-    color: colors.warning,
-    bg: '#fef3e2',
-    icon: 'time',
-  },
-  rejected: { label: 'Ditolak', color: colors.danger, bg: '#fde8e8', icon: 'close-circle' },
-  expired: { label: 'Kedaluwarsa', color: colors.mutedLight, bg: colors.alt, icon: 'alert-circle' },
-};
+> {
+  return {
+    active: { label: 'Aktif', color: colors.success, bg: colors.successBg, icon: 'checkmark-circle' },
+    // Beda dari 'pending_review' — ini kolom `status` mentah, dipakai
+    // saat garansi sudah disetujui admin (review_status: approved) tapi
+    // belum ditandai 'active' di database. Lihat WarrantyResource.php
+    // filter status utk konfirmasi nilai ini memang ada & valid.
+    pending: {
+      label: 'Menunggu Aktivasi',
+      color: colors.warning,
+      bg: colors.warningBg,
+      icon: 'hourglass',
+    },
+    pending_review: {
+      label: 'Menunggu Review Admin',
+      color: colors.warning,
+      bg: colors.warningBg,
+      icon: 'time',
+    },
+    rejected: { label: 'Ditolak', color: colors.danger, bg: colors.dangerBg, icon: 'close-circle' },
+    expired: { label: 'Kedaluwarsa', color: colors.textMuted, bg: colors.surface, icon: 'alert-circle' },
+  };
+}
 
 function formatDate(dateStr: string) {
   try {
@@ -89,6 +97,10 @@ function formatDate(dateStr: string) {
 type InputMode = 'manual' | 'scan';
 
 export default function WarrantyCheckScreen() {
+  const { theme, colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const STATUS_META = useMemo(() => getStatusMeta(colors), [colors]);
+
   const [mode, setMode] = useState<InputMode>('manual');
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
@@ -100,10 +112,12 @@ export default function WarrantyCheckScreen() {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [claiming, setClaiming] = useState(false);
   const [claimSuccess, setClaimSuccess] = useState(false);
+  const [claimError, setClaimError] = useState<string | null>(null);
   const { isLoggedIn } = useAuth();
 
   const [permission, requestPermission] = useCameraPermissions();
   const [scanLocked, setScanLocked] = useState(false);
+  const [cameraError, setCameraError] = useState(false);
 
   // Animasi sukses ringan — ikon status muncul dengan pop scale, bukan
   // library animasi tambahan (Lottie dst), supaya tetap ringan.
@@ -119,6 +133,8 @@ export default function WarrantyCheckScreen() {
     setResult(null);
     setHasSearched(true);
     setDownloadError(null);
+    setClaimError(null);
+    setClaimSuccess(false);
 
     apiFetch<{ success: boolean; data: WarrantyData }>(
       `/api/warranty/check?code=${encodeURIComponent(trimmed)}`,
@@ -184,17 +200,25 @@ export default function WarrantyCheckScreen() {
     setTimeout(() => setScanLocked(false), 1500);
   };
 
+  // SENGAJA selalu mencoba requestPermission() lagi tiap tombol ditekan
+  // (bukan cuma sekali lalu `return` diam-diam kalau ditolak) — supaya
+  // dialog izin OS punya kesempatan muncul lagi tiap kali user menekan
+  // "Scan QR/Barcode", bukan cuma di percobaan pertama. Kalau memang
+  // sudah ditolak permanen di level OS, requestPermission() akan
+  // langsung resolve tanpa dialog (no-op yang aman) dan UI status izin
+  // di bawah (termasuk tombol "Buka Pengaturan") tetap jadi jalan keluar.
   const switchToScan = async () => {
     if (!permission?.granted) {
-      const res = await requestPermission();
-      if (!res.granted) return;
+      await requestPermission();
     }
+    setCameraError(false);
     setMode('scan');
   };
 
   const handleClaim = async () => {
     if (!result) return;
     setClaiming(true);
+    setClaimError(null);
     try {
       await apiFetch('/api/warranty/claim', {
         method: 'POST',
@@ -205,7 +229,8 @@ export default function WarrantyCheckScreen() {
       // Update local state supaya tombol hilang
       setResult((prev) => prev ? { ...prev, has_owner: true } : prev);
     } catch (err) {
-      setDownloadError(
+      hapticError();
+      setClaimError(
         err instanceof ApiError ? err.message : 'Gagal menghubungkan garansi. Coba lagi.'
       );
     } finally {
@@ -239,11 +264,7 @@ export default function WarrantyCheckScreen() {
           dialogTitle: `Sertifikat Garansi ${result.warranty_code}`,
         });
       } else {
-        setDownloadError(
-          Platform.OS === 'web'
-            ? 'Berbagi file tidak didukung di web.'
-            : `File tersimpan di perangkat: ${downloadRes.uri}`
-        );
+        setDownloadError(`File tersimpan di perangkat: ${downloadRes.uri}`);
       }
     } catch (e) {
       console.error('Gagal unduh sertifikat garansi:', e);
@@ -255,11 +276,33 @@ export default function WarrantyCheckScreen() {
     }
   };
 
-  const statusMeta = result ? STATUS_META[result.status] ?? STATUS_META.active : null;
+  // Fallback status TIDAK boleh diarahkan ke "active" (hijau/checkmark) —
+  // kalau backend mengirim status yang tidak dikenal, itu justru kasus
+  // yang perlu terlihat mencurigakan/netral, bukan tampil seolah garansi
+  // valid dan aktif.
+  const statusMeta = result
+    ? STATUS_META[result.status] ?? {
+        label: result.status,
+        color: colors.textSecondary,
+        bg: colors.border,
+        icon: 'help-circle' as const,
+      }
+    : null;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScreenHeader title="Cek Garansi" />
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <View style={styles.header}>
+        {router.canGoBack() ? (
+          <Pressable onPress={() => router.back()} style={styles.sideButton}>
+            <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+          </Pressable>
+        ) : (
+          <View style={styles.sideButton} />
+        )}
+        <Text style={styles.headerTitle} numberOfLines={1}>Cek Garansi</Text>
+        <View style={styles.sideButton} />
+      </View>
 
       {/* ===== Toggle Manual / Scan ===== */}
       <View style={styles.modeToggle}>
@@ -270,7 +313,7 @@ export default function WarrantyCheckScreen() {
           <Ionicons
             name="create-outline"
             size={16}
-            color={mode === 'manual' ? colors.white : colors.muted}
+            color={mode === 'manual' ? '#ffffff' : colors.textSecondary}
           />
           <Text style={[styles.modeButtonText, mode === 'manual' && styles.modeButtonTextActive]}>
             Input Manual
@@ -283,7 +326,7 @@ export default function WarrantyCheckScreen() {
           <Ionicons
             name="scan-outline"
             size={16}
-            color={mode === 'scan' ? colors.white : colors.muted}
+            color={mode === 'scan' ? '#ffffff' : colors.textSecondary}
           />
           <Text style={[styles.modeButtonText, mode === 'scan' && styles.modeButtonTextActive]}>
             Scan QR/Barcode
@@ -295,12 +338,29 @@ export default function WarrantyCheckScreen() {
         <View style={styles.scannerWrap}>
           {!permission?.granted ? (
             <View style={styles.permissionState}>
-              <Ionicons name="camera-outline" size={32} color={colors.mutedLight} />
+              <Ionicons name="camera-outline" size={32} color={colors.textMuted} />
               <Text style={styles.permissionText}>
-                Izin kamera diperlukan untuk memindai kode garansi.
+                {permission && !permission.canAskAgain
+                  ? 'Izin kamera ditolak permanen. Aktifkan lewat Pengaturan untuk memindai kode garansi.'
+                  : 'Izin kamera diperlukan untuk memindai kode garansi.'}
               </Text>
-              <Pressable style={styles.retryButton} onPress={switchToScan}>
-                <Text style={styles.retryText}>Izinkan Kamera</Text>
+              <Pressable
+                style={styles.retryButton}
+                onPress={permission && !permission.canAskAgain ? Linking.openSettings : switchToScan}
+              >
+                <Text style={styles.retryText}>
+                  {permission && !permission.canAskAgain ? 'Buka Pengaturan' : 'Izinkan Kamera'}
+                </Text>
+              </Pressable>
+            </View>
+          ) : cameraError ? (
+            <View style={styles.permissionState}>
+              <Ionicons name="alert-circle-outline" size={32} color={colors.danger} />
+              <Text style={styles.permissionText}>
+                Kamera gagal dibuka. Coba restart aplikasi atau periksa izin kamera di pengaturan.
+              </Text>
+              <Pressable style={styles.retryButton} onPress={() => setCameraError(false)}>
+                <Text style={styles.retryText}>Coba Lagi</Text>
               </Pressable>
             </View>
           ) : (
@@ -312,8 +372,11 @@ export default function WarrantyCheckScreen() {
                   barcodeTypes: ['qr', 'code128', 'code39', 'ean13'],
                 }}
                 onBarcodeScanned={scanLocked ? undefined : handleBarcodeScanned}
+                onMountError={() => setCameraError(true)}
               />
-              <View style={styles.scanFrame} pointerEvents="none" />
+              <View style={styles.scanFrameContainer} pointerEvents="none">
+                <View style={styles.scanFrame} />
+              </View>
               <Text style={styles.scanHint}>
                 Arahkan kamera ke kode QR/barcode pada stiker garansi
               </Text>
@@ -333,8 +396,8 @@ export default function WarrantyCheckScreen() {
           <View style={styles.searchRow}>
             <TextInput
               style={styles.input}
-              placeholder="Contoh: GNV-2026XXXXXXXX"
-              placeholderTextColor={colors.mutedLight}
+              placeholder="Masukkan kode garansi Anda"
+              placeholderTextColor={colors.textMuted}
               value={code}
               onChangeText={setCode}
               autoCapitalize="characters"
@@ -352,10 +415,10 @@ export default function WarrantyCheckScreen() {
           )}
 
           {hasSearched && !loading && error && (
-            <Card style={styles.errorCard}>
+            <View style={styles.errorCard}>
               <Ionicons name="alert-circle" size={20} color={colors.danger} />
               <Text style={styles.errorText}>{error}</Text>
-            </Card>
+            </View>
           )}
 
           {hasSearched && !loading && !error && result && statusMeta && (
@@ -365,7 +428,7 @@ export default function WarrantyCheckScreen() {
                 transform: [{ scale: successScale }],
               }}
             >
-              <Card style={styles.resultCard}>
+              <View style={styles.resultCard}>
                 <View style={styles.resultHeader}>
                   <View>
                     <Text style={styles.resultCaption}>NOMOR SERTIFIKAT</Text>
@@ -404,54 +467,6 @@ export default function WarrantyCheckScreen() {
                   </View>
                 ) : null}
 
-                {result.product_category === 'ppf' && (result.installation_position || result.roll_number) ? (
-                  <View style={styles.techSection}>
-                    <Text style={styles.techSectionTitle}>SPESIFIKASI PPF</Text>
-                    {result.installation_position ? (
-                      <View style={styles.fieldRow}>
-                        <Text style={styles.fieldLabel}>Posisi Pemasangan</Text>
-                        <Text style={styles.fieldValue}>
-                          {result.installation_position === 'full_body' ? 'Seluruh Bodi' : 'Parsial'}
-                          {result.installation_position === 'partial' && result.installation_position_detail
-                            ? ` (${result.installation_position_detail})`
-                            : ''}
-                        </Text>
-                      </View>
-                    ) : null}
-                    {result.roll_number ? (
-                      <View style={styles.fieldRow}>
-                        <Text style={styles.fieldLabel}>Roll/ID Material</Text>
-                        <Text style={styles.fieldValue}>{result.roll_number}</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                ) : null}
-
-                {result.product_category === 'window_film' &&
-                  (result.roll_number_front || result.roll_number_side_rear) ? (
-                  <View style={styles.techSection}>
-                    <Text style={styles.techSectionTitle}>SPESIFIKASI WINDOW FILM</Text>
-                    {result.roll_number_front ? (
-                      <View style={styles.fieldRow}>
-                        <Text style={styles.fieldLabel}>Roll No. Kaca Depan</Text>
-                        <Text style={styles.fieldValue}>{result.roll_number_front}</Text>
-                        {result.film_model_front ? (
-                          <Text style={styles.fieldSub}>{result.film_model_front}</Text>
-                        ) : null}
-                      </View>
-                    ) : null}
-                    {result.roll_number_side_rear ? (
-                      <View style={styles.fieldRow}>
-                        <Text style={styles.fieldLabel}>Roll No. Kaca Samping &amp; Belakang</Text>
-                        <Text style={styles.fieldValue}>{result.roll_number_side_rear}</Text>
-                        {result.film_model_side_rear ? (
-                          <Text style={styles.fieldSub}>{result.film_model_side_rear}</Text>
-                        ) : null}
-                      </View>
-                    ) : null}
-                  </View>
-                ) : null}
-
                 <View style={styles.fieldRow}>
                   <Text style={styles.fieldLabel}>Dealer Pelaksana</Text>
                   <Text style={styles.fieldValue}>{result.dealer_name}</Text>
@@ -486,15 +501,16 @@ export default function WarrantyCheckScreen() {
                     disabled={claiming}
                   >
                     {claiming ? (
-                      <ActivityIndicator color={colors.white} />
+                      <ActivityIndicator color="#ffffff" />
                     ) : (
                       <>
-                        <Ionicons name="link-outline" size={18} color={colors.white} />
+                        <Ionicons name="link-outline" size={18} color="#ffffff" />
                         <Text style={styles.downloadButtonText}>Hubungkan ke Akun Saya</Text>
                       </>
                     )}
                   </Pressable>
                 )}
+                {claimError && <Text style={styles.downloadErrorText}>{claimError}</Text>}
                 {claimSuccess && (
                   <View style={styles.claimSuccessBox}>
                     <Ionicons name="checkmark-circle" size={16} color={colors.success} />
@@ -516,6 +532,13 @@ export default function WarrantyCheckScreen() {
                   </Text>
                 )}
 
+                {result.status === 'expired' && (
+                  <Text style={styles.noteText}>
+                    Masa garansi produk ini sudah berakhir. Hubungi dealer tempat
+                    pemasangan untuk informasi perpanjangan atau layanan lanjutan.
+                  </Text>
+                )}
+
                 {result.review_status === 'approved' && (
                   <Pressable
                     style={[styles.downloadButton, downloading && styles.downloadButtonDisabled]}
@@ -523,24 +546,24 @@ export default function WarrantyCheckScreen() {
                     disabled={downloading}
                   >
                     {downloading ? (
-                      <ActivityIndicator color={colors.white} />
+                      <ActivityIndicator color="#ffffff" />
                     ) : (
                       <>
-                        <Ionicons name="download-outline" size={18} color={colors.white} />
-                        <Text style={styles.downloadButtonText}>Unduh Sertifikat PDF</Text>
+                        <Ionicons name="download-outline" size={18} color="#ffffff" />
+                        <Text style={styles.downloadButtonText}>Unduh Garansi</Text>
                       </>
                     )}
                   </Pressable>
                 )}
 
                 {downloadError && <Text style={styles.downloadErrorText}>{downloadError}</Text>}
-              </Card>
+              </View>
             </Animated.View>
           )}
 
           {!hasSearched && (
             <View style={styles.placeholder}>
-              <Ionicons name="shield-checkmark-outline" size={36} color={colors.mutedLight} />
+              <Ionicons name="shield-checkmark-outline" size={36} color={colors.textMuted} />
               <Text style={styles.placeholderText}>
                 Hasil pencarian data garansi akan muncul di sini.
               </Text>
@@ -552,11 +575,24 @@ export default function WarrantyCheckScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: typeof darkColors) {
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.white,
+    backgroundColor: colors.bg,
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.bg,
+  },
+  sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
   scrollContent: {
     padding: spacing.md,
     paddingBottom: spacing.xxl,
@@ -576,37 +612,47 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     height: 40,
     borderRadius: radius.pill,
-    backgroundColor: colors.alt,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   modeButtonActive: {
     backgroundColor: colors.accent,
+    borderColor: colors.accent,
   },
   modeButtonText: {
     fontSize: fontSize.sm,
     fontWeight: '600',
-    color: colors.muted,
+    color: colors.textSecondary,
   },
   modeButtonTextActive: {
-    color: colors.white,
+    color: '#ffffff',
   },
   scannerWrap: {
     flex: 1,
     margin: spacing.md,
     borderRadius: radius.lg,
     overflow: 'hidden',
-    backgroundColor: colors.ink,
+    backgroundColor: '#000000',
   },
   camera: {
     flex: 1,
   },
-  scanFrame: {
+  scanFrameContainer: {
     position: 'absolute',
-    top: '30%',
-    left: '15%',
-    right: '15%',
-    bottom: '35%',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingBottom: 40, // slight upward offset so hint text has room below
+  },
+  scanFrame: {
+    width: SCAN_FRAME_SIZE,
+    height: SCAN_FRAME_SIZE,
     borderWidth: 2,
-    borderColor: colors.white,
+    borderColor: '#ffffff',
     borderRadius: radius.lg,
   },
   scanHint: {
@@ -615,7 +661,7 @@ const styles = StyleSheet.create({
     left: spacing.lg,
     right: spacing.lg,
     textAlign: 'center',
-    color: colors.white,
+    color: '#ffffff',
     fontSize: fontSize.sm,
     fontWeight: '600',
   },
@@ -628,12 +674,12 @@ const styles = StyleSheet.create({
   },
   permissionText: {
     fontSize: fontSize.sm,
-    color: colors.white,
+    color: '#ffffff',
     textAlign: 'center',
   },
   intro: {
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
     lineHeight: 20,
     marginBottom: spacing.md,
   },
@@ -646,11 +692,11 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 48,
     borderWidth: 1,
-    borderColor: colors.line,
+    borderColor: colors.border,
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     fontSize: fontSize.sm,
-    color: colors.ink,
+    color: colors.textPrimary,
   },
   searchButton: {
     paddingHorizontal: spacing.lg,
@@ -662,13 +708,15 @@ const styles = StyleSheet.create({
   },
   centerStateText: {
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
   },
   errorCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    backgroundColor: '#fde8e8',
+    backgroundColor: colors.dangerBg,
+    borderRadius: radius.lg,
+    padding: spacing.md,
   },
   errorText: {
     flex: 1,
@@ -677,6 +725,11 @@ const styles = StyleSheet.create({
   },
   resultCard: {
     gap: 0,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   resultHeader: {
     flexDirection: 'row',
@@ -685,14 +738,14 @@ const styles = StyleSheet.create({
   },
   resultCaption: {
     fontSize: fontSize.xs,
-    color: colors.mutedLight,
+    color: colors.textMuted,
     fontWeight: '700',
     letterSpacing: 0.5,
   },
   resultCode: {
     fontSize: fontSize.lg,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.textPrimary,
     marginTop: 2,
   },
   statusBadge: {
@@ -709,7 +762,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    backgroundColor: colors.line,
+    backgroundColor: colors.border,
     marginVertical: spacing.md,
   },
   fieldRow: {
@@ -725,31 +778,31 @@ const styles = StyleSheet.create({
   },
   fieldLabel: {
     fontSize: fontSize.xs,
-    color: colors.mutedLight,
+    color: colors.textMuted,
     marginBottom: 2,
   },
   fieldValue: {
     fontSize: fontSize.sm,
     fontWeight: '600',
-    color: colors.ink,
+    color: colors.textPrimary,
   },
   remainingBox: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-    backgroundColor: colors.alt,
+    backgroundColor: colors.accentSoft,
     borderRadius: radius.md,
     padding: spacing.sm,
     marginTop: spacing.xs,
   },
   remainingText: {
     fontSize: fontSize.sm,
-    color: colors.ink,
+    color: colors.textPrimary,
     fontWeight: '600',
   },
   noteText: {
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
     marginTop: spacing.sm,
     lineHeight: 19,
   },
@@ -767,7 +820,7 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   downloadButtonText: {
-    color: colors.white,
+    color: '#ffffff',
     fontSize: fontSize.sm,
     fontWeight: '700',
   },
@@ -782,7 +835,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.xs,
-    backgroundColor: colors.ink,
+    backgroundColor: colors.textMuted,
     borderRadius: radius.pill,
     height: 46,
     marginTop: spacing.sm,
@@ -791,7 +844,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-    backgroundColor: '#e7f8ef',
+    backgroundColor: colors.successBg,
     borderRadius: radius.md,
     padding: spacing.sm,
     marginTop: spacing.sm,
@@ -803,7 +856,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   techSection: {
-    backgroundColor: colors.alt,
+    backgroundColor: colors.accentSoft,
     borderRadius: radius.md,
     padding: spacing.sm,
     marginBottom: spacing.sm,
@@ -812,13 +865,13 @@ const styles = StyleSheet.create({
   techSectionTitle: {
     fontSize: fontSize.xs,
     fontWeight: '700',
-    color: colors.muted,
+    color: colors.textSecondary,
     letterSpacing: 0.5,
     marginBottom: spacing.sm,
   },
   fieldSub: {
     fontSize: fontSize.xs,
-    color: colors.muted,
+    color: colors.textSecondary,
     marginTop: 1,
   },
   placeholder: {
@@ -828,7 +881,7 @@ const styles = StyleSheet.create({
   },
   placeholderText: {
     fontSize: fontSize.sm,
-    color: colors.mutedLight,
+    color: colors.textMuted,
     textAlign: 'center',
   },
   retryButton: {
@@ -839,8 +892,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
   },
   retryText: {
-    color: colors.white,
+    color: '#ffffff',
     fontSize: fontSize.sm,
     fontWeight: '600',
   },
-});
+  });
+}

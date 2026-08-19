@@ -6,6 +6,7 @@ interface Customer {
   name: string | null;
   email: string | null;
   phone_number: string | null;
+  referral_code: string | null;
 }
 
 interface AuthContextValue {

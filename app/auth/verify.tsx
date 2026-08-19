@@ -1,30 +1,35 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, ScrollView, Pressable, StyleSheet } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { View, Text, TextInput, ScrollView, Pressable, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { ScreenHeader } from '@/components/ui/ScreenHeader';
+import { StatusBar } from 'expo-status-bar';
 import { Button } from '@/components/ui/Button';
-import { colors, fontSize, spacing, radius } from '@/constants/theme';
+import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
 import { getCurrentPushToken, linkTokenToCustomer } from '@/lib/notifications';
 import { hapticSuccess, hapticError } from '@/lib/haptics';
 import { useAuth } from '@/lib/auth-context';
+import { useAppTheme } from '@/lib/theme-context';
 
 interface VerifyOtpResponse {
   message: string;
   token: string;
+  is_new: boolean;
   data: {
     id: number;
     name: string | null;
     email: string | null;
     phone_number: string | null;
+    referral_code: string | null;
   };
 }
 
 export default function VerifyOtpScreen() {
   const { email } = useLocalSearchParams<{ email: string }>();
   const { login } = useAuth();
+  const { theme, colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
@@ -49,15 +54,19 @@ export default function VerifyOtpScreen() {
         hapticSuccess();
         await login(res.token, res.data);
 
-        // Link push token yang sudah terdaftar sebagai guest ke customer
-        // yang baru saja login, supaya notifikasi targeted bisa dikirim
-        // ke perangkat ini. Fire-and-forget — tidak perlu await, gagal
-        // pun tidak mengganggu flow login.
         getCurrentPushToken().then((pushToken) => {
           if (pushToken) linkTokenToCustomer(pushToken);
         });
 
-        router.replace('/(tabs)/account' as never);
+        // User baru (atau lama yang belum punya nama) wajib isi profil dulu.
+        if (res.is_new || !res.data.name) {
+          router.replace({
+            pathname: '/auth/complete-profile',
+            params: { isNew: res.is_new ? '1' : '0' },
+          } as never);
+        } else {
+          router.replace('/(tabs)/account' as never);
+        }
       })
       .catch((err) => {
         hapticError();
@@ -92,7 +101,19 @@ export default function VerifyOtpScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScreenHeader title="Verifikasi" />
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <View style={styles.header}>
+        {router.canGoBack() ? (
+          <Pressable onPress={() => router.back()} style={styles.sideButton}>
+            <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+          </Pressable>
+        ) : (
+          <View style={styles.sideButton} />
+        )}
+        <Text style={styles.headerTitle} numberOfLines={1}>Verifikasi</Text>
+        <View style={styles.sideButton} />
+      </View>
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <View style={styles.iconWrap}>
           <Ionicons name="shield-checkmark-outline" size={32} color={colors.accent} />
@@ -106,7 +127,7 @@ export default function VerifyOtpScreen() {
         <TextInput
           style={styles.otpInput}
           placeholder="000000"
-          placeholderTextColor={colors.mutedLight}
+          placeholderTextColor={colors.textMuted}
           value={code}
           onChangeText={(v) => setCode(v.replace(/[^0-9]/g, '').slice(0, 6))}
           keyboardType="number-pad"
@@ -131,15 +152,30 @@ export default function VerifyOtpScreen() {
           </Text>
         </Pressable>
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: typeof darkColors) {
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.white,
+    backgroundColor: colors.bg,
   },
+  flex: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.bg,
+  },
+  sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
   scrollContent: {
     padding: spacing.md,
     alignItems: 'center',
@@ -149,7 +185,7 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: colors.alt,
+    backgroundColor: colors.accentSoft,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.md,
@@ -157,11 +193,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: fontSize.xl,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.textPrimary,
   },
   subtitle: {
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
     textAlign: 'center',
     marginTop: spacing.xs,
     marginBottom: spacing.lg,
@@ -170,18 +206,18 @@ const styles = StyleSheet.create({
   },
   emailText: {
     fontWeight: '700',
-    color: colors.ink,
+    color: colors.textPrimary,
   },
   otpInput: {
     width: '100%',
     height: 56,
     borderWidth: 1,
-    borderColor: colors.line,
+    borderColor: colors.border,
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     fontSize: fontSize.xxl,
     fontWeight: '700',
-    color: colors.ink,
+    color: colors.textPrimary,
     textAlign: 'center',
     letterSpacing: 8,
   },
@@ -210,4 +246,5 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontWeight: '600',
   },
-});
+  });
+}

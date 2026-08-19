@@ -62,6 +62,12 @@ export default function ConsumableDetailScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const [adjustFormOpen, setAdjustFormOpen] = useState(false);
+  const [adjustQuantity, setAdjustQuantity] = useState('');
+  const [adjustNote, setAdjustNote] = useState('');
+  const [adjustError, setAdjustError] = useState<string | null>(null);
+  const [adjustSubmitting, setAdjustSubmitting] = useState(false);
+
   const fetchItem = useCallback(() => {
     setError(null);
     return staffApiFetch<{ data: ConsumableData }>(`/api/staff/consumables/${id}`)
@@ -96,24 +102,90 @@ export default function ConsumableDetailScreen() {
       return;
     }
 
-    setSubmitting(true);
-    setFormError(null);
+    const submit = () => {
+      setSubmitting(true);
+      setFormError(null);
 
-    staffApiFetch<{ message: string; data: ConsumableData }>(`/api/staff/consumables/${id}/movement`, {
-      method: 'POST',
-      body: JSON.stringify({ type: form.type, quantity, note: form.note.trim() || undefined }),
-    })
-      .then((res) => {
-        hapticSuccess();
-        fetchItem();
-        setForm(null);
-        Alert.alert('Berhasil', res.message);
+      staffApiFetch<{ message: string; data: ConsumableData }>(`/api/staff/consumables/${id}/movement`, {
+        method: 'POST',
+        body: JSON.stringify({ type: form.type, quantity, note: form.note.trim() || undefined }),
       })
-      .catch((err) => {
-        hapticError();
-        setFormError(err instanceof ApiError ? err.message : 'Gagal mencatat transaksi. Periksa koneksi internet Anda.');
+        .then((res) => {
+          hapticSuccess();
+          fetchItem();
+          setForm(null);
+          Alert.alert('Berhasil', res.message);
+        })
+        .catch((err) => {
+          hapticError();
+          setFormError(err instanceof ApiError ? err.message : 'Gagal mencatat transaksi. Periksa koneksi internet Anda.');
+        })
+        .finally(() => setSubmitting(false));
+    };
+
+    // Catat Keluar mengurangi stok asli — minta konfirmasi dulu.
+    if (form.type === 'out') {
+      Alert.alert(
+        'Catat Barang Keluar',
+        `Catat ${quantity.toLocaleString('id-ID')} ${item?.unit ?? ''} keluar dari stok?`,
+        [
+          { text: 'Batal', style: 'cancel' },
+          { text: 'Catat', style: 'destructive', onPress: submit },
+        ]
+      );
+      return;
+    }
+
+    submit();
+  };
+
+  const handleAdjustStock = () => {
+    const actualQuantity = parseFloat(adjustQuantity.replace(',', '.'));
+    if (adjustQuantity.trim() === '' || isNaN(actualQuantity) || actualQuantity < 0) {
+      setAdjustError('Isi hasil hitung fisik yang valid (0 atau lebih).');
+      return;
+    }
+
+    const submit = () => {
+      setAdjustSubmitting(true);
+      setAdjustError(null);
+
+      staffApiFetch<{ message: string; data: ConsumableData }>(`/api/staff/consumables/${id}/adjust`, {
+        method: 'POST',
+        body: JSON.stringify({ actual_quantity: actualQuantity, note: adjustNote.trim() || undefined }),
       })
-      .finally(() => setSubmitting(false));
+        .then((res) => {
+          hapticSuccess();
+          setItem(res.data);
+          setAdjustFormOpen(false);
+          setAdjustQuantity('');
+          setAdjustNote('');
+          Alert.alert('Berhasil', res.message);
+        })
+        .catch((err) => {
+          hapticError();
+          setAdjustError(err instanceof ApiError ? err.message : 'Gagal mencatat penyesuaian. Periksa koneksi internet Anda.');
+        })
+        .finally(() => setAdjustSubmitting(false));
+    };
+
+    // Kalau hasil hitung sama dengan stok sistem, backend tidak mencatat
+    // apa-apa (no-op) — langsung submit tanpa nanya konfirmasi "timpa
+    // jadi X", karena tidak ada yang benar-benar berubah.
+    const currentStock = item ? parseFloat(item.current_stock) : 0;
+    if (Math.abs(actualQuantity - currentStock) < 0.01) {
+      submit();
+      return;
+    }
+
+    Alert.alert(
+      'Sesuaikan Stok',
+      `Stok di sistem saat ini: ${currentStock.toLocaleString('id-ID')} ${item?.unit ?? ''}. Timpa jadi ${actualQuantity.toLocaleString('id-ID')} ${item?.unit ?? ''} berdasarkan hitung fisik?`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        { text: 'Sesuaikan', style: 'destructive', onPress: submit },
+      ]
+    );
   };
 
   const isLowStock = item?.reorder_point !== null && item
@@ -220,6 +292,55 @@ export default function ConsumableDetailScreen() {
             </View>
           )}
 
+          {!form && item && (
+            adjustFormOpen ? (
+              <View style={styles.card}>
+                <Text style={styles.formTitle}>Sesuaikan Stok (Opname)</Text>
+                <Text style={styles.fieldLabel}>Hasil Hitung Fisik Sebenarnya ({item.unit})</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="0"
+                  placeholderTextColor={colors.textMuted}
+                  value={adjustQuantity}
+                  onChangeText={setAdjustQuantity}
+                  keyboardType="decimal-pad"
+                  autoFocus
+                />
+                <Text style={styles.helperInline}>
+                  Stok di sistem saat ini: {parseFloat(item.current_stock).toLocaleString('id-ID')} {item.unit}. Isi jumlah hasil hitung fisik yang SEBENARNYA — selisihnya dihitung otomatis.
+                </Text>
+
+                <Text style={styles.fieldLabel}>Catatan (opsional)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Mis. hasil stock opname, alasan selisih"
+                  placeholderTextColor={colors.textMuted}
+                  value={adjustNote}
+                  onChangeText={setAdjustNote}
+                />
+
+                {adjustError && <Text style={styles.errorText}>{adjustError}</Text>}
+                <View style={styles.formActions}>
+                  <Pressable
+                    style={styles.cancelButton}
+                    onPress={() => { setAdjustFormOpen(false); setAdjustQuantity(''); setAdjustNote(''); setAdjustError(null); }}
+                    disabled={adjustSubmitting}
+                  >
+                    <Text style={styles.cancelButtonText}>Batal</Text>
+                  </Pressable>
+                  <Button
+                    label={adjustSubmitting ? 'Menyimpan...' : 'Simpan'}
+                    onPress={handleAdjustStock}
+                    loading={adjustSubmitting}
+                    style={{ flex: 1 }}
+                  />
+                </View>
+              </View>
+            ) : (
+              <Button label="Sesuaikan Stok (Opname)" variant="outline" onPress={() => setAdjustFormOpen(true)} />
+            )
+          )}
+
           <Text style={styles.historyTitle}>Riwayat Terbaru</Text>
           {item.movements.length === 0 ? (
             <Text style={styles.emptyHistoryText}>Belum ada riwayat keluar/masuk untuk barang ini.</Text>
@@ -311,6 +432,7 @@ function createStyles(colors: typeof darkColors) {
       marginBottom: spacing.sm,
     },
     errorText: { fontSize: fontSize.sm, color: colors.danger, marginTop: spacing.xs },
+    helperInline: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: -spacing.xs, marginBottom: spacing.sm },
     formActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
     cancelButton: { paddingHorizontal: spacing.lg, alignItems: 'center', justifyContent: 'center' },
     cancelButtonText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },

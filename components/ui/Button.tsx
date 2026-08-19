@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Pressable, Text, StyleSheet, ActivityIndicator, ViewStyle } from 'react-native';
-import { colors, radius, fontSize, spacing } from '@/constants/theme';
+import { darkColors, radius, fontSize, spacing } from '@/constants/theme';
+import { useAppTheme } from '@/lib/theme-context';
 
 interface ButtonProps {
   label: string;
@@ -19,6 +20,8 @@ export function Button({
   disabled = false,
   style,
 }: ButtonProps) {
+  const { colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const isDisabled = disabled || loading;
 
   return (
@@ -35,7 +38,7 @@ export function Button({
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={variant === 'primary' ? colors.white : colors.accent} />
+        <ActivityIndicator color={variant === 'primary' ? '#ffffff' : colors.accent} />
       ) : (
         <Text
           style={[
@@ -52,7 +55,8 @@ export function Button({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: typeof darkColors) {
+  return StyleSheet.create({
   base: {
     height: 48,
     borderRadius: radius.pill,
@@ -79,12 +83,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   labelPrimary: {
-    color: colors.white,
+    color: '#ffffff',
   },
   labelOutline: {
     color: colors.accent,
   },
   labelGhost: {
-    color: colors.ink,
+    color: colors.textPrimary,
   },
-});
+  });
+}

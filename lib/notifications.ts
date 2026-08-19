@@ -12,6 +12,7 @@ import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+import { router } from 'expo-router';
 import { apiFetch } from './api';
 
 Notifications.setNotificationHandler({
@@ -26,6 +27,33 @@ Notifications.setNotificationHandler({
 
 function isExpoGo(): boolean {
   return Constants.executionEnvironment === 'storeClient';
+}
+
+// Push payload datang dari server TANPA autentikasi (register-token pakai
+// skipAuth), jadi `data.route` tidak bisa dipercaya mentah-mentah — hanya
+// izinkan navigasi ke path yang memang ada di app ini.
+const ALLOWED_ROUTE_PREFIXES = [
+  '/(tabs)',
+  '/account',
+  '/assistant',
+  '/booking',
+  '/brand',
+  '/case',
+  '/inquiry',
+  '/news',
+  '/partner',
+  '/partnership',
+  '/products',
+  '/quotation',
+  '/rewards',
+  '/seri-produk',
+  '/staff',
+  '/warranty',
+];
+
+function isAllowedRoute(route: string): boolean {
+  if (typeof route !== 'string' || !route.startsWith('/')) return false;
+  return ALLOWED_ROUTE_PREFIXES.some((prefix) => route === prefix || route.startsWith(`${prefix}/`));
 }
 
 export async function setupNotifications(): Promise<() => void> {
@@ -100,9 +128,19 @@ export async function setupNotifications(): Promise<() => void> {
   });
 
   const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
-    const data = response.notification.request.content.data;
+    const data = response.notification.request.content.data as {
+      route?: string;
+      params?: Record<string, string>;
+    };
     console.log('[Notifications] Tapped, data:', data);
-    // TODO: handle deep link
+    if (data?.route && isAllowedRoute(data.route)) {
+      // Delay kecil supaya router sudah mount setelah app dibuka dari background
+      setTimeout(() => {
+        router.push({ pathname: data.route as never, params: data.params });
+      }, 300);
+    } else if (data?.route) {
+      console.warn('[Notifications] Blocked navigation to disallowed route:', data.route);
+    }
   });
 
   return () => {

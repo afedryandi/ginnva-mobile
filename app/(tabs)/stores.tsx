@@ -8,13 +8,15 @@ import {
   StyleSheet,
   Linking,
   ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Card } from '@/components/ui/Card';
-import { colors, fontSize, spacing, radius } from '@/constants/theme';
+import { StatusBar } from 'expo-status-bar';
+import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
+import { useAppTheme } from '@/lib/theme-context';
 
 interface StoreItem {
   id: number;
@@ -22,12 +24,21 @@ interface StoreItem {
   city: string;
   address: string;
   phone: string | null;
-  opening_hours: string | null;
+  opening_hours_lines: string[];
   latitude: number | null;
   longitude: number | null;
+  maps_url: string | null;
 }
 
 function openMaps(store: StoreItem) {
+  // Kalau admin sudah tempel link Google Maps asli di Filament, buka itu
+  // apa adanya (paling akurat — persis lokasi yang dipilih admin). Fallback
+  // ke URL pencarian generik dari lat/lng atau nama+alamat kalau belum ada.
+  if (store.maps_url) {
+    Linking.openURL(store.maps_url);
+    return;
+  }
+
   const query =
     store.latitude && store.longitude
       ? `${store.latitude},${store.longitude}`
@@ -40,13 +51,17 @@ function callStore(phone: string) {
 }
 
 export default function StoresScreen() {
+  const { theme, colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [stores, setStores] = useState<StoreItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
-  const loadStores = () => {
-    setLoading(true);
+  const loadStores = (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
     setError(null);
     apiFetch<{ data: StoreItem[] }>('/api/stores', { skipAuth: true })
       .then((res) => setStores(res.data))
@@ -57,7 +72,10 @@ export default function StoresScreen() {
             : 'Gagal memuat daftar toko. Periksa koneksi internet Anda.'
         );
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setLoading(false);
+        setRefreshing(false);
+      });
   };
 
   useEffect(() => {
@@ -81,6 +99,7 @@ export default function StoresScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Cari Toko</Text>
         <Text style={styles.headerSubtitle}>
@@ -89,17 +108,17 @@ export default function StoresScreen() {
       </View>
 
       <View style={styles.searchBar}>
-        <Ionicons name="search" size={18} color={colors.mutedLight} />
+        <Ionicons name="search" size={18} color={colors.textMuted} />
         <TextInput
           style={styles.searchInput}
           placeholder="Cari nama toko atau kota..."
-          placeholderTextColor={colors.mutedLight}
+          placeholderTextColor={colors.textMuted}
           value={search}
           onChangeText={setSearch}
         />
         {search.length > 0 && (
           <Pressable onPress={() => setSearch('')}>
-            <Ionicons name="close-circle" size={18} color={colors.mutedLight} />
+            <Ionicons name="close-circle" size={18} color={colors.textMuted} />
           </Pressable>
         )}
       </View>
@@ -110,15 +129,15 @@ export default function StoresScreen() {
         </View>
       ) : error ? (
         <View style={styles.centerState}>
-          <Ionicons name="cloud-offline-outline" size={32} color={colors.mutedLight} />
+          <Ionicons name="cloud-offline-outline" size={32} color={colors.textMuted} />
           <Text style={styles.errorText}>{error}</Text>
-          <Pressable style={styles.retryButton} onPress={loadStores}>
+          <Pressable style={styles.retryButton} onPress={() => loadStores()}>
             <Text style={styles.retryText}>Coba Lagi</Text>
           </Pressable>
         </View>
       ) : filteredStores.length === 0 ? (
         <View style={styles.centerState}>
-          <Ionicons name="storefront-outline" size={32} color={colors.mutedLight} />
+          <Ionicons name="storefront-outline" size={32} color={colors.textMuted} />
           <Text style={styles.emptyText}>Tidak ada toko yang cocok.</Text>
         </View>
       ) : (
@@ -126,59 +145,68 @@ export default function StoresScreen() {
           data={filteredStores}
           keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => loadStores(true)} tintColor={colors.accent} colors={[colors.accent]} />
+          }
           renderItem={({ item }) => (
-            <Card style={styles.storeCard}>
+            <View style={styles.storeCard}>
               <Text style={styles.storeName}>{item.name}</Text>
               <View style={styles.cityBadge}>
                 <Text style={styles.cityBadgeText}>{item.city}</Text>
               </View>
 
               <View style={styles.infoRow}>
-                <Ionicons name="location-outline" size={16} color={colors.muted} />
+                <Ionicons name="location-outline" size={16} color={colors.textSecondary} />
                 <Text style={styles.infoText}>{item.address}</Text>
               </View>
 
-              {item.opening_hours && (
+              {item.opening_hours_lines?.length > 0 && (
                 <View style={styles.infoRow}>
-                  <Ionicons name="time-outline" size={16} color={colors.muted} />
-                  <Text style={styles.infoText}>{item.opening_hours}</Text>
+                  <Ionicons name="time-outline" size={16} color={colors.textSecondary} style={{ marginTop: 1 }} />
+                  <View style={{ flex: 1 }}>
+                    {item.opening_hours_lines.map((line, i) => (
+                      <Text key={i} style={styles.infoText}>{line}</Text>
+                    ))}
+                  </View>
                 </View>
               )}
 
               {item.phone && (
                 <View style={styles.infoRow}>
-                  <Ionicons name="call-outline" size={16} color={colors.muted} />
+                  <Ionicons name="call-outline" size={16} color={colors.textSecondary} />
                   <Text style={styles.infoText}>{item.phone}</Text>
                 </View>
               )}
 
               <View style={styles.actionRow}>
-                <Pressable style={styles.actionButton} onPress={() => openMaps(item)}>
-                  <Ionicons name="navigate-outline" size={16} color={colors.accent} />
-                  <Text style={styles.actionText}>Buka Peta</Text>
-                </Pressable>
-                {item.phone && (
-                  <Pressable
-                    style={styles.actionButton}
-                    onPress={() => callStore(item.phone as string)}
-                  >
-                    <Ionicons name="call-outline" size={16} color={colors.accent} />
-                    <Text style={styles.actionText}>Telepon</Text>
+                <View style={styles.secondaryActions}>
+                  <Pressable style={styles.secondaryButton} onPress={() => openMaps(item)}>
+                    <Ionicons name="navigate-outline" size={15} color={colors.textSecondary} />
+                    <Text style={styles.secondaryButtonText}>Buka Peta</Text>
                   </Pressable>
-                )}
+                  {item.phone && (
+                    <Pressable
+                      style={styles.secondaryButton}
+                      onPress={() => callStore(item.phone as string)}
+                    >
+                      <Ionicons name="call-outline" size={15} color={colors.textSecondary} />
+                      <Text style={styles.secondaryButtonText}>Telepon</Text>
+                    </Pressable>
+                  )}
+                </View>
                 <Pressable
-                  style={styles.actionButton}
+                  style={styles.primaryButton}
                   onPress={() =>
                     router.push(
                       `/booking?store_id=${item.id}&store_name=${encodeURIComponent(item.name + ' — ' + item.city)}` as never
                     )
                   }
                 >
-                  <Ionicons name="calendar-outline" size={16} color={colors.accent} />
-                  <Text style={styles.actionText}>Booking</Text>
+                  <Ionicons name="calendar-outline" size={15} color="#ffffff" />
+                  <Text style={styles.primaryButtonText}>Booking</Text>
                 </Pressable>
               </View>
-            </Card>
+            </View>
           )}
         />
       )}
@@ -186,10 +214,11 @@ export default function StoresScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: typeof darkColors) {
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.white,
+    backgroundColor: colors.bg,
   },
   header: {
     paddingHorizontal: spacing.md,
@@ -199,11 +228,11 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: fontSize.xxl,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.textPrimary,
   },
   headerSubtitle: {
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
     marginTop: spacing.xs,
   },
   searchBar: {
@@ -214,13 +243,15 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     paddingHorizontal: spacing.md,
     height: 44,
-    backgroundColor: colors.alt,
+    backgroundColor: colors.surface,
     borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   searchInput: {
     flex: 1,
     fontSize: fontSize.sm,
-    color: colors.ink,
+    color: colors.textPrimary,
   },
   centerState: {
     flex: 1,
@@ -231,7 +262,7 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
     textAlign: 'center',
   },
   retryButton: {
@@ -242,13 +273,13 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
   },
   retryText: {
-    color: colors.white,
+    color: colors.textPrimary,
     fontSize: fontSize.sm,
     fontWeight: '600',
   },
   emptyText: {
     fontSize: fontSize.sm,
-    color: colors.mutedLight,
+    color: colors.textMuted,
     textAlign: 'center',
   },
   listContent: {
@@ -258,15 +289,20 @@ const styles = StyleSheet.create({
   },
   storeCard: {
     gap: spacing.xs,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   storeName: {
     fontSize: fontSize.base,
     fontWeight: '700',
-    color: colors.ink,
+    color: colors.textPrimary,
   },
   cityBadge: {
     alignSelf: 'flex-start',
-    backgroundColor: colors.alt,
+    backgroundColor: colors.accentSoft,
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
     borderRadius: radius.pill,
@@ -285,24 +321,47 @@ const styles = StyleSheet.create({
   infoText: {
     flex: 1,
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
   },
   actionRow: {
     flexDirection: 'row',
-    gap: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
     marginTop: spacing.sm,
     paddingTop: spacing.sm,
     borderTopWidth: 1,
-    borderTopColor: colors.line,
+    borderTopColor: colors.border,
   },
-  actionButton: {
+  secondaryActions: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    flexShrink: 1,
+  },
+  secondaryButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
   },
-  actionText: {
+  secondaryButtonText: {
     fontSize: fontSize.sm,
-    color: colors.accent,
+    color: colors.textSecondary,
     fontWeight: '600',
   },
-});
+  primaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.accent,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: radius.pill,
+    flexShrink: 0,
+  },
+  primaryButtonText: {
+    fontSize: fontSize.sm,
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  });
+}

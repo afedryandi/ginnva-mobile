@@ -1,15 +1,20 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { ScreenHeader } from '@/components/ui/ScreenHeader';
-import { Card } from '@/components/ui/Card';
+import { StatusBar } from 'expo-status-bar';
 import { Button } from '@/components/ui/Button';
-import { colors, fontSize, spacing, radius } from '@/constants/theme';
+import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { useAppTheme } from '@/lib/theme-context';
 
-const WEB_ASSET_BASE = 'https://ginnva.id';
+const PRODUCT_IMAGES: Record<string, number> = {
+  'kaca-film-mobil':    require('@/assets/images/car-window-film.webp'),
+  'film-pelindung-cat': require('@/assets/images/paint-protection-film.webp'),
+  'film-pengubah-warna': require('@/assets/images/color-change-film.webp'),
+  'film-kaca-bangunan': require('@/assets/images/architectural-window-film.webp'),
+};
 
 interface SpecRow {
   label: string;
@@ -39,11 +44,11 @@ const PRODUCT_DETAILS: Record<string, ProductDetail> = {
 
   // ── Car Window Film ──────────────────────────────────────────────────────
   'kaca-film-mobil': {
-    title: 'Film Kaca Mobil',
+    title: 'Kaca Film Mobil',
     enTitle: 'Car Window Film',
-    subTitle: 'HIGH-PERFORMANCE CAR WINDOW FILM',
+    subTitle: 'KACA FILM MOBIL PERFORMA TINGGI',
     description:
-      'Diproduksi menggunakan teknologi pelapisan magnetron sputtering multi-layer tingkat lanjut. Kaca film Ginnva memberikan penolakan panas (Heat Rejection) infra merah yang ekstrem, perlindungan blokade sinar UV hingga 99%, serta menjaga visibilitas berkendara tetap jernih tanpa mengganggu sinyal GPS maupun seluler.',
+      'Kaca Film Mobil Ginnva menggunakan teknologi pelapisan Magnetron Sputtering Multi-Layer dan Nano-Ceramic tingkat lanjut. Tersedia dalam berbagai seri mulai dari Bi-silver Sputtering (garansi 10 tahun) hingga Nano-Ceramic (garansi 8 tahun). Semua seri memberikan perlindungan UV hingga 99%, penolakan panas inframerah superior, dan kejernihan optik tinggi — tanpa mengganggu sinyal GPS maupun e-Toll.',
     image: '/image/product/car-window-film.webp',
     specs: [
       {
@@ -52,6 +57,7 @@ const PRODUCT_DETAILS: Record<string, ProductDetail> = {
           { caption: 'Posisi',    value: 'Depan' },
           { caption: 'Tebal',     value: '2 mil' },
           { caption: 'VLT',       value: '72%' },
+          { caption: 'VLR',       value: '10%' },
           { caption: 'Blokir UV', value: '99%' },
           { caption: 'TSER',      value: '61%' },
           { caption: 'Garansi',   value: '10 Tahun' },
@@ -63,6 +69,7 @@ const PRODUCT_DETAILS: Record<string, ProductDetail> = {
           { caption: 'Posisi',    value: 'Depan' },
           { caption: 'Tebal',     value: '2 mil' },
           { caption: 'VLT',       value: '72%' },
+          { caption: 'VLR',       value: '8%' },
           { caption: 'Blokir UV', value: '99%' },
           { caption: 'TSER',      value: '47%' },
           { caption: 'Garansi',   value: '8 Tahun' },
@@ -74,6 +81,7 @@ const PRODUCT_DETAILS: Record<string, ProductDetail> = {
           { caption: 'Posisi',    value: 'Samping/Belakang' },
           { caption: 'Tebal',     value: '2 mil' },
           { caption: 'VLT',       value: '28%' },
+          { caption: 'VLR',       value: '6%' },
           { caption: 'Blokir UV', value: '99%' },
           { caption: 'TSER',      value: '56%' },
           { caption: 'Garansi',   value: '8 Tahun' },
@@ -85,6 +93,7 @@ const PRODUCT_DETAILS: Record<string, ProductDetail> = {
           { caption: 'Posisi',    value: 'Samping/Belakang' },
           { caption: 'Tebal',     value: '2 mil' },
           { caption: 'VLT',       value: '16%' },
+          { caption: 'VLR',       value: '5%' },
           { caption: 'Blokir UV', value: '99%' },
           { caption: 'TSER',      value: '65%' },
           { caption: 'Garansi',   value: '8 Tahun' },
@@ -106,28 +115,28 @@ const PRODUCT_DETAILS: Record<string, ProductDetail> = {
       },
       {
         q: 'Mengapa H30 dan H15 lebih gelap dari A70/H70?',
-        a: 'H30 (VLT 28%) dan H15 (VLT 16%) dirancang untuk kaca samping dan belakang. Semakin rendah VLT (Visible Light Transmittance), semakin gelap film dan semakin tinggi tingkat privasi penumpang.',
+        a: 'H30 (VLT 28%) dan H15 (VLT 16%) dirancang khusus untuk kaca samping dan belakang. Kaca di area ini umumnya dipasang film lebih gelap untuk meningkatkan privasi penumpang. Semakin rendah nilai VLT, semakin gelap tampilan film dan semakin tinggi tingkat privasi yang didapat.',
       },
       {
         q: 'Apakah Ginnva menyediakan garansi digital?',
-        a: 'Ya. Setiap produk Ginnva dilengkapi garansi elektronik (E-Warranty) yang dapat diverifikasi melalui aplikasi atau website resmi Ginnva.',
+        a: 'Ya. Setiap pemasangan produk Ginnva dilengkapi E-Warranty resmi yang diterbitkan secara digital — mencakup data kendaraan, produk yang dipasang, tanggal pemasangan, dan masa berlaku garansi. Garansi dapat diverifikasi kapan saja melalui sistem E-Warranty Ginnva Indonesia.',
       },
     ],
   },
 
   // ── Paint Protection Film ────────────────────────────────────────────────
   'film-pelindung-cat': {
-    title: 'Paint Protection Film',
-    enTitle: 'Film Pelindung Cat',
-    subTitle: 'ULTIMATE PAINT PROTECTION',
+    title: 'Film Pelindung Cat',
+    enTitle: 'Paint Protection Film',
+    subTitle: 'FILM PELINDUNG CAT PREMIUM',
     description:
-      'Ginnva PPF menggunakan 100% Polycaprolactone TPU generasi ke-3 dengan lapisan Crystal-shield coating dan adhesive PS berkinerja tinggi. Tersedia dalam kategori Glossy, Matte, dan Color — memberikan perlindungan maksimal dari benturan kerikil, goresan, korosi, dan cuaca ekstrem, dilengkapi fitur self-healing dan ketahanan anti-yellowing superior (ΔE 0.03 pada QUV 400 jam).',
+      'Ginnva PPF menggunakan bahan 100% TPU 3rd Generation dengan lapisan Crystal-Shield dan adhesive berkinerja tinggi. Tersedia dalam seri Black Crystal, Orange Crystal, dan Green Crystal. Melindungi cat dari goresan, benturan kerikil, dan korosi, dilengkapi kemampuan self-healing, ketahanan anti-yellowing superior, dan efek Super Hydrophobic yang membuat permukaan selalu bersih.',
     image: '/image/product/paint-protection-film.webp',
     specs: [
       {
         label: 'Black Crystal M8-M',
         values: [
-          { caption: 'Base Material', value: 'Polycaprolactone TPU' },
+          { caption: 'Base Material', value: 'TPU 3rd Generation' },
           { caption: 'Coating',       value: 'Hydrophobic' },
           { caption: 'Finishing',     value: 'Matte' },
           { caption: 'Ketebalan',     value: '7.5 ± 3% mil' },
@@ -138,7 +147,7 @@ const PRODUCT_DETAILS: Record<string, ProductDetail> = {
       {
         label: 'Orange Crystal M10',
         values: [
-          { caption: 'Base Material', value: 'Polycaprolactone TPU' },
+          { caption: 'Base Material', value: 'TPU 3rd Generation' },
           { caption: 'Coating',       value: 'Hydrophobic' },
           { caption: 'Finishing',     value: 'Gloss' },
           { caption: 'Ketebalan',     value: '8.8 ± 3% mil' },
@@ -149,7 +158,7 @@ const PRODUCT_DETAILS: Record<string, ProductDetail> = {
       {
         label: 'Orange Crystal H10',
         values: [
-          { caption: 'Base Material', value: 'Polycaprolactone TPU' },
+          { caption: 'Base Material', value: 'TPU 3rd Generation' },
           { caption: 'Coating',       value: 'Hydrophobic' },
           { caption: 'Finishing',     value: 'Gloss' },
           { caption: 'Ketebalan',     value: '7.8 ± 3% mil' },
@@ -160,7 +169,7 @@ const PRODUCT_DETAILS: Record<string, ProductDetail> = {
       {
         label: 'Green Crystal EV7',
         values: [
-          { caption: 'Base Material', value: 'Polycaprolactone TPU' },
+          { caption: 'Base Material', value: 'TPU 3rd Generation' },
           { caption: 'Coating',       value: 'Hydrophilic' },
           { caption: 'Finishing',     value: 'Gloss' },
           { caption: 'Ketebalan',     value: '7.5 ± 3% mil' },
@@ -180,11 +189,11 @@ const PRODUCT_DETAILS: Record<string, ProductDetail> = {
       },
       {
         q: 'Apa itu fitur self-healing pada PPF Ginnva?',
-        a: 'Lapisan Crystal-shield coating menggunakan struktur jaringan silang 3 dimensi (X3) yang dapat memulihkan goresan ringan dengan bantuan panas matahari atau air hangat.',
+        a: 'Lapisan Crystal-Shield coating memiliki kemampuan pemulihan mandiri berkat struktur jaringan silang tiga dimensi yang elastis. Goresan ringan dan swirl mark pada permukaan film dapat pulih sendiri dengan bantuan panas matahari atau air hangat — menjaga tampilan kendaraan tetap sempurna tanpa perlu dipoles ulang.',
       },
       {
         q: 'Apakah PPF Ginnva tahan terhadap menguning?',
-        a: 'Ya. Uji QUV selama 400 jam menunjukkan nilai color difference (ΔE) Ginnva hanya 0.03 — jauh lebih rendah dibandingkan merek internasional lain (0.20). UV absorber dicampurkan langsung ke dalam substrat PET untuk daya tahan maksimal.',
+        a: 'Ya. PPF Ginnva memiliki ketahanan anti-yellowing superior yang diuji melalui uji akselerasi QUV selama 400 jam. Hasilnya menunjukkan perubahan warna yang sangat minimal — berkat UV absorber yang dicampurkan langsung ke dalam substrat film, bukan hanya di lapisan adhesive, sehingga perlindungannya jauh lebih tahan lama.',
       },
       {
         q: 'Berapa lama masa garansi PPF Ginnva?',
@@ -193,13 +202,13 @@ const PRODUCT_DETAILS: Record<string, ProductDetail> = {
     ],
   },
 
-  // ── Color Changing Film (coming soon) ────────────────────────────────────
+  // ── Car Color Change Film (coming soon) ──────────────────────────────────
   'film-pengubah-warna': {
     title: 'Film Pengubah Warna',
-    enTitle: 'Color Changing Film',
-    subTitle: 'PREMIUM VINYL WRAPPING SOLUTIONS',
+    enTitle: 'Color Change Film',
+    subTitle: 'FILM PENGUBAH WARNA KENDARAAN',
     description:
-      'Ubah estetika gaya mobil Anda secara instan dengan ratusan pilihan warna eksklusif matt, satin, maupun high-gloss tanpa proses pengecatan ulang yang menurunkan nilai jual kendaraan.',
+      'Ginnva Color Change Film hadir dalam berbagai pilihan warna dan finishing tekstur premium — matte, satin, hingga ultra-gloss — berbasis material PVC berkualitas tinggi. Dipasang presisi menggunakan pola digital cutting sesuai tipe kendaraan, tampilan baru bisa dinikmati tanpa mengorbankan nilai jual kendaraan.',
     image: '/image/product/color-change-film.webp',
     specs: null,
     faqs: [],
@@ -209,10 +218,10 @@ const PRODUCT_DETAILS: Record<string, ProductDetail> = {
   // ── Architectural Window Film (coming soon) ──────────────────────────────
   'film-kaca-bangunan': {
     title: 'Film Kaca Bangunan',
-    enTitle: 'Architectural Window Film',
-    subTitle: 'ECO ENERGY SAVING WINDOW FILM',
+    enTitle: 'Architectural Film',
+    subTitle: 'FILM KACA HEMAT ENERGI',
     description:
-      'Solusi efisiensi energi interior untuk gedung perkantoran dan hunian pribadi. Mereduksi beban kerja AC secara signifikan dengan menolak panas matahari langsung yang menembus kaca jendela.',
+      'Ginnva Architectural Film dirancang untuk kaca gedung dan hunian: menolak panas secara signifikan, memblokir UV hingga 99%, meningkatkan privasi, serta memberikan perlindungan tambahan dari pecahan kaca. Hasilnya adalah interior yang lebih sejuk, nyaman, dan hemat energi sepanjang hari.',
     image: '/image/product/architectural-window-film.webp',
     specs: null,
     faqs: [],
@@ -221,8 +230,9 @@ const PRODUCT_DETAILS: Record<string, ProductDetail> = {
 };
 
 // ─── FAQ ACCORDION ────────────────────────────────────────────────────────────
-function FaqAccordionItem({ item }: { item: FaqItem }) {
+function FaqAccordionItem({ item, colors }: { item: FaqItem; colors: typeof darkColors }) {
   const [open, setOpen] = useState(false);
+  const faqStyles = useMemo(() => createFaqStyles(colors), [colors]);
   return (
     <Pressable style={faqStyles.item} onPress={() => setOpen((v) => !v)}>
       <View style={faqStyles.qRow}>
@@ -230,7 +240,7 @@ function FaqAccordionItem({ item }: { item: FaqItem }) {
         <Ionicons
           name={open ? 'chevron-up' : 'chevron-down'}
           size={18}
-          color={colors.mutedLight}
+          color={colors.textMuted}
         />
       </View>
       {open && <Text style={faqStyles.answer}>{item.a}</Text>}
@@ -242,13 +252,27 @@ function FaqAccordionItem({ item }: { item: FaqItem }) {
 export default function ProductDetailScreen() {
   const { category } = useLocalSearchParams<{ category: string }>();
   const detail = category ? PRODUCT_DETAILS[category] : undefined;
+  const { theme, colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
 
   if (!detail) {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
-        <ScreenHeader title="Produk" />
+        <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+        <View style={styles.header}>
+          {router.canGoBack() ? (
+            <Pressable onPress={() => router.back()} style={styles.sideButton}>
+              <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+            </Pressable>
+          ) : (
+            <View style={styles.sideButton} />
+          )}
+          <Text style={styles.headerTitle} numberOfLines={1}>Produk</Text>
+          <View style={styles.sideButton} />
+        </View>
         <View style={styles.centerState}>
-          <Ionicons name="alert-circle-outline" size={32} color={colors.mutedLight} />
+          <Ionicons name="alert-circle-outline" size={32} color={colors.textMuted} />
           <Text style={styles.centerStateText}>Kategori produk tidak ditemukan.</Text>
         </View>
       </SafeAreaView>
@@ -257,12 +281,26 @@ export default function ProductDetailScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScreenHeader title={detail.title} />
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <View style={styles.header}>
+        {router.canGoBack() ? (
+          <Pressable onPress={() => router.back()} style={styles.sideButton}>
+            <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+          </Pressable>
+        ) : (
+          <View style={styles.sideButton} />
+        )}
+        <Text style={styles.headerTitle} numberOfLines={1}>{detail.title}</Text>
+        <View style={styles.sideButton} />
+      </View>
       <ScrollView contentContainerStyle={styles.scrollContent}>
+        {/* CTA dipindah keluar ScrollView jadi footer menempel (lihat di
+            bawah) — supaya selalu terlihat, tidak perlu scroll sampai
+            habis melewati tabel spesifikasi + FAQ yang bisa panjang. */}
 
         {/* Hero image */}
         <Image
-          source={{ uri: `${WEB_ASSET_BASE}${detail.image}` }}
+          source={PRODUCT_IMAGES[category] ?? require('@/assets/images/car-window-film.webp')}
           style={styles.heroImage}
           contentFit="cover"
         />
@@ -277,7 +315,7 @@ export default function ProductDetailScreen() {
         {/* Coming Soon badge */}
         {detail.comingSoon && (
           <View style={styles.comingSoonBox}>
-            <Ionicons name="time-outline" size={22} color={colors.mutedLight} />
+            <Ionicons name="time-outline" size={22} color={colors.textMuted} />
             <View style={{ flex: 1 }}>
               <Text style={styles.comingSoonTitle}>Segera Hadir di Indonesia</Text>
               <Text style={styles.comingSoonText}>
@@ -293,7 +331,7 @@ export default function ProductDetailScreen() {
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Spesifikasi Teknis</Text>
             </View>
-            <Card style={styles.specsCard}>
+            <View style={styles.specsCard}>
               {detail.specs.map((row, i) => (
                 <View
                   key={row.label}
@@ -313,7 +351,7 @@ export default function ProductDetailScreen() {
                   </View>
                 </View>
               ))}
-            </Card>
+            </View>
           </>
         )}
 
@@ -323,180 +361,232 @@ export default function ProductDetailScreen() {
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Pertanyaan Umum</Text>
             </View>
-            <Card style={styles.faqCard}>
+            <View style={styles.faqCard}>
               {detail.faqs.map((item) => (
-                <FaqAccordionItem key={item.q} item={item} />
+                <FaqAccordionItem key={item.q} item={item} colors={colors} />
               ))}
-            </Card>
+            </View>
           </>
         )}
 
-        {/* CTA */}
-        <View style={styles.ctaBlock}>
-          <Button
-            label={detail.comingSoon ? 'Tanya Ketersediaan' : 'Ajukan Penawaran'}
-            onPress={() => router.push('/quotation' as never)}
-          />
-        </View>
-
       </ScrollView>
+
+      {/* CTA — footer menempel di luar ScrollView, selalu terlihat */}
+      <View style={[styles.ctaBlock, { paddingBottom: insets.bottom > 0 ? insets.bottom : spacing.md }]}>
+        <Button
+          label={detail.comingSoon ? 'Daftarkan Minat Saya' : 'Ajukan Penawaran'}
+          onPress={() => {
+            if (detail.comingSoon) {
+              // Produk belum dijual — arahkan ke form /inquiry (tersimpan
+              // ke backend/Filament sebagai ProductInquiry), BUKAN buka
+              // WhatsApp langsung — supaya minat customer benar-benar
+              // tercatat di sistem, bukan cuma jadi chat yang gampang
+              // hilang. Nama produk dikirim lewat param supaya form bisa
+              // prefill catatan (ProductInquiry tidak punya kolom produk
+              // sendiri, cuma customer_name/contact/message bebas).
+              router.push({
+                pathname: '/inquiry',
+                params: { product: detail.title },
+              } as never);
+            } else {
+              router.push('/quotation' as never);
+            }
+          }}
+        />
+      </View>
     </SafeAreaView>
   );
 }
 
 // ─── STYLES ──────────────────────────────────────────────────────────────────
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.white,
-  },
-  scrollContent: {
-    paddingBottom: spacing.xxl,
-  },
-  centerState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.xl,
-  },
-  centerStateText: {
-    fontSize: fontSize.sm,
-    color: colors.muted,
-    textAlign: 'center',
-  },
-  heroImage: {
-    width: '100%',
-    height: 220,
-    backgroundColor: colors.alt,
-  },
-  introBlock: {
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
-    gap: spacing.xs,
-  },
-  subTitle: {
-    fontSize: fontSize.xs,
-    fontWeight: '700',
-    color: colors.accent,
-    letterSpacing: 0.8,
-  },
-  enTitle: {
-    fontSize: fontSize.xl,
-    fontWeight: '800',
-    color: colors.ink,
-  },
-  description: {
-    fontSize: fontSize.sm,
-    color: colors.muted,
-    lineHeight: 22,
-    marginTop: spacing.xs,
-  },
-  comingSoonBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.sm,
-    marginHorizontal: spacing.md,
-    marginTop: spacing.lg,
-    padding: spacing.md,
-    borderWidth: 1.5,
-    borderStyle: 'dashed',
-    borderColor: colors.line,
-    borderRadius: radius.lg,
-    backgroundColor: colors.alt,
-  },
-  comingSoonTitle: {
-    fontSize: fontSize.sm,
-    fontWeight: '700',
-    color: colors.ink,
-    marginBottom: 2,
-  },
-  comingSoonText: {
-    fontSize: fontSize.sm,
-    color: colors.muted,
-    lineHeight: 20,
-  },
-  sectionHeader: {
-    paddingHorizontal: spacing.md,
-    marginTop: spacing.lg,
-    marginBottom: spacing.sm,
-  },
-  sectionTitle: {
-    fontSize: fontSize.lg,
-    fontWeight: '700',
-    color: colors.ink,
-  },
-  specsCard: {
-    marginHorizontal: spacing.md,
-    padding: 0,
-    overflow: 'hidden',
-  },
-  specRow: {
-    padding: spacing.md,
-  },
-  specRowBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: colors.line,
-  },
-  specLabel: {
-    fontSize: fontSize.sm,
-    fontWeight: '700',
-    color: colors.ink,
-    marginBottom: spacing.sm,
-  },
-  specGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-    rowGap: spacing.md,
-  },
-  specItem: {
-    width: '46%',
-  },
-  specCaption: {
-    fontSize: fontSize.xs,
-    color: colors.mutedLight,
-  },
-  specValue: {
-    fontSize: fontSize.sm,
-    fontWeight: '700',
-    color: colors.accent,
-    marginTop: 2,
-  },
-  faqCard: {
-    marginHorizontal: spacing.md,
-    padding: 0,
-    overflow: 'hidden',
-  },
-  ctaBlock: {
-    paddingHorizontal: spacing.md,
-    marginTop: spacing.lg,
-  },
-});
+function createStyles(colors: typeof darkColors) {
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.bg,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      backgroundColor: colors.bg,
+    },
+    sideButton: {
+      width: 40,
+      height: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    headerTitle: {
+      fontSize: fontSize.lg,
+      fontWeight: '700',
+      color: colors.textPrimary,
+      flex: 1,
+      textAlign: 'center',
+    },
+    scrollContent: {
+      paddingBottom: spacing.xxl,
+    },
+    centerState: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.sm,
+      paddingHorizontal: spacing.xl,
+    },
+    centerStateText: {
+      fontSize: fontSize.sm,
+      color: colors.textSecondary,
+      textAlign: 'center',
+    },
+    heroImage: {
+      width: '100%',
+      height: 220,
+      backgroundColor: colors.surface,
+    },
+    introBlock: {
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.md,
+      gap: spacing.xs,
+    },
+    subTitle: {
+      fontSize: fontSize.xs,
+      fontWeight: '700',
+      color: colors.accent,
+      letterSpacing: 0.8,
+    },
+    enTitle: {
+      fontSize: fontSize.xl,
+      fontWeight: '800',
+      color: colors.textPrimary,
+    },
+    description: {
+      fontSize: fontSize.sm,
+      color: colors.textSecondary,
+      lineHeight: 22,
+      marginTop: spacing.xs,
+    },
+    comingSoonBox: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: spacing.sm,
+      marginHorizontal: spacing.md,
+      marginTop: spacing.lg,
+      padding: spacing.md,
+      borderWidth: 1.5,
+      borderStyle: 'dashed',
+      borderColor: colors.border,
+      borderRadius: radius.lg,
+      backgroundColor: colors.surface,
+    },
+    comingSoonTitle: {
+      fontSize: fontSize.sm,
+      fontWeight: '700',
+      color: colors.textPrimary,
+      marginBottom: 2,
+    },
+    comingSoonText: {
+      fontSize: fontSize.sm,
+      color: colors.textSecondary,
+      lineHeight: 20,
+    },
+    sectionHeader: {
+      paddingHorizontal: spacing.md,
+      marginTop: spacing.lg,
+      marginBottom: spacing.sm,
+    },
+    sectionTitle: {
+      fontSize: fontSize.lg,
+      fontWeight: '700',
+      color: colors.textPrimary,
+    },
+    specsCard: {
+      marginHorizontal: spacing.md,
+      borderRadius: radius.lg,
+      overflow: 'hidden',
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    specRow: {
+      padding: spacing.md,
+    },
+    specRowBorder: {
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    specLabel: {
+      fontSize: fontSize.sm,
+      fontWeight: '700',
+      color: colors.textPrimary,
+      marginBottom: spacing.sm,
+    },
+    specGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+      rowGap: spacing.md,
+    },
+    specItem: {
+      width: '46%',
+    },
+    specCaption: {
+      fontSize: fontSize.xs,
+      color: colors.textMuted,
+    },
+    specValue: {
+      fontSize: fontSize.sm,
+      fontWeight: '700',
+      color: colors.accent,
+      marginTop: 2,
+    },
+    faqCard: {
+      marginHorizontal: spacing.md,
+      borderRadius: radius.lg,
+      overflow: 'hidden',
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    ctaBlock: {
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.sm,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      backgroundColor: colors.bg,
+    },
+  });
+}
 
-const faqStyles = StyleSheet.create({
-  item: {
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.line,
-  },
-  qRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-  },
-  question: {
-    flex: 1,
-    fontSize: fontSize.sm,
-    fontWeight: '600',
-    color: colors.ink,
-  },
-  answer: {
-    fontSize: fontSize.sm,
-    color: colors.muted,
-    marginTop: spacing.sm,
-    lineHeight: 20,
-  },
-});
+function createFaqStyles(colors: typeof darkColors) {
+  return StyleSheet.create({
+    item: {
+      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.md,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    qRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: spacing.sm,
+    },
+    question: {
+      flex: 1,
+      fontSize: fontSize.sm,
+      fontWeight: '600',
+      color: colors.textPrimary,
+    },
+    answer: {
+      fontSize: fontSize.sm,
+      color: colors.textSecondary,
+      marginTop: spacing.sm,
+      lineHeight: 20,
+    },
+  });
+}

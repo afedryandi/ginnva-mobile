@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -10,28 +10,38 @@ import {
   Animated,
   PanResponder,
   Share,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { ScreenHeader } from '@/components/ui/ScreenHeader';
-import { Card } from '@/components/ui/Card';
+import { StatusBar } from 'expo-status-bar';
 import { Button } from '@/components/ui/Button';
-import { colors, fontSize, spacing, radius } from '@/constants/theme';
+import { PickerModal } from '@/components/ui/PickerModal';
+import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useFadeIn } from '@/lib/useFadeIn';
+import { useAppTheme } from '@/lib/theme-context';
 import { hapticLight, hapticMedium, hapticSuccess, hapticError } from '@/lib/haptics';
 
 interface VehicleOption {
   id: number;
   brand: string;
   model: string;
+  variant: string | null;
 }
 
 interface ProductOption {
   id: number;
   name: string;
   product_type: string;
+}
+
+interface StoreOption {
+  id: number;
+  name: string;
+  city: string;
 }
 
 const PRODUCT_TYPE_LABEL: Record<string, string> = {
@@ -54,14 +64,27 @@ const SWIPE_THRESHOLD = 60;
 
 export default function QuotationScreen() {
   const insets = useSafeAreaInsets();
+  const { theme, colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [phase, setPhase] = useState<Phase>('loading');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
+  const [brands, setBrands] = useState<string[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
+  const [stores, setStores] = useState<StoreOption[]>([]);
 
   const [stepIndex, setStepIndex] = useState(0);
+  const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
+  const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const [selectedVariant, setSelectedVariant] = useState<string | null>(null);
   const [vehicleId, setVehicleId] = useState<number | null>(null);
+
+  const [brandPickerOpen, setBrandPickerOpen] = useState(false);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [variantPickerOpen, setVariantPickerOpen] = useState(false);
+  const [storePickerOpen, setStorePickerOpen] = useState(false);
   const [selectedProductIds, setSelectedProductIds] = useState<number[]>([]);
+  const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
@@ -77,16 +100,20 @@ export default function QuotationScreen() {
 
   useEffect(() => {
     loadOptions();
+    apiFetch<{ data: StoreOption[] }>('/api/stores', { skipAuth: true })
+      .then((res) => setStores(res.data))
+      .catch(() => {});
   }, []);
 
   const loadOptions = () => {
     setPhase('loading');
     setLoadError(null);
-    apiFetch<{ data: { vehicles: VehicleOption[]; products: ProductOption[] } }>(
+    apiFetch<{ data: { brands: string[]; vehicles: VehicleOption[]; products: ProductOption[] } }>(
       '/api/quotation/options',
       { skipAuth: true }
     )
       .then((res) => {
+        setBrands(res.data.brands);
         setVehicles(res.data.vehicles);
         setProducts(res.data.products);
         setPhase('wizard');
@@ -120,15 +147,80 @@ export default function QuotationScreen() {
     {}
   );
 
+  // Cascading vehicle helpers
+  const modelsForBrand = selectedBrand
+    ? [...new Set(vehicles.filter((v) => v.brand === selectedBrand).map((v) => v.model))]
+    : [];
+
+  const variantsForModel = selectedBrand && selectedModel
+    ? vehicles
+        .filter((v) => v.brand === selectedBrand && v.model === selectedModel && v.variant)
+        .map((v) => v.variant as string)
+    : [];
+
+  const hasVariants = variantsForModel.length > 0;
+
+  const resolveVehicleId = (brand: string, model: string, variant: string | null): number | null => {
+    const match = vehicles.find(
+      (v) => v.brand === brand && v.model === model && (hasVariants ? v.variant === variant : true)
+    );
+    return match?.id ?? null;
+  };
+
+  const handleSelectBrand = (brand: string) => {
+    setSelectedBrand(brand);
+    setSelectedModel(null);
+    setSelectedVariant(null);
+    setVehicleId(null);
+    hapticLight();
+  };
+
+  const handleSelectModel = (model: string) => {
+    setSelectedModel(model);
+    setSelectedVariant(null);
+    // Jika tidak ada varian, langsung resolve vehicle id sekarang
+    const variants = vehicles
+      .filter((v) => v.brand === selectedBrand && v.model === model && v.variant)
+      .map((v) => v.variant as string);
+    if (variants.length === 0) {
+      const id = resolveVehicleId(selectedBrand!, model, null);
+      setVehicleId(id);
+    } else {
+      setVehicleId(null);
+    }
+    hapticLight();
+  };
+
+  const handleSelectVariant = (variant: string) => {
+    setSelectedVariant(variant);
+    const id = resolveVehicleId(selectedBrand!, selectedModel!, variant);
+    setVehicleId(id);
+    hapticLight();
+  };
+
   const selectedVehicle = vehicles.find((v) => v.id === vehicleId) ?? null;
   const selectedProducts = sellableProducts.filter((p) =>
     selectedProductIds.includes(p.id)
   );
 
+  // Label toko diformat "Nama — Kota" supaya bisa dipakai di PickerModal
+  // yang berbasis string biasa (sama seperti pola Merek/Tipe/Varian).
+  const storeOptions = stores.map((s) => `${s.name} — ${s.city}`);
+  const selectedStore = stores.find((s) => s.id === selectedStoreId) ?? null;
+  const selectedStoreLabel = selectedStore ? `${selectedStore.name} — ${selectedStore.city}` : null;
+
+  const handleSelectStore = (label: string) => {
+    const store = stores.find((s) => `${s.name} — ${s.city}` === label);
+    setSelectedStoreId(store?.id ?? null);
+    hapticLight();
+  };
+
+  const step0Valid = selectedBrand !== null && selectedModel !== null && (hasVariants ? selectedVariant !== null : true) && vehicleId !== null;
+
   const stepValid = [
-    vehicleId !== null,
+    step0Valid,
     selectedProductIds.length > 0,
-    customerName.trim().length > 0 && customerPhone.trim().length > 0,
+    selectedStoreId !== null && customerName.trim().length > 0 && customerPhone.trim().length > 0 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail.trim()),
     true,
   ];
 
@@ -184,6 +276,7 @@ export default function QuotationScreen() {
         skipAuth: true,
         body: JSON.stringify({
           vehicle_id: vehicleId,
+          store_id: selectedStoreId,
           customer_name: customerName.trim(),
           customer_phone: customerPhone.trim(),
           customer_email: customerEmail.trim() || undefined,
@@ -200,7 +293,7 @@ export default function QuotationScreen() {
       })
       .catch((err) => {
         hapticError();
-      setSubmitError(
+        setSubmitError(
           err instanceof ApiError
             ? err.message
             : 'Gagal mengirim permintaan. Periksa koneksi internet Anda dan coba lagi.'
@@ -211,10 +304,11 @@ export default function QuotationScreen() {
 
   const handleShareWhatsApp = () => {
     const productNames = selectedProducts.map((p) => `- ${p.name}`).join('\n');
+    const vehicleLabel = [selectedBrand, selectedModel, selectedVariant].filter(Boolean).join(' ');
     const text =
       `Permintaan Penawaran Ginnva\n` +
       `No. Referensi: ${quotationNumber}\n` +
-      `Kendaraan: ${selectedVehicle ? `${selectedVehicle.brand} ${selectedVehicle.model}` : '-'}\n` +
+      `Kendaraan: ${vehicleLabel || '-'}\n` +
       `Produk diminati:\n${productNames}\n` +
       `Kontak: ${customerName} (${customerPhone})`;
     Share.share({ message: text }).catch(() => {
@@ -222,10 +316,25 @@ export default function QuotationScreen() {
     });
   };
 
+  const HeaderBar = () => (
+    <View style={styles.header}>
+      {router.canGoBack() ? (
+        <Pressable onPress={() => router.back()} style={styles.sideButton}>
+          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+        </Pressable>
+      ) : (
+        <View style={styles.sideButton} />
+      )}
+      <Text style={styles.headerTitle} numberOfLines={1}>Ajukan Penawaran</Text>
+      <View style={styles.sideButton} />
+    </View>
+  );
+
   if (phase === 'loading') {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
-        <ScreenHeader title="Ajukan Penawaran" />
+        <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+        <HeaderBar />
         <View style={styles.centerState}>
           <ActivityIndicator color={colors.accent} />
         </View>
@@ -236,9 +345,10 @@ export default function QuotationScreen() {
   if (phase === 'error') {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
-        <ScreenHeader title="Ajukan Penawaran" />
+        <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+        <HeaderBar />
         <View style={styles.centerState}>
-          <Ionicons name="cloud-offline-outline" size={32} color={colors.mutedLight} />
+          <Ionicons name="cloud-offline-outline" size={32} color={colors.textMuted} />
           <Text style={styles.centerStateText}>{loadError}</Text>
           <Pressable style={styles.retryButton} onPress={loadOptions}>
             <Text style={styles.retryText}>Coba Lagi</Text>
@@ -251,10 +361,11 @@ export default function QuotationScreen() {
   if (phase === 'success') {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
-        <ScreenHeader title="Ajukan Penawaran" />
+        <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+        <HeaderBar />
         <Animated.ScrollView contentContainerStyle={styles.centerState} style={{ opacity: successOpacity }}>
           <View style={styles.successIconWrap}>
-            <Ionicons name="checkmark" size={36} color={colors.white} />
+            <Ionicons name="checkmark" size={36} color="#ffffff" />
           </View>
           <Text style={styles.successTitle}>Permintaan Terkirim</Text>
           <Text style={styles.centerStateText}>
@@ -263,10 +374,8 @@ export default function QuotationScreen() {
           </Text>
           <Text style={styles.successNote}>
             Tim sales kami akan segera menghubungi Anda lewat nomor telepon yang
-            didaftarkan untuk membahas detail dan harga.
-            {customerEmail.trim().length > 0
-              ? `\n\nEmail konfirmasi telah dikirim ke ${customerEmail}.`
-              : ''}
+            didaftarkan untuk membahas detail dan harga.{'\n\n'}
+            Email konfirmasi telah dikirim ke {customerEmail}.
           </Text>
           <Text style={styles.successNextStep}>
             💡 Setelah tim kami menghubungi Anda dan harga disepakati, Anda bisa melanjutkan dengan membuat booking jadwal instalasi di menu <Text style={styles.successNextStepBold}>Booking</Text>.
@@ -296,12 +405,21 @@ export default function QuotationScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScreenHeader title="Ajukan Penawaran" />
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <HeaderBar />
 
-      {/* ===== Progress dots ===== */}
+      {/* ===== Progress dots — step yang sudah dilewati bisa ditap untuk
+          lompat balik langsung (mis. dari Ringkasan mau ubah Kendaraan),
+          step yang belum tercapai tidak bisa ditap (mencegah lompat maju
+          melewati validasi). ===== */}
       <View style={styles.progressRow}>
         {STEP_TITLES.map((title, i) => (
-          <View key={title} style={styles.progressItem}>
+          <Pressable
+            key={title}
+            style={styles.progressItem}
+            disabled={i >= stepIndex}
+            onPress={() => animateTo(i)}
+          >
             <View
               style={[
                 styles.progressDot,
@@ -310,7 +428,7 @@ export default function QuotationScreen() {
               ]}
             >
               {i < stepIndex ? (
-                <Ionicons name="checkmark" size={12} color={colors.white} />
+                <Ionicons name="checkmark" size={12} color="#ffffff" />
               ) : (
                 <Text
                   style={[
@@ -336,10 +454,14 @@ export default function QuotationScreen() {
                 style={[styles.progressLine, i < stepIndex && styles.progressLineDone]}
               />
             )}
-          </View>
+          </Pressable>
         ))}
       </View>
 
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
       <Animated.View
         style={[styles.flex, { transform: [{ translateX: slideAnim }] }]}
         {...panResponder.panHandlers}
@@ -355,25 +477,86 @@ export default function QuotationScreen() {
                 sales kami akan menghubungi Anda untuk membahas harga dan
                 jadwal pemasangan.
               </Text>
+
+              {/* Picker row — Merek */}
               <Text style={styles.sectionLabel}>Kendaraan Anda</Text>
-              <View style={styles.chipWrap}>
-                {vehicles.map((v) => (
-                  <Pressable
-                    key={v.id}
-                    style={[styles.chip, vehicleId === v.id && styles.chipActive]}
-                    onPress={() => setVehicleId(v.id)}
-                  >
-                    <Text
-                      style={[
-                        styles.chipText,
-                        vehicleId === v.id && styles.chipTextActive,
-                      ]}
-                    >
-                      {v.brand} {v.model}
+              <Pressable style={styles.pickerRow} onPress={() => setBrandPickerOpen(true)}>
+                <View style={styles.pickerRowLeft}>
+                  <Ionicons name="car-outline" size={20} color={selectedBrand ? colors.accent : colors.textMuted} />
+                  <View>
+                    <Text style={styles.pickerRowHint}>Merek Mobil</Text>
+                    <Text style={[styles.pickerRowValue, !selectedBrand && styles.pickerRowPlaceholder]}>
+                      {selectedBrand ?? 'Pilih merek...'}
                     </Text>
-                  </Pressable>
-                ))}
-              </View>
+                  </View>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+              </Pressable>
+
+              {/* Picker row — Tipe */}
+              <Pressable
+                style={[styles.pickerRow, !selectedBrand && styles.pickerRowDisabled]}
+                onPress={() => selectedBrand && setModelPickerOpen(true)}
+              >
+                <View style={styles.pickerRowLeft}>
+                  <Ionicons name="list-outline" size={20} color={selectedModel ? colors.accent : colors.textMuted} />
+                  <View>
+                    <Text style={styles.pickerRowHint}>Tipe Mobil</Text>
+                    <Text style={[styles.pickerRowValue, !selectedModel && styles.pickerRowPlaceholder]}>
+                      {selectedModel ?? (selectedBrand ? 'Pilih tipe...' : 'Pilih merek dulu')}
+                    </Text>
+                  </View>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+              </Pressable>
+
+              {/* Picker row — Varian (hanya jika ada) */}
+              {selectedModel && hasVariants && (
+                <Pressable
+                  style={styles.pickerRow}
+                  onPress={() => setVariantPickerOpen(true)}
+                >
+                  <View style={styles.pickerRowLeft}>
+                    <Ionicons name="options-outline" size={20} color={selectedVariant ? colors.accent : colors.textMuted} />
+                    <View>
+                      <Text style={styles.pickerRowHint}>Varian</Text>
+                      <Text style={[styles.pickerRowValue, !selectedVariant && styles.pickerRowPlaceholder]}>
+                        {selectedVariant ?? 'Pilih varian...'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+                </Pressable>
+              )}
+
+              {/* Modals */}
+              <PickerModal
+                visible={brandPickerOpen}
+                title="Pilih Merek Mobil"
+                options={brands as string[]}
+                selected={selectedBrand}
+                onSelect={handleSelectBrand}
+                onClose={() => setBrandPickerOpen(false)}
+                searchPlaceholder="Cari merek..."
+              />
+              <PickerModal
+                visible={modelPickerOpen}
+                title="Pilih Tipe Mobil"
+                options={modelsForBrand}
+                selected={selectedModel}
+                onSelect={handleSelectModel}
+                onClose={() => setModelPickerOpen(false)}
+                searchPlaceholder="Cari tipe..."
+              />
+              <PickerModal
+                visible={variantPickerOpen}
+                title="Pilih Varian"
+                options={variantsForModel}
+                selected={selectedVariant}
+                onSelect={handleSelectVariant}
+                onClose={() => setVariantPickerOpen(false)}
+                searchPlaceholder="Cari varian..."
+              />
             </View>
           )}
 
@@ -396,7 +579,7 @@ export default function QuotationScreen() {
                         <Ionicons
                           name={selected ? 'checkbox' : 'square-outline'}
                           size={20}
-                          color={selected ? colors.accent : colors.mutedLight}
+                          color={selected ? colors.accent : colors.textMuted}
                         />
                         <Text style={styles.productRowText}>{p.name}</Text>
                       </Pressable>
@@ -412,7 +595,7 @@ export default function QuotationScreen() {
                 <Ionicons
                   name="information-circle-outline"
                   size={16}
-                  color={colors.muted}
+                  color={colors.textSecondary}
                 />
                 <Text style={styles.notYetSoldText}>
                   Tertarik Color Change Film? Produk ini belum tersedia untuk
@@ -425,13 +608,36 @@ export default function QuotationScreen() {
 
           {stepIndex === 2 && (
             <View>
+              <Text style={styles.sectionLabel}>Toko Tujuan</Text>
+              <Pressable style={styles.pickerRow} onPress={() => setStorePickerOpen(true)}>
+                <View style={styles.pickerRowLeft}>
+                  <Ionicons name="storefront-outline" size={20} color={selectedStoreId ? colors.accent : colors.textMuted} />
+                  <View>
+                    <Text style={styles.pickerRowHint}>Toko/Dealer *</Text>
+                    <Text style={[styles.pickerRowValue, !selectedStoreId && styles.pickerRowPlaceholder]}>
+                      {selectedStoreLabel ?? 'Pilih toko terdekat...'}
+                    </Text>
+                  </View>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+              </Pressable>
+              <PickerModal
+                visible={storePickerOpen}
+                title="Pilih Toko Tujuan"
+                options={storeOptions}
+                selected={selectedStoreLabel}
+                onSelect={handleSelectStore}
+                onClose={() => setStorePickerOpen(false)}
+                searchPlaceholder="Cari toko atau kota..."
+              />
+
               <Text style={styles.sectionLabel}>Data Kontak</Text>
-              <Card style={styles.formCard}>
+              <View style={styles.formCard}>
                 <Text style={styles.fieldLabel}>Nama Lengkap *</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="Nama Anda"
-                  placeholderTextColor={colors.mutedLight}
+                  placeholderTextColor={colors.textMuted}
                   value={customerName}
                   onChangeText={setCustomerName}
                 />
@@ -439,16 +645,16 @@ export default function QuotationScreen() {
                 <TextInput
                   style={styles.input}
                   placeholder="08xxxxxxxxxx"
-                  placeholderTextColor={colors.mutedLight}
+                  placeholderTextColor={colors.textMuted}
                   value={customerPhone}
                   onChangeText={setCustomerPhone}
                   keyboardType="phone-pad"
                 />
-                <Text style={styles.fieldLabel}>Email (opsional — untuk konfirmasi)</Text>
+                <Text style={styles.fieldLabel}>Email *</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="nama@email.com"
-                  placeholderTextColor={colors.mutedLight}
+                  placeholderTextColor={colors.textMuted}
                   value={customerEmail}
                   onChangeText={setCustomerEmail}
                   keyboardType="email-address"
@@ -458,39 +664,49 @@ export default function QuotationScreen() {
                 <TextInput
                   style={styles.input}
                   placeholder="B 1234 ABC"
-                  placeholderTextColor={colors.mutedLight}
+                  placeholderTextColor={colors.textMuted}
                   value={licensePlate}
                   onChangeText={setLicensePlate}
                   autoCapitalize="characters"
                 />
-              </Card>
+              </View>
             </View>
           )}
 
           {stepIndex === 3 && (
             <View>
               <Text style={styles.sectionLabel}>Catatan Tambahan (opsional)</Text>
-              <Card style={styles.formCard}>
+              <View style={styles.formCard}>
                 <TextInput
                   style={[styles.input, styles.textArea]}
                   placeholder="Mis. preferensi warna, jadwal pemasangan, dsb."
-                  placeholderTextColor={colors.mutedLight}
+                  placeholderTextColor={colors.textMuted}
                   value={message}
                   onChangeText={setMessage}
                   multiline
                   numberOfLines={3}
                 />
-              </Card>
+              </View>
 
               <Text style={styles.sectionLabel}>Ringkasan</Text>
-              <Card style={styles.formCard}>
+              <View style={styles.formCard}>
                 <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Kendaraan</Text>
-                  <Text style={styles.summaryValue}>
-                    {selectedVehicle
-                      ? `${selectedVehicle.brand} ${selectedVehicle.model}`
-                      : '-'}
-                  </Text>
+                  <Text style={styles.summaryLabel}>Merek</Text>
+                  <Text style={styles.summaryValue}>{selectedBrand || '-'}</Text>
+                </View>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Tipe</Text>
+                  <Text style={styles.summaryValue}>{selectedModel || '-'}</Text>
+                </View>
+                {selectedVariant && (
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>Varian</Text>
+                    <Text style={styles.summaryValue}>{selectedVariant}</Text>
+                  </View>
+                )}
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Toko</Text>
+                  <Text style={styles.summaryValue}>{selectedStoreLabel || '-'}</Text>
                 </View>
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Produk</Text>
@@ -518,7 +734,7 @@ export default function QuotationScreen() {
                     <Text style={styles.summaryValue}>{licensePlate}</Text>
                   </View>
                 )}
-              </Card>
+              </View>
 
               {submitError && (
                 <View style={styles.submitErrorBox}>
@@ -530,8 +746,16 @@ export default function QuotationScreen() {
           )}
         </ScrollView>
       </Animated.View>
+      </KeyboardAvoidingView>
 
       {/* ===== Navigasi bawah ===== */}
+      {!stepValid[stepIndex] && (
+        <Text style={styles.stepHint}>
+          {stepIndex === 0 && 'Pilih merek, tipe, dan varian (jika ada) kendaraan Anda.'}
+          {stepIndex === 1 && 'Pilih minimal satu produk yang diminati.'}
+          {stepIndex === 2 && 'Lengkapi toko tujuan, nama, nomor telepon, dan email yang valid.'}
+        </Text>
+      )}
       <View style={[styles.navRow, { paddingBottom: insets.bottom > 0 ? insets.bottom : spacing.md }]}>
         {stepIndex > 0 ? (
           <Button
@@ -565,11 +789,24 @@ export default function QuotationScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: typeof darkColors) {
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.white,
+    backgroundColor: colors.bg,
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.bg,
+  },
+  sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
   flex: {
     flex: 1,
   },
@@ -587,7 +824,7 @@ const styles = StyleSheet.create({
   },
   centerStateText: {
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
     textAlign: 'center',
   },
   retryButton: {
@@ -598,45 +835,22 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
   },
   retryText: {
-    color: colors.white,
+    color: '#ffffff',
     fontSize: fontSize.sm,
     fontWeight: '600',
   },
   intro: {
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
     lineHeight: 20,
     marginBottom: spacing.lg,
   },
   sectionLabel: {
     fontSize: fontSize.base,
     fontWeight: '700',
-    color: colors.ink,
+    color: colors.textPrimary,
     marginBottom: spacing.sm,
     marginTop: spacing.sm,
-  },
-  chipWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  chip: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.alt,
-    borderRadius: radius.pill,
-  },
-  chipActive: {
-    backgroundColor: colors.accent,
-  },
-  chipText: {
-    fontSize: fontSize.sm,
-    color: colors.ink,
-    fontWeight: '600',
-  },
-  chipTextActive: {
-    color: colors.white,
   },
   productGroup: {
     marginBottom: spacing.md,
@@ -644,7 +858,7 @@ const styles = StyleSheet.create({
   productGroupTitle: {
     fontSize: fontSize.xs,
     fontWeight: '700',
-    color: colors.mutedLight,
+    color: colors.textMuted,
     letterSpacing: 0.5,
     marginBottom: spacing.xs,
   },
@@ -657,17 +871,17 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   productRowActive: {
-    backgroundColor: colors.alt,
+    backgroundColor: colors.surface,
   },
   productRowText: {
     fontSize: fontSize.sm,
-    color: colors.ink,
+    color: colors.textPrimary,
   },
   notYetSoldNote: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: spacing.xs,
-    backgroundColor: colors.alt,
+    backgroundColor: colors.surface,
     borderRadius: radius.md,
     padding: spacing.sm,
     marginBottom: spacing.md,
@@ -675,26 +889,31 @@ const styles = StyleSheet.create({
   notYetSoldText: {
     flex: 1,
     fontSize: fontSize.xs,
-    color: colors.muted,
+    color: colors.textSecondary,
     lineHeight: 17,
   },
   formCard: {
     marginBottom: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   fieldLabel: {
     fontSize: fontSize.xs,
-    color: colors.mutedLight,
+    color: colors.textMuted,
     marginBottom: spacing.xs,
     marginTop: spacing.sm,
   },
   input: {
     height: 44,
     borderWidth: 1,
-    borderColor: colors.line,
+    borderColor: colors.border,
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     fontSize: fontSize.sm,
-    color: colors.ink,
+    color: colors.textPrimary,
   },
   textArea: {
     height: 80,
@@ -709,12 +928,12 @@ const styles = StyleSheet.create({
   },
   summaryLabel: {
     fontSize: fontSize.sm,
-    color: colors.mutedLight,
+    color: colors.textMuted,
   },
   summaryValue: {
     flex: 1,
     fontSize: fontSize.sm,
-    color: colors.ink,
+    color: colors.textPrimary,
     fontWeight: '600',
     textAlign: 'right',
   },
@@ -722,7 +941,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-    backgroundColor: '#fde8e8',
+    backgroundColor: colors.dangerBg,
     borderRadius: radius.md,
     padding: spacing.sm,
     marginBottom: spacing.sm,
@@ -738,8 +957,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingTop: spacing.md,
     borderTopWidth: 1,
-    borderTopColor: colors.line,
-    backgroundColor: colors.white,
+    borderTopColor: colors.border,
+    backgroundColor: colors.bg,
+  },
+  stepHint: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+    textAlign: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xs,
+    backgroundColor: colors.bg,
   },
   navButtonHalf: {
     flex: 1,
@@ -760,31 +987,35 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: colors.alt,
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   progressDotActive: {
     backgroundColor: colors.accent,
+    borderColor: colors.accent,
   },
   progressDotDone: {
-    backgroundColor: colors.success,
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
   },
   progressDotText: {
     fontSize: fontSize.xs,
     fontWeight: '700',
-    color: colors.mutedLight,
+    color: colors.textMuted,
   },
   progressDotTextActive: {
-    color: colors.white,
+    color: '#ffffff',
   },
   progressLabel: {
     fontSize: 10,
-    color: colors.mutedLight,
+    color: colors.textMuted,
     marginTop: spacing.xs,
   },
   progressLabelActive: {
-    color: colors.ink,
+    color: colors.textPrimary,
     fontWeight: '700',
   },
   progressLine: {
@@ -793,16 +1024,16 @@ const styles = StyleSheet.create({
     left: '60%',
     right: '-40%',
     height: 2,
-    backgroundColor: colors.line,
+    backgroundColor: colors.border,
   },
   progressLineDone: {
-    backgroundColor: colors.success,
+    backgroundColor: colors.accent,
   },
   successIconWrap: {
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: colors.success,
+    backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.sm,
@@ -810,7 +1041,7 @@ const styles = StyleSheet.create({
   successTitle: {
     fontSize: fontSize.xl,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.textPrimary,
   },
   quotationNumber: {
     fontWeight: '800',
@@ -819,28 +1050,64 @@ const styles = StyleSheet.create({
   },
   successNote: {
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
     textAlign: 'center',
     marginTop: spacing.sm,
     lineHeight: 19,
   },
   successNextStep: {
     fontSize: fontSize.xs,
-    color: colors.muted,
+    color: colors.textSecondary,
     textAlign: 'center',
     marginTop: spacing.md,
     lineHeight: 18,
-    backgroundColor: colors.alt,
+    backgroundColor: colors.surface,
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
   successNextStepBold: {
     fontWeight: '700',
-    color: colors.ink,
+    color: colors.textPrimary,
   },
   successButton: {
     marginTop: spacing.sm,
     width: '100%',
   },
-});
+  pickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  pickerRowDisabled: {
+    opacity: 0.45,
+  },
+  pickerRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flex: 1,
+  },
+  pickerRowHint: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+    marginBottom: 2,
+  },
+  pickerRowValue: {
+    fontSize: fontSize.sm,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  pickerRowPlaceholder: {
+    fontWeight: '400',
+    color: colors.textMuted,
+  },
+  });
+}

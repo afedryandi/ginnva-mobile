@@ -67,7 +67,13 @@ export default function InventoryHomeScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
-        <View style={styles.sideButton} />
+        {router.canGoBack() ? (
+          <Pressable onPress={() => router.back()} style={styles.sideButton}>
+            <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+          </Pressable>
+        ) : (
+          <View style={styles.sideButton} />
+        )}
         <Text style={styles.headerTitle} numberOfLines={1}>Inventaris</Text>
         <Pressable onPress={handleLogout} style={styles.sideButton}>
           <Ionicons name="log-out-outline" size={22} color={colors.accent} />

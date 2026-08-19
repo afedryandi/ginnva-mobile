@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, FlatList, TextInput, Pressable, StyleSheet,
+  View, Text, FlatList, TextInput, Pressable, StyleSheet, ScrollView,
   KeyboardAvoidingView, Platform, Image, ActivityIndicator, Alert, Modal, Linking,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -65,6 +65,10 @@ function formatTime(dateString: string): string {
   return new Date(dateString).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 }
 
+function formatDate(dateString: string): string {
+  return new Date(dateString).toLocaleDateString('id-ID', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function StaffBookingChatScreen() {
@@ -103,13 +107,28 @@ export default function StaffBookingChatScreen() {
   const [completing, setCompleting] = useState(false);
   const [sendingReminder, setSendingReminder] = useState(false);
   const [bookingStatus, setBookingStatus] = useState<'pending' | 'confirmed' | 'completed' | 'cancelled' | null>(null);
-  // Default kapasitas saat approve — diambil dari setting toko booking ini
-  // (Store.install_capacity_per_day), tetap bisa diedit staff di modal.
-  const [storeDefaultCapacity, setStoreDefaultCapacity] = useState(3);
   const [confirming, setConfirming] = useState(false);
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [confirmDurationDays, setConfirmDurationDays] = useState('1');
-  const [confirmCapacityPerDay, setConfirmCapacityPerDay] = useState('3');
+  // Kapasitas tim instalasi bisa BEDA-BEDA tiap tanggal (mis. 1 tim masih
+  // ngerjain mobil dari hari sebelumnya, atau izin) — 1 baris per tanggal,
+  // termasuk baris hari libur (non-editable, cuma penanda) supaya staff
+  // tahu kenapa ada lompatan tanggal — bukan 1 angka global. Dimuat dari
+  // GET .../capacity-preview, default per tanggal dari setting toko
+  // tapi tetap bisa diedit staff sebelum submit.
+  const [capacityRows, setCapacityRows] = useState<
+    ({ date: string; closed: true } | { date: string; closed: false; used: number; capacity: string })[]
+  >([]);
+  const [loadingCapacity, setLoadingCapacity] = useState(false);
+  // Durasi yang dipakai saat capacityRows terakhir dimuat — dibandingkan
+  // saat submit supaya kalau staff ubah durasi tanpa sempat reload
+  // otomatis (mis. race jaringan lambat), submit ditolak DI SISI APP dulu
+  // (bukan diam-diam kirim kapasitas yang belum pernah staff lihat/setujui
+  // untuk tanggal tambahan).
+  const [capacityLoadedForDuration, setCapacityLoadedForDuration] = useState<number | null>(null);
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
   const listRef = useRef<FlatList>(null);
   const insets = useSafeAreaInsets();
 
@@ -187,15 +206,8 @@ export default function StaffBookingChatScreen() {
   // menambah beban request tiap poll padahal status jarang berubah saat
   // layar chat sedang dibuka.
   const fetchBookingStatus = useCallback(() => {
-    return staffApiFetch<{
-      data: { status: typeof bookingStatus; store: { install_capacity_per_day: number } | null };
-    }>(`/api/staff/bookings/${bookingId}`)
-      .then((res) => {
-        setBookingStatus(res.data.status);
-        if (res.data.store?.install_capacity_per_day) {
-          setStoreDefaultCapacity(res.data.store.install_capacity_per_day);
-        }
-      })
+    return staffApiFetch<{ data: { status: typeof bookingStatus } }>(`/api/staff/bookings/${bookingId}`)
+      .then((res) => setBookingStatus(res.data.status))
       .catch(() => {
         // Diam-diam gagal saja — tombol "Konfirmasi Booking" cuma tidak
         // muncul, chat tetap bisa dipakai seperti biasa (fetchMessages
@@ -203,26 +215,86 @@ export default function StaffBookingChatScreen() {
       });
   }, [bookingId]);
 
-  // Durasi & kapasitas WAJIB diisi staff tiap kali approve (bukan setting
-  // tetap toko) — backend menolak kalau capacity_per_day tidak dikirim.
-  // Default durasi ditebak dari produk booking-nya (PPF 3 hari, lainnya
-  // 1 hari) supaya staff biasanya tinggal konfirmasi tanpa perlu ubah.
+  const loadCapacityPreview = async (durationDays: number) => {
+    setLoadingCapacity(true);
+    try {
+      const res = await staffApiFetch<{
+        data: (
+          | { date: string; closed: true }
+          | { date: string; closed: false; used: number; default_capacity: number }
+        )[];
+      }>(`/api/staff/bookings/${bookingId}/capacity-preview?duration_days=${durationDays}`);
+      setCapacityRows(res.data.map((row) => (
+        row.closed
+          ? { date: row.date, closed: true }
+          : { date: row.date, closed: false, used: row.used, capacity: String(row.default_capacity) }
+      )));
+      setCapacityLoadedForDuration(durationDays);
+    } catch (err) {
+      const message = err instanceof StaffApiError ? err.message : 'Tidak bisa memuat data kapasitas.';
+      Alert.alert('Gagal', message);
+    } finally {
+      setLoadingCapacity(false);
+    }
+  };
+
+  // Durasi WAJIB diisi staff tiap kali approve. Default ditebak dari
+  // produk booking-nya (PPF 3 hari, lainnya 1 hari) supaya staff biasanya
+  // tinggal konfirmasi tanpa perlu ubah — daftar tanggal kerja & kapasitas
+  // default per tanggal langsung dimuat dari backend begitu modal dibuka.
   const openConfirmModal = () => {
-    setConfirmDurationDays(String(productPpf ? 3 : 1));
-    setConfirmCapacityPerDay(String(storeDefaultCapacity));
+    const duration = productPpf ? 3 : 1;
+    setConfirmDurationDays(String(duration));
     setConfirmModalOpen(true);
+    loadCapacityPreview(duration);
+  };
+
+  // Staff ganti angka durasi di modal — reload OTOMATIS begitu field-nya
+  // kehilangan fokus (bukan tombol manual terpisah, supaya perilakunya
+  // sama dengan Filament yang auto-refresh) tanpa spam request tiap
+  // ketikan digit.
+  const onDurationBlur = () => {
+    const durationDays = parseInt(confirmDurationDays, 10);
+    if (!durationDays || durationDays < 1 || durationDays === capacityLoadedForDuration) {
+      return;
+    }
+    loadCapacityPreview(durationDays);
+  };
+
+  const updateCapacityRow = (date: string, value: string) => {
+    setCapacityRows((prev) => prev.map((row) => (row.date === date && !row.closed ? { ...row, capacity: value } : row)));
   };
 
   const submitConfirmBooking = async () => {
     const durationDays = parseInt(confirmDurationDays, 10);
-    const capacityPerDay = parseInt(confirmCapacityPerDay, 10);
 
     if (!durationDays || durationDays < 1) {
       Alert.alert('Data tidak valid', 'Lama pengerjaan minimal 1 hari.');
       return;
     }
-    if (!capacityPerDay || capacityPerDay < 1) {
-      Alert.alert('Data tidak valid', 'Kapasitas instalasi minimal 1.');
+
+    // Jaring pengaman — kalau durasi berubah tapi daftar tanggal belum
+    // sempat dimuat ulang (mis. lupa geser fokus, atau koneksi lambat),
+    // JANGAN kirim kapasitas yang belum pernah staff lihat untuk tanggal
+    // yang berubah. Muat ulang dulu, minta staff cek lagi baru submit.
+    if (durationDays !== capacityLoadedForDuration) {
+      Alert.alert(
+        'Tanggal belum diperbarui',
+        'Lama pengerjaan berubah — memuat ulang daftar tanggal & kapasitas dulu. Silakan cek lagi lalu tekan Konfirmasi sekali lagi.'
+      );
+      loadCapacityPreview(durationDays);
+      return;
+    }
+
+    const workingRows = capacityRows.filter((row): row is { date: string; closed: false; used: number; capacity: string } => !row.closed);
+    if (workingRows.length === 0) {
+      Alert.alert('Data tidak valid', 'Belum ada tanggal kerja termuat.');
+      return;
+    }
+
+    const capacities = workingRows.map((row) => ({ date: row.date, capacity: parseInt(row.capacity, 10) }));
+    if (capacities.some((c) => !c.capacity || c.capacity < 1)) {
+      Alert.alert('Data tidak valid', 'Kapasitas tiap tanggal minimal 1.');
       return;
     }
 
@@ -230,7 +302,7 @@ export default function StaffBookingChatScreen() {
     try {
       await staffApiFetch(`/api/staff/bookings/${bookingId}/confirm`, {
         method: 'POST',
-        body: JSON.stringify({ duration_days: durationDays, capacity_per_day: capacityPerDay }),
+        body: JSON.stringify({ duration_days: durationDays, capacities }),
       });
       setBookingStatus('confirmed');
       setConfirmModalOpen(false);
@@ -531,6 +603,31 @@ export default function StaffBookingChatScreen() {
     }
   };
 
+  const openCancelModal = () => {
+    setCancelReason('');
+    setCancelModalOpen(true);
+  };
+
+  const submitCancelBooking = async () => {
+    setCancelling(true);
+    try {
+      await staffApiFetch(`/api/staff/bookings/${bookingId}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: cancelReason.trim() || undefined }),
+      });
+      setBookingStatus('cancelled');
+      setCancelModalOpen(false);
+      Alert.alert('Berhasil', 'Booking dibatalkan.');
+    } catch (err) {
+      const message = err instanceof StaffApiError
+        ? err.message
+        : 'Tidak bisa membatalkan booking. Periksa koneksi internet Anda.';
+      Alert.alert('Gagal', message);
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const handleSendMaintenanceReminder = () => {
     Alert.alert(
       'Kirim Pengingat Maintenance',
@@ -584,6 +681,11 @@ export default function StaffBookingChatScreen() {
               ) : (
                 <Ionicons name="chatbubble-ellipses-outline" size={22} color={colors.accent} />
               )}
+            </Pressable>
+          )}
+          {(bookingStatus === 'pending' || bookingStatus === 'confirmed') && (
+            <Pressable onPress={openCancelModal} style={styles.sideButton}>
+              <Ionicons name="close-circle-outline" size={22} color={colors.danger} />
             </Pressable>
           )}
           <Pressable onPress={openAssignModal} style={styles.sideButton}>
@@ -811,7 +913,7 @@ export default function StaffBookingChatScreen() {
           <View style={styles.completeSheet}>
             <Text style={styles.completeTitle}>Konfirmasi Booking</Text>
             <Text style={styles.completeSubtitle}>
-              Kapasitas terisi otomatis dari default toko, tapi bisa diubah kalau kondisi hari ini beda. Sistem akan cek dulu apakah slotnya masih tersedia di tanggal yang diminta.
+              Kapasitas tim bisa beda tiap tanggal (mis. 1 tim masih ngerjain mobil dari hari sebelumnya) — sesuaikan per baris kalau perlu. Sistem cek slot sebelum booking dikonfirmasi.
             </Text>
 
             <View style={styles.confirmFieldRow}>
@@ -821,21 +923,46 @@ export default function StaffBookingChatScreen() {
                 keyboardType="number-pad"
                 value={confirmDurationDays}
                 onChangeText={setConfirmDurationDays}
+                onEndEditing={onDurationBlur}
                 placeholder="1"
                 placeholderTextColor={colors.textMuted}
               />
+              {parseInt(confirmDurationDays, 10) !== capacityLoadedForDuration && !loadingCapacity && (
+                <Text style={styles.capacityStaleHint}>Daftar tanggal di bawah belum sesuai durasi ini — akan dimuat ulang otomatis.</Text>
+              )}
             </View>
 
             <View style={styles.confirmFieldRow}>
-              <Text style={styles.confirmFieldLabel}>Kapasitas Instalasi / Hari</Text>
-              <TextInput
-                style={styles.confirmFieldInput}
-                keyboardType="number-pad"
-                value={confirmCapacityPerDay}
-                onChangeText={setConfirmCapacityPerDay}
-                placeholder="3"
-                placeholderTextColor={colors.textMuted}
-              />
+              <Text style={styles.confirmFieldLabel}>Kapasitas Instalasi per Tanggal</Text>
+
+              {loadingCapacity ? (
+                <ActivityIndicator size="small" color={colors.accent} style={{ marginTop: spacing.sm }} />
+              ) : capacityRows.length === 0 ? (
+                <Text style={styles.capacityEmptyText}>Belum ada tanggal termuat.</Text>
+              ) : (
+                <ScrollView style={styles.capacityScroll} nestedScrollEnabled>
+                  {capacityRows.map((row) => (
+                    row.closed ? (
+                      <View key={row.date} style={styles.capacityRowClosed}>
+                        <Text style={styles.capacityRowClosedText}>{formatDate(row.date)} — Toko libur</Text>
+                      </View>
+                    ) : (
+                      <View key={row.date} style={styles.capacityRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.capacityRowDate}>{formatDate(row.date)}</Text>
+                          <Text style={styles.capacityRowUsed}>{row.used} booking confirmed</Text>
+                        </View>
+                        <TextInput
+                          style={styles.capacityRowInput}
+                          keyboardType="number-pad"
+                          value={row.capacity}
+                          onChangeText={(v) => updateCapacityRow(row.date, v)}
+                        />
+                      </View>
+                    )
+                  ))}
+                </ScrollView>
+              )}
             </View>
 
             <View style={styles.completeActions}>
@@ -855,6 +982,52 @@ export default function StaffBookingChatScreen() {
                   <ActivityIndicator size="small" color="#ffffff" />
                 ) : (
                   <Text style={styles.completeBtnConfirmText}>Konfirmasi</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Batalkan booking (pending/confirmed) — alasan opsional, dikirim
+          ke customer via push notification (BookingObserver::updated()). */}
+      <Modal visible={cancelModalOpen} transparent animationType="fade" onRequestClose={() => setCancelModalOpen(false)}>
+        <View style={styles.completeBackdrop}>
+          <View style={styles.completeSheet}>
+            <Text style={styles.completeTitle}>Batalkan Booking</Text>
+            <Text style={styles.completeSubtitle}>
+              Customer akan mendapat notifikasi bahwa booking-nya dibatalkan. Tindakan ini tidak bisa dibatalkan balik dari sini.
+            </Text>
+
+            <View style={styles.confirmFieldRow}>
+              <Text style={styles.confirmFieldLabel}>Alasan (opsional)</Text>
+              <TextInput
+                style={[styles.confirmFieldInput, { minHeight: 60, textAlignVertical: 'top' }]}
+                multiline
+                value={cancelReason}
+                onChangeText={setCancelReason}
+                placeholder="Mis. customer minta reschedule, salah input, dll."
+                placeholderTextColor={colors.textMuted}
+              />
+            </View>
+
+            <View style={styles.completeActions}>
+              <Pressable
+                style={[styles.completeBtn, styles.completeBtnCancel]}
+                onPress={() => setCancelModalOpen(false)}
+                disabled={cancelling}
+              >
+                <Text style={styles.completeBtnCancelText}>Tutup</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.completeBtn, { backgroundColor: colors.danger }]}
+                onPress={submitCancelBooking}
+                disabled={cancelling}
+              >
+                {cancelling ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={styles.completeBtnConfirmText}>Batalkan Booking</Text>
                 )}
               </Pressable>
             </View>
@@ -1193,6 +1366,23 @@ function createStyles(colors: typeof darkColors) {
     borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
     paddingHorizontal: spacing.md, paddingVertical: 10, fontSize: fontSize.sm, color: colors.textPrimary,
   },
+  capacityStaleHint: { fontSize: 11, color: colors.warning, marginTop: 6 },
+  capacityEmptyText: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: spacing.xs },
+  capacityScroll: { maxHeight: 220, marginTop: spacing.xs },
+  capacityRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    paddingVertical: spacing.xs, borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  capacityRowDate: { fontSize: fontSize.sm, fontWeight: '600', color: colors.textPrimary },
+  capacityRowUsed: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
+  capacityRowInput: {
+    width: 56, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
+    paddingVertical: 8, textAlign: 'center', fontSize: fontSize.sm, color: colors.textPrimary,
+  },
+  capacityRowClosed: {
+    paddingVertical: spacing.xs, borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  capacityRowClosedText: { fontSize: fontSize.xs, color: colors.textMuted, fontStyle: 'italic' },
   completeActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg },
   completeBtn: {
     flex: 1, height: 44, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center',

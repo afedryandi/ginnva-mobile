@@ -1,12 +1,13 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, Pressable, RefreshControl } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, FlatList, StyleSheet, Pressable, RefreshControl, ScrollView, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { ScreenHeader } from '@/components/ui/ScreenHeader';
-import { Card } from '@/components/ui/Card';
-import { colors, fontSize, spacing, radius } from '@/constants/theme';
+import { router } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
-import { SkeletonCard } from '@/components/ui/Skeleton';
+import { useAuth } from '@/lib/auth-context';
+import { useAppTheme } from '@/lib/theme-context';
 import { hapticSuccess, hapticError, hapticLight } from '@/lib/haptics';
 
 interface MyBooking {
@@ -24,15 +25,17 @@ interface MyBooking {
   };
 }
 
-const STATUS_META: Record<
+function getStatusMeta(colors: typeof darkColors): Record<
   MyBooking['status'],
   { label: string; color: string; bg: string; icon: keyof typeof Ionicons.glyphMap }
-> = {
-  pending:   { label: 'Menunggu Konfirmasi', color: colors.warning,    bg: '#fef3e2', icon: 'time-outline' },
-  confirmed: { label: 'Dikonfirmasi',        color: colors.success,    bg: '#e7f8ef', icon: 'checkmark-circle-outline' },
-  completed: { label: 'Selesai',             color: colors.mutedLight, bg: colors.alt, icon: 'checkmark-done-outline' },
-  cancelled: { label: 'Dibatalkan',          color: colors.danger,     bg: '#fde8e8', icon: 'close-circle-outline' },
-};
+> {
+  return {
+    pending:   { label: 'Menunggu Konfirmasi', color: colors.warning,  bg: colors.warningBg, icon: 'time-outline' },
+    confirmed: { label: 'Dikonfirmasi',        color: colors.success,  bg: colors.successBg, icon: 'checkmark-circle-outline' },
+    completed: { label: 'Selesai',             color: colors.textMuted, bg: colors.surface,  icon: 'checkmark-done-outline' },
+    cancelled: { label: 'Dibatalkan',          color: colors.danger,   bg: colors.dangerBg,  icon: 'close-circle-outline' },
+  };
+}
 
 function formatDate(dateStr: string) {
   try {
@@ -48,7 +51,12 @@ function formatDate(dateStr: string) {
 }
 
 export default function MyBookingsScreen() {
+  const { theme, colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const STATUS_META = useMemo(() => getStatusMeta(colors), [colors]);
+
   const [bookings, setBookings] = useState<MyBooking[]>([]);
+  const { isLoggedIn } = useAuth();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,46 +86,79 @@ export default function MyBookingsScreen() {
     load();
   }, []);
 
+  const refreshControl = (
+    <RefreshControl
+      refreshing={refreshing}
+      onRefresh={() => load(true)}
+      colors={[colors.accent]}
+      tintColor={colors.accent}
+    />
+  );
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScreenHeader title="Booking Saya" />
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <View style={styles.header}>
+        {router.canGoBack() ? (
+          <Pressable onPress={() => router.back()} style={styles.sideButton}>
+            <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+          </Pressable>
+        ) : (
+          <View style={styles.sideButton} />
+        )}
+        <Text style={styles.headerTitle} numberOfLines={1}>Booking Saya</Text>
+        <View style={styles.sideButton} />
+      </View>
 
-      {loading ? (
-        <View style={styles.skeletonList}>
-          {[1, 2, 3].map((i) => <SkeletonCard key={i} style={styles.skeletonItem} />)}
+      {!isLoggedIn ? (
+        <ScrollView contentContainerStyle={styles.centerState} refreshControl={refreshControl}>
+          <Ionicons name="lock-closed-outline" size={36} color={colors.textMuted} />
+          <Text style={styles.centerStateTitle}>Login Diperlukan</Text>
+          <Text style={styles.centerStateText}>
+            Masuk ke akun Anda untuk melihat booking Anda.
+          </Text>
+          <Pressable
+            style={styles.retryButton}
+            onPress={() => router.push('/auth/login' as never)}
+          >
+            <Text style={styles.retryText}>Masuk Sekarang</Text>
+          </Pressable>
+        </ScrollView>
+      ) : loading ? (
+        <View style={styles.centerState}>
+          <ActivityIndicator color={colors.accent} />
         </View>
       ) : error ? (
-        <View style={styles.centerState}>
-          <Ionicons name="cloud-offline-outline" size={32} color={colors.mutedLight} />
+        <ScrollView contentContainerStyle={styles.centerState} refreshControl={refreshControl}>
+          <Ionicons name="cloud-offline-outline" size={32} color={colors.textMuted} />
           <Text style={styles.centerStateText}>{error}</Text>
           <Pressable style={styles.retryButton} onPress={() => { hapticLight(); load(); }}>
             <Text style={styles.retryText}>Coba Lagi</Text>
           </Pressable>
-        </View>
+        </ScrollView>
       ) : bookings.length === 0 ? (
-        <View style={styles.centerState}>
-          <Ionicons name="calendar-outline" size={32} color={colors.mutedLight} />
+        <ScrollView contentContainerStyle={styles.centerState} refreshControl={refreshControl}>
+          <Ionicons name="calendar-outline" size={32} color={colors.textMuted} />
           <Text style={styles.centerStateText}>
             Belum ada booking yang terhubung ke akun ini.
           </Text>
-        </View>
+          <Pressable
+            style={styles.retryButton}
+            onPress={() => router.push('/booking' as never)}
+          >
+            <Text style={styles.retryText}>Buat Booking</Text>
+          </Pressable>
+        </ScrollView>
       ) : (
         <FlatList
           data={bookings}
           keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.listContent}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => load(true)}
-              colors={[colors.accent]}
-              tintColor={colors.accent}
-            />
-          }
+          refreshControl={refreshControl}
           renderItem={({ item }) => {
             const meta = STATUS_META[item.status] ?? STATUS_META.pending;
             return (
-              <Card style={styles.card}>
+              <View style={styles.card}>
                 {/* Header: nomor booking + badge status */}
                 <View style={styles.cardHeader}>
                   <Text style={styles.bookingNumber}>{item.booking_number}</Text>
@@ -137,26 +178,36 @@ export default function MyBookingsScreen() {
 
                 {/* Detail jadwal */}
                 <View style={styles.detailRow}>
-                  <Ionicons name="construct-outline" size={14} color={colors.muted} />
+                  <Ionicons name="construct-outline" size={14} color={colors.textSecondary} />
                   <Text style={styles.detailText}>{item.service_type}</Text>
                 </View>
                 <View style={styles.detailRow}>
-                  <Ionicons name="calendar-outline" size={14} color={colors.muted} />
+                  <Ionicons name="calendar-outline" size={14} color={colors.textSecondary} />
                   <Text style={styles.detailText}>{formatDate(item.preferred_date)}</Text>
                 </View>
                 {item.preferred_time ? (
                   <View style={styles.detailRow}>
-                    <Ionicons name="time-outline" size={14} color={colors.muted} />
+                    <Ionicons name="time-outline" size={14} color={colors.textSecondary} />
                     <Text style={styles.detailText}>{item.preferred_time}</Text>
                   </View>
                 ) : null}
                 {item.notes ? (
                   <View style={styles.detailRow}>
-                    <Ionicons name="document-text-outline" size={14} color={colors.muted} />
-                    <Text style={[styles.detailText, { color: colors.muted }]}>{item.notes}</Text>
+                    <Ionicons name="document-text-outline" size={14} color={colors.textSecondary} />
+                    <Text style={[styles.detailText, { color: colors.textSecondary }]}>{item.notes}</Text>
                   </View>
                 ) : null}
-              </Card>
+
+                {item.status !== 'cancelled' && (
+                  <Pressable
+                    style={styles.chatBtn}
+                    onPress={() => router.push(`/booking/${item.id}/chat` as never)}
+                  >
+                    <Ionicons name="chatbubbles-outline" size={16} color={colors.accent} />
+                    <Text style={styles.chatBtnText}>Progress & Chat dengan Toko</Text>
+                  </Pressable>
+                )}
+              </View>
             );
           }}
         />
@@ -165,21 +216,40 @@ export default function MyBookingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: typeof darkColors) {
+  return StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.white,
+    backgroundColor: colors.bg,
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.bg,
+  },
+  sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
   centerState: {
-    flex: 1,
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
     paddingHorizontal: spacing.xl,
   },
+  centerStateTitle: {
+    fontSize: fontSize.base,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    textAlign: 'center',
+  },
   centerStateText: {
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
     textAlign: 'center',
   },
   retryButton: {
@@ -190,7 +260,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
   },
   retryText: {
-    color: colors.white,
+    color: '#ffffff',
     fontSize: fontSize.sm,
     fontWeight: '600',
   },
@@ -201,6 +271,11 @@ const styles = StyleSheet.create({
   },
   card: {
     gap: spacing.xs,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -211,7 +286,7 @@ const styles = StyleSheet.create({
   bookingNumber: {
     fontSize: fontSize.sm,
     fontWeight: '800',
-    color: colors.ink,
+    color: colors.textPrimary,
     flexShrink: 1,
   },
   badge: {
@@ -234,11 +309,11 @@ const styles = StyleSheet.create({
   },
   storeCity: {
     fontSize: fontSize.sm,
-    color: colors.muted,
+    color: colors.textSecondary,
   },
   divider: {
     height: 1,
-    backgroundColor: colors.line,
+    backgroundColor: colors.border,
     marginVertical: spacing.sm,
   },
   detailRow: {
@@ -250,14 +325,24 @@ const styles = StyleSheet.create({
   detailText: {
     flex: 1,
     fontSize: fontSize.sm,
-    color: colors.ink,
+    color: colors.textPrimary,
     lineHeight: 20,
   },
-  skeletonList: {
-    padding: 16,
-    gap: 12,
+  chatBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: spacing.sm,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.accent,
   },
-  skeletonItem: {
-    marginBottom: 4,
+  chatBtnText: {
+    fontSize: fontSize.sm,
+    fontWeight: '700',
+    color: colors.accent,
   },
-});
+  });
+}
