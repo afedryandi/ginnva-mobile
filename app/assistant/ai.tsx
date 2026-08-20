@@ -1,7 +1,7 @@
 /**
  * app/assistant/ai.tsx
  *
- * Asisten AI Ginnva — powered by Groq (llama-3.1-8b-instant).
+ * Asisten AI Ginnva — powered by Groq (openai/gpt-oss-20b).
  * Model kecil (8B, bukan 70B) sengaja dipilih supaya limit token-per-menit
  * free tier Groq lebih longgar — lihat ChatController::send() di backend
  * untuk detail & histori percobaan pindah provider (sempat dicoba Gemini,

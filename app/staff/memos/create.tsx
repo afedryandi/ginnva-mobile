@@ -1,0 +1,141 @@
+import React, { useMemo, useState } from 'react';
+import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { StatusBar } from 'expo-status-bar';
+import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { staffApiFetch, ApiError } from '@/lib/staff-api';
+import { useAppTheme } from '@/lib/theme-context';
+
+interface CreateMemoResponse {
+  data: { id: number };
+}
+
+// Header memo dulu — barang ditambahkan satu-satu di layar detail setelah
+// ini, supaya stok langsung berkurang begitu barang ditambah (bukan
+// ditunda sampai seluruh form disubmit sekaligus).
+export default function CreateMemoScreen() {
+  const { theme, colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
+  const [vehicleInfo, setVehicleInfo] = useState('');
+  const [spkNumber, setSpkNumber] = useState('');
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await staffApiFetch<CreateMemoResponse>('/api/staff/memos', {
+        method: 'POST',
+        body: JSON.stringify({
+          vehicle_info: vehicleInfo.trim() || null,
+          spk_number: spkNumber.trim() || null,
+          notes: notes.trim() || null,
+        }),
+      });
+      router.replace({ pathname: '/staff/memos/[id]', params: { id: String(res.data.id) } } as never);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Gagal membuat memo.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <View style={styles.header}>
+        <Pressable onPress={() => router.back()} style={styles.sideButton}>
+          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+        </Pressable>
+        <Text style={styles.headerTitle} numberOfLines={1}>Buat Memo Baru</Text>
+        <View style={styles.sideButton} />
+      </View>
+
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
+          <Text style={styles.label}>Info Kendaraan (opsional)</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Mis. Toyota Avanza - B 1234 XYZ"
+            placeholderTextColor={colors.textMuted}
+            value={vehicleInfo}
+            onChangeText={setVehicleInfo}
+          />
+
+          <Text style={styles.label}>SPK No (opsional)</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Nomor SPK"
+            placeholderTextColor={colors.textMuted}
+            value={spkNumber}
+            onChangeText={setSpkNumber}
+          />
+
+          <Text style={styles.label}>Catatan (opsional)</Text>
+          <TextInput
+            style={[styles.input, styles.textarea]}
+            placeholder="Catatan tambahan"
+            placeholderTextColor={colors.textMuted}
+            value={notes}
+            onChangeText={setNotes}
+            multiline
+          />
+
+          {error && <Text style={styles.errorText}>{error}</Text>}
+
+          <Pressable style={[styles.submitBtn, submitting && styles.submitBtnDisabled]} onPress={handleSubmit} disabled={submitting}>
+            {submitting ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.submitText}>Buat Memo & Tambah Barang</Text>}
+          </Pressable>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+function createStyles(colors: typeof darkColors) {
+  return StyleSheet.create({
+    flex: { flex: 1 },
+    container: { flex: 1, backgroundColor: colors.bg },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      backgroundColor: colors.bg,
+    },
+    sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+    headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
+    form: { padding: spacing.md, gap: spacing.xs },
+    label: { fontSize: fontSize.xs, fontWeight: '600', color: colors.textSecondary, marginTop: spacing.sm },
+    input: {
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      fontSize: fontSize.sm,
+      color: colors.textPrimary,
+    },
+    textarea: { minHeight: 80, textAlignVertical: 'top' },
+    errorText: { fontSize: fontSize.sm, color: colors.danger, marginTop: spacing.sm },
+    submitBtn: {
+      marginTop: spacing.lg,
+      backgroundColor: colors.accent,
+      borderRadius: radius.pill,
+      paddingVertical: spacing.md,
+      alignItems: 'center',
+    },
+    submitBtnDisabled: { opacity: 0.6 },
+    submitText: { color: '#ffffff', fontWeight: '700', fontSize: fontSize.sm },
+  });
+}

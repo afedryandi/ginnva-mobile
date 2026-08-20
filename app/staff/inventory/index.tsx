@@ -61,6 +61,14 @@ export default function InventoryHomeScreen() {
       onPress: () => router.push('/staff/consumables' as never),
       visible: staff?.has_consumable_access,
     },
+    {
+      key: 'memos',
+      icon: 'clipboard-outline' as const,
+      title: 'Memo Pengambilan/Pengembalian',
+      description: 'Catat barang keluar-masuk untuk 1 instalasi sekaligus',
+      onPress: () => router.push('/staff/memos' as never),
+      visible: staff?.has_material_memo_access,
+    },
   ].filter((item) => item.visible);
 
   return (
