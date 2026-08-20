@@ -17,6 +17,9 @@ import { apiFetch, ApiError } from '@/lib/api';
 import { useAppTheme } from '@/lib/theme-context';
 import RenderHtml from 'react-native-render-html';
 import { useWindowDimensions } from 'react-native';
+import HtmlImageRenderer from '@/components/ui/HtmlImageRenderer';
+
+const htmlRenderers = { img: HtmlImageRenderer };
 
 interface NewsDetail {
   id: number;
@@ -127,6 +130,7 @@ export default function NewsDetailScreen() {
               <RenderHtml
                 contentWidth={windowWidth - 32}
                 source={{ html: news.content }}
+                renderers={htmlRenderers}
                 tagsStyles={{
                   p: { marginBottom: 12, lineHeight: 24, color: colors.textPrimary, fontSize: 15 },
                   h1: { fontSize: 20, fontWeight: '700', marginBottom: 8, color: colors.textPrimary },
