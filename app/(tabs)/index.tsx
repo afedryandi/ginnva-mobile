@@ -215,7 +215,7 @@ function HeroVideoSlide({ style }: { style: object }) {
       style={style}
       contentFit="cover"
       nativeControls={false}
-      allowsFullscreen={false}
+      fullscreenOptions={{ enable: false }}
       allowsPictureInPicture={false}
     />
   );
