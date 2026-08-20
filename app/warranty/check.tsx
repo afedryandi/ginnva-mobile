@@ -8,12 +8,10 @@ import {
   StyleSheet,
   ActivityIndicator,
   Animated,
-  Dimensions,
+  useWindowDimensions,
   Platform,
   Linking,
 } from 'react-native';
-
-const SCAN_FRAME_SIZE = Math.round(Dimensions.get('window').width * 0.62);
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -98,7 +96,12 @@ type InputMode = 'manual' | 'scan';
 
 export default function WarrantyCheckScreen() {
   const { theme, colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const scanFrameSize = Math.round(Math.min(screenWidth, screenHeight) * 0.62);
+  const styles = useMemo(
+    () => createStyles(colors, scanFrameSize),
+    [colors, scanFrameSize]
+  );
   const STATUS_META = useMemo(() => getStatusMeta(colors), [colors]);
 
   const [mode, setMode] = useState<InputMode>('manual');
@@ -290,7 +293,7 @@ export default function WarrantyCheckScreen() {
     : null;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         {router.canGoBack() ? (
@@ -575,7 +578,7 @@ export default function WarrantyCheckScreen() {
   );
 }
 
-function createStyles(colors: typeof darkColors) {
+function createStyles(colors: typeof darkColors, scanFrameSize: number) {
   return StyleSheet.create({
   container: {
     flex: 1,
@@ -649,8 +652,8 @@ function createStyles(colors: typeof darkColors) {
     paddingBottom: 40, // slight upward offset so hint text has room below
   },
   scanFrame: {
-    width: SCAN_FRAME_SIZE,
-    height: SCAN_FRAME_SIZE,
+    width: scanFrameSize,
+    height: scanFrameSize,
     borderWidth: 2,
     borderColor: '#ffffff',
     borderRadius: radius.lg,

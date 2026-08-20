@@ -6,7 +6,7 @@ import {
   StyleSheet,
   Pressable,
   Modal,
-  Dimensions,
+  useWindowDimensions,
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
@@ -33,12 +33,14 @@ interface CaseStudyItem {
 // warna brand) — bukan via.placeholder.com yang beda gaya & pernah tidak
 // stabil/down di masa lalu.
 const FALLBACK_IMAGE = 'https://placehold.co/400x300/161226/e8c078?text=Ginnva';
-const SCREEN_WIDTH = Dimensions.get('window').width;
-const SCREEN_HEIGHT = Dimensions.get('window').height;
 
 export default function CaseGalleryScreen() {
   const { theme, colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const styles = useMemo(
+    () => createStyles(colors, screenWidth, screenHeight),
+    [colors, screenWidth, screenHeight]
+  );
 
   const [cases, setCases] = useState<CaseStudyItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,7 +70,7 @@ export default function CaseGalleryScreen() {
   }, []);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         {router.canGoBack() ? (
@@ -184,7 +186,7 @@ export default function CaseGalleryScreen() {
   );
 }
 
-function createStyles(colors: typeof darkColors) {
+function createStyles(colors: typeof darkColors, screenWidth: number, screenHeight: number) {
   return StyleSheet.create({
   container: {
     flex: 1,
@@ -261,7 +263,7 @@ function createStyles(colors: typeof darkColors) {
     padding: spacing.lg,
   },
   modalCard: {
-    width: SCREEN_WIDTH - spacing.lg * 2,
+    width: Math.min(screenWidth - spacing.lg * 2, 480),
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     overflow: 'hidden',
@@ -280,7 +282,9 @@ function createStyles(colors: typeof darkColors) {
   },
   modalImageWrap: {
     width: '100%',
-    height: SCREEN_HEIGHT * 0.5,
+    // Clamp: SCREEN_HEIGHT*0.5 saja jadi terlalu pendek di landscape
+    // (tinggi layar kecil), jadi dibatasi minimum & juga relatif ke lebar.
+    height: Math.max(220, Math.min(screenHeight * 0.5, screenWidth * 0.6)),
     backgroundColor: colors.bg,
   },
   modalBody: {

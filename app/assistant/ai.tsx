@@ -216,7 +216,7 @@ export default function AiAssistantScreen() {
   const showSuggestions = messages.length === 1; // Hanya tampil saat baru buka
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       {/* Header */}
       <View style={styles.header} onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}>

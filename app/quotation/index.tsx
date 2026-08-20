@@ -332,7 +332,7 @@ export default function QuotationScreen() {
 
   if (phase === 'loading') {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
         <HeaderBar />
         <View style={styles.centerState}>
@@ -344,7 +344,7 @@ export default function QuotationScreen() {
 
   if (phase === 'error') {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
         <HeaderBar />
         <View style={styles.centerState}>
@@ -360,7 +360,7 @@ export default function QuotationScreen() {
 
   if (phase === 'success') {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
         <HeaderBar />
         <Animated.ScrollView contentContainerStyle={styles.centerState} style={{ opacity: successOpacity }}>
@@ -404,7 +404,7 @@ export default function QuotationScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <HeaderBar />
 

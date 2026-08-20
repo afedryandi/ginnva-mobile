@@ -7,7 +7,7 @@ import {
   StyleSheet,
   Pressable,
   Linking,
-  Dimensions,
+  useWindowDimensions,
   AppState,
   NativeSyntheticEvent,
   NativeScrollEvent,
@@ -34,10 +34,15 @@ import {
 // Berita mau ditampilkan lagi.
 const SHOW_NEWS_SECTION = false;
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
 // Portrait — sesuai referensi mini app Ginnva China (banner rasio ~3:4,
-// bukan landscape 16:9 seperti sebelumnya).
-const CAROUSEL_HEIGHT = Math.round(SCREEN_WIDTH * 1.25);
+// bukan landscape 16:9 seperti sebelumnya). Rasio 1.25 cuma dipakai saat
+// device dalam orientasi potret asli — di landscape/tablet (lebar > tinggi)
+// itu bikin carousel lebih tinggi dari layar itu sendiri, jadi di-clamp ke
+// separuh tinggi layar supaya konten di bawahnya tidak terdorong hilang.
+function getCarouselHeight(width: number, height: number): number {
+  const portraitHeight = Math.round(width * 1.25);
+  return width > height ? Math.min(portraitHeight, Math.round(height * 0.5)) : portraitHeight;
+}
 
 const PRODUCT_CATEGORIES = [
   { key: 'kaca-film-mobil', label: 'Car Window Film' },
@@ -221,7 +226,15 @@ export default function HomeScreen() {
   // Beranda SENGAJA selalu dark, terlepas dari setting tema global user
   // (lihat lib/theme-context.tsx) — referensi desain mini app Ginnva China.
   const colors = darkColors;
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const carouselHeight = useMemo(
+    () => getCarouselHeight(screenWidth, screenHeight),
+    [screenWidth, screenHeight]
+  );
+  const styles = useMemo(
+    () => createStyles(colors, screenWidth, carouselHeight),
+    [colors, screenWidth, carouselHeight]
+  );
   const insets = useSafeAreaInsets();
   const [carousels, setCarousels] = useState<CarouselItem[]>([]);
   const [featuredProducts, setFeaturedProducts] = useState<FeaturedProductItem[]>([]);
@@ -338,17 +351,17 @@ export default function HomeScreen() {
     autoScrollTimer.current = setInterval(() => {
       setActiveSlide((prev) => {
         const next = (prev + 1) % heroSlides.length;
-        carouselRef.current?.scrollTo({ x: next * SCREEN_WIDTH, animated: true });
+        carouselRef.current?.scrollTo({ x: next * screenWidth, animated: true });
         return next;
       });
     }, 4000);
     return () => {
       if (autoScrollTimer.current) clearInterval(autoScrollTimer.current);
     };
-  }, [heroSlides.length]);
+  }, [heroSlides.length, screenWidth]);
 
   const onCarouselScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const index = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+    const index = Math.round(e.nativeEvent.contentOffset.x / screenWidth);
     setActiveSlide(index);
   };
 
@@ -766,7 +779,7 @@ export default function HomeScreen() {
   );
 }
 
-function createStyles(colors: typeof darkColors) {
+function createStyles(colors: typeof darkColors, screenWidth: number, carouselHeight: number) {
   return StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -836,12 +849,12 @@ function createStyles(colors: typeof darkColors) {
     position: 'relative',
   },
   carouselSlide: {
-    width: SCREEN_WIDTH,
-    height: CAROUSEL_HEIGHT,
+    width: screenWidth,
+    height: carouselHeight,
   },
   carouselImage: {
-    width: SCREEN_WIDTH,
-    height: CAROUSEL_HEIGHT,
+    width: screenWidth,
+    height: carouselHeight,
     backgroundColor: colors.surface,
   },
   carouselGradient: {
@@ -990,7 +1003,7 @@ function createStyles(colors: typeof darkColors) {
   featuredProductCard: {
     // Landscape (rasio 3:2) tapi tidak full-width — full-width kemarin
     // kartunya jadi terlalu besar/tinggi.
-    width: SCREEN_WIDTH * 0.58,
+    width: screenWidth * 0.58,
     borderRadius: radius.lg,
     backgroundColor: colors.surface,
     borderWidth: 1,

@@ -261,7 +261,7 @@ export default function BookingScreen() {
   // ===== Success =====
   if (phase === 'success') {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
         <HeaderBar title="Buat Booking" />
         <Animated.View style={[styles.centerState, { opacity: successOpacity }]}>
@@ -293,7 +293,7 @@ export default function BookingScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <HeaderBar title="Buat Booking" />
 

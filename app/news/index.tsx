@@ -74,7 +74,7 @@ export default function NewsListScreen() {
   }, []);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         {router.canGoBack() ? (

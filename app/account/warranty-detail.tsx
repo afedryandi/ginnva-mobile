@@ -116,7 +116,7 @@ export default function WarrantyDetailScreen() {
   const meta = warranty ? (STATUS_META[warranty.status] ?? STATUS_META.active) : null;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         {router.canGoBack() ? (

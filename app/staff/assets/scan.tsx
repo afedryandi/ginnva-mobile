@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, FlatList, StyleSheet, Dimensions, Linking, ActivityIndicator } from 'react-native';
-
-const SCAN_FRAME_SIZE = Math.round(Dimensions.get('window').width * 0.62);
+import { View, Text, TextInput, Pressable, FlatList, StyleSheet, useWindowDimensions, Linking, ActivityIndicator } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -42,7 +40,12 @@ function statusLabel(status: AssetListItem['status']): string {
 // GET /api/staff/assets?search=..., lalu pilih dari hasilnya.
 export default function AssetScanScreen() {
   const { theme, colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const scanFrameSize = Math.round(Math.min(screenWidth, screenHeight) * 0.62);
+  const styles = useMemo(
+    () => createStyles(colors, scanFrameSize),
+    [colors, scanFrameSize]
+  );
 
   const [mode, setMode] = useState<Mode>('scan');
 
@@ -86,7 +89,7 @@ export default function AssetScanScreen() {
   };
 
   return (
-    <SafeAreaView style={[styles.container, mode === 'search' && { backgroundColor: colors.bg }]} edges={['top']}>
+    <SafeAreaView style={[styles.container, mode === 'search' && { backgroundColor: colors.bg }]} edges={['top', 'left', 'right']}>
       <StatusBar style={mode === 'scan' ? 'light' : theme === 'dark' ? 'light' : 'dark'} />
       <View style={[styles.header, mode === 'search' && styles.headerLight]}>
         <Pressable onPress={() => router.back()} style={styles.sideButton}>
@@ -208,7 +211,7 @@ export default function AssetScanScreen() {
   );
 }
 
-function createStyles(colors: typeof darkColors) {
+function createStyles(colors: typeof darkColors, scanFrameSize: number) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: '#000000' },
     header: {
@@ -267,8 +270,8 @@ function createStyles(colors: typeof darkColors) {
       paddingBottom: 40,
     },
     scanFrame: {
-      width: SCAN_FRAME_SIZE,
-      height: SCAN_FRAME_SIZE,
+      width: scanFrameSize,
+      height: scanFrameSize,
       borderWidth: 2,
       borderColor: '#ffffff',
       borderRadius: radius.lg,

@@ -104,7 +104,7 @@ export default function PartnershipScreen() {
   // ===== Success =====
   if (phase === 'success') {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
         <HeaderBar />
         <View style={styles.centerState}>
@@ -129,7 +129,7 @@ export default function PartnershipScreen() {
 
   // ===== Form =====
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <HeaderBar />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>

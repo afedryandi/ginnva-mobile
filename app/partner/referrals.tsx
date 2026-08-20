@@ -70,7 +70,7 @@ export default function PartnerReferralsScreen() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.sideButton}>

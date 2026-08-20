@@ -709,7 +709,7 @@ export default function StaffBookingChatScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
         <HeaderBar />
         <View style={styles.centerState}>
@@ -721,7 +721,7 @@ export default function StaffBookingChatScreen() {
 
   if (loadError) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
         <HeaderBar />
         <View style={styles.centerState}>
@@ -736,7 +736,7 @@ export default function StaffBookingChatScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <HeaderBar />
 

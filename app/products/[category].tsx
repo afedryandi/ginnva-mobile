@@ -258,7 +258,7 @@ export default function ProductDetailScreen() {
 
   if (!detail) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
         <View style={styles.header}>
           {router.canGoBack() ? (
@@ -280,7 +280,7 @@ export default function ProductDetailScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         {router.canGoBack() ? (

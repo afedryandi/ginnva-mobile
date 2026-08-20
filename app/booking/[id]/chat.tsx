@@ -103,6 +103,13 @@ export default function CustomerBookingChatScreen() {
   // memutar tampilan foto di lightbox tanpa perlu edit file aslinya.
   const [viewerRotated, setViewerRotated] = useState(false);
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const isPortrait = screenHeight >= screenWidth;
+  // Begitu device beneran diputar landscape, OS sudah merotasi layar —
+  // reset flip manual supaya tidak dobel-rotate (sama seperti
+  // app/account/my-gallery.tsx).
+  useEffect(() => {
+    if (!isPortrait) setViewerRotated(false);
+  }, [isPortrait]);
   const [store, setStore] = useState<StoreInfo | null>(null);
   // Default tertutup — kalau semua track (Kaca Film + PPF + Tahap Akhir)
   // langsung tampil, kartu progress jadi terlalu tinggi dan menutupi
@@ -245,7 +252,7 @@ export default function CustomerBookingChatScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
         <HeaderBar />
         <View style={styles.centerState}>
@@ -315,7 +322,7 @@ export default function CustomerBookingChatScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <HeaderBar />
 
@@ -418,12 +425,14 @@ export default function CustomerBookingChatScreen() {
               resizeMode="contain"
             />
           )}
-          <Pressable
-            style={styles.viewerRotateBtn}
-            onPress={() => setViewerRotated((v) => !v)}
-          >
-            <Ionicons name="phone-landscape-outline" size={22} color="#ffffff" />
-          </Pressable>
+          {isPortrait && (
+            <Pressable
+              style={styles.viewerRotateBtn}
+              onPress={() => setViewerRotated((v) => !v)}
+            >
+              <Ionicons name="phone-landscape-outline" size={22} color="#ffffff" />
+            </Pressable>
+          )}
           <Pressable style={styles.viewerCloseBtn} onPress={() => setViewerImage(null)}>
             <Ionicons name="close" size={26} color="#ffffff" />
           </Pressable>

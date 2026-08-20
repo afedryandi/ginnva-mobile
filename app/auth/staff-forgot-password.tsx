@@ -87,7 +87,7 @@ export default function StaffForgotPasswordScreen() {
 
   if (done) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
         <View style={styles.scrollContent}>
           <View style={styles.iconWrap}>
@@ -106,7 +106,7 @@ export default function StaffForgotPasswordScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         <Pressable

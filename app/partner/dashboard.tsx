@@ -11,7 +11,7 @@ import {
   Alert,
   Linking,
   Animated,
-  Dimensions,
+  useWindowDimensions,
   NativeSyntheticEvent,
   NativeScrollEvent,
 } from 'react-native';
@@ -29,10 +29,6 @@ import { useAppTheme } from '@/lib/theme-context';
 // Penukaran poin dilakukan langsung di toko, bukan lewat app — tombol
 // "Tukarkan Poin" cuma antar partner ke lokasi flagship store-nya.
 const GINNVA_HOUSE_MAPS_URL = 'https://maps.app.goo.gl/USCYspDTS3Wy53JZ8';
-
-const SCREEN_WIDTH = Dimensions.get('window').width;
-const PROMO_WIDTH = SCREEN_WIDTH - spacing.md * 2;
-const PROMO_HEIGHT = Math.round(PROMO_WIDTH * 0.42);
 
 // Aksen kedua untuk section Partner — rose gold/copper, sengaja BUKAN
 // emas kuning (supaya tidak bentrok sama identitas merah brand), dipakai
@@ -77,7 +73,13 @@ type QuickAction = {
 export default function PartnerDashboardScreen() {
   const { logout } = useStaffAuth();
   const { theme, colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const { width: screenWidth } = useWindowDimensions();
+  const promoWidth = screenWidth - spacing.md * 2;
+  const promoHeight = Math.round(promoWidth * 0.42);
+  const styles = useMemo(
+    () => createStyles(colors, promoWidth, promoHeight),
+    [colors, promoWidth, promoHeight]
+  );
 
   const [profile, setProfile] = useState<PartnerProfile | null>(null);
   const [promos, setPromos] = useState<PromoBanner[]>([]);
@@ -141,15 +143,15 @@ export default function PartnerDashboardScreen() {
     const timer = setInterval(() => {
       setActivePromo((prev) => {
         const next = (prev + 1) % promos.length;
-        promoScrollRef.current?.scrollTo({ x: next * PROMO_WIDTH, animated: true });
+        promoScrollRef.current?.scrollTo({ x: next * promoWidth, animated: true });
         return next;
       });
     }, 4000);
     return () => clearInterval(timer);
-  }, [promos.length]);
+  }, [promos.length, promoWidth]);
 
   const onPromoScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    setActivePromo(Math.round(e.nativeEvent.contentOffset.x / PROMO_WIDTH));
+    setActivePromo(Math.round(e.nativeEvent.contentOffset.x / promoWidth));
   };
 
   useEffect(() => {
@@ -189,7 +191,7 @@ export default function PartnerDashboardScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
         <View style={styles.center}>
           <ActivityIndicator color={colors.accent} />
@@ -199,7 +201,7 @@ export default function PartnerDashboardScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style="light" />
 
       <ScrollView
@@ -400,7 +402,7 @@ export default function PartnerDashboardScreen() {
   );
 }
 
-function createStyles(colors: typeof darkColors) {
+function createStyles(colors: typeof darkColors, promoWidth: number, promoHeight: number) {
   return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.xl },
@@ -538,8 +540,8 @@ function createStyles(colors: typeof darkColors) {
   shareBtnText: { color: '#ffffff', fontWeight: '700', fontSize: fontSize.sm },
 
   promoWrap: { marginHorizontal: spacing.md, marginTop: spacing.lg },
-  promoSlide: { width: PROMO_WIDTH, height: PROMO_HEIGHT, borderRadius: radius.lg, overflow: 'hidden' },
-  promoImage: { width: PROMO_WIDTH, height: PROMO_HEIGHT, backgroundColor: colors.surface },
+  promoSlide: { width: promoWidth, height: promoHeight, borderRadius: radius.lg, overflow: 'hidden' },
+  promoImage: { width: promoWidth, height: promoHeight, backgroundColor: colors.surface },
   promoGradient: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
     paddingHorizontal: spacing.md, paddingVertical: spacing.sm,

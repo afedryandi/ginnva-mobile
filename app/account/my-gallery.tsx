@@ -6,7 +6,7 @@ import {
   StyleSheet,
   Pressable,
   Modal,
-  Dimensions,
+  useWindowDimensions,
   ActivityIndicator,
   RefreshControl,
   Alert,
@@ -51,10 +51,6 @@ interface GallerySection {
   photos: Photo[];
 }
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
-const SCREEN_HEIGHT = Dimensions.get('window').height;
-const THUMB_SIZE = (SCREEN_WIDTH - spacing.md * 2 - spacing.sm * 2) / 3;
-
 function formatDate(dateStr: string | null): string | null {
   if (!dateStr) return null;
   try {
@@ -66,7 +62,13 @@ function formatDate(dateStr: string | null): string | null {
 
 export default function MyGalleryScreen() {
   const { theme, colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const isPortrait = screenHeight >= screenWidth;
+  const thumbSize = (screenWidth - spacing.md * 2 - spacing.sm * 2) / 3;
+  const styles = useMemo(
+    () => createStyles(colors, thumbSize),
+    [colors, thumbSize]
+  );
 
   const [sections, setSections] = useState<GallerySection[]>([]);
   const [loading, setLoading] = useState(true);
@@ -75,8 +77,14 @@ export default function MyGalleryScreen() {
   const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null);
   // Beberapa foto galeri diambil dalam posisi HP portrait padahal objeknya
   // landscape (mis. bodi mobil) — tombol flip ini biarkan customer memutar
-  // tampilan foto tanpa perlu edit file aslinya.
+  // tampilan foto tanpa perlu edit file aslinya. Cuma relevan kalau HP-nya
+  // SENDIRI masih portrait — begitu device benar-benar diputar landscape,
+  // OS sudah merotasi layar, jadi flip manual ini disembunyikan & direset
+  // supaya tidak dobel-rotate.
   const [viewerRotated, setViewerRotated] = useState(false);
+  useEffect(() => {
+    if (!isPortrait) setViewerRotated(false);
+  }, [isPortrait]);
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
 
   const handleDownload = async (photo: Photo) => {
@@ -145,7 +153,7 @@ export default function MyGalleryScreen() {
   }, []);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         {router.canGoBack() ? (
@@ -253,7 +261,7 @@ export default function MyGalleryScreen() {
               source={{ uri: selectedPhoto.url }}
               style={
                 viewerRotated
-                  ? { width: SCREEN_HEIGHT * 0.8, height: SCREEN_WIDTH * 0.9, transform: [{ rotate: '90deg' }] }
+                  ? { width: screenHeight * 0.8, height: screenWidth * 0.9, transform: [{ rotate: '90deg' }] }
                   : styles.viewerImage
               }
               contentFit="contain"
@@ -270,12 +278,14 @@ export default function MyGalleryScreen() {
               <Ionicons name="download-outline" size={22} color="#ffffff" />
             )}
           </Pressable>
-          <Pressable
-            style={styles.viewerRotateBtn}
-            onPress={() => setViewerRotated((v) => !v)}
-          >
-            <Ionicons name="phone-landscape-outline" size={22} color="#ffffff" />
-          </Pressable>
+          {isPortrait && (
+            <Pressable
+              style={styles.viewerRotateBtn}
+              onPress={() => setViewerRotated((v) => !v)}
+            >
+              <Ionicons name="phone-landscape-outline" size={22} color="#ffffff" />
+            </Pressable>
+          )}
           <Pressable style={styles.viewerCloseBtn} onPress={() => setSelectedPhoto(null)}>
             <Ionicons name="close" size={26} color="#ffffff" />
           </Pressable>
@@ -285,7 +295,7 @@ export default function MyGalleryScreen() {
   );
 }
 
-function createStyles(colors: typeof darkColors) {
+function createStyles(colors: typeof darkColors, thumbSize: number) {
   return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   header: {
@@ -320,7 +330,7 @@ function createStyles(colors: typeof darkColors) {
 
   photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
   thumbWrap: {
-    width: THUMB_SIZE, height: THUMB_SIZE, borderRadius: radius.md, overflow: 'hidden',
+    width: thumbSize, height: thumbSize, borderRadius: radius.md, overflow: 'hidden',
     backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
   },
   thumb: { width: '100%', height: '100%' },
