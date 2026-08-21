@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, FlatList, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
@@ -42,10 +42,22 @@ export default function MemoListScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    setLoading(true);
-    fetchMemos().finally(() => setLoading(false));
-  }, [fetchMemos]);
+  // Refetch tiap kali layar ini kembali dapat fokus (mis. balik dari buat
+  // memo baru / dari detail) — bukan cuma sekali saat mount, supaya daftar
+  // tidak basi. Spinner penuh cuma ditampilkan kalau belum pernah berhasil
+  // load sama sekali (hasLoadedOnce, BUKAN dibaca dari state memos yang
+  // bisa stale closure di useCallback ini); refetch berikutnya jalan
+  // senyap di background.
+  const hasLoadedOnce = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasLoadedOnce.current) setLoading(true);
+      fetchMemos().finally(() => {
+        hasLoadedOnce.current = true;
+        setLoading(false);
+      });
+    }, [fetchMemos])
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -61,7 +73,9 @@ export default function MemoListScreen() {
           <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
         </Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>Memo Pengambilan/Pengembalian</Text>
-        <View style={styles.sideButton} />
+        <Pressable onPress={onRefresh} style={styles.sideButton} disabled={refreshing}>
+          <Ionicons name="refresh" size={22} color={refreshing ? colors.textMuted : colors.textPrimary} />
+        </Pressable>
       </View>
 
       {loading ? (

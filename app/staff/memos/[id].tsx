@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,7 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
@@ -84,10 +84,18 @@ export default function MemoDetailScreen() {
     }
   }, [id]);
 
-  useEffect(() => {
-    setLoading(true);
-    fetchMemo().finally(() => setLoading(false));
-  }, [fetchMemo]);
+  // Refetch tiap kali layar ini kembali dapat fokus — sama seperti daftar
+  // memo, spinner penuh cuma tampil sebelum pernah berhasil load sekali.
+  const hasLoadedOnce = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasLoadedOnce.current) setLoading(true);
+      fetchMemo().finally(() => {
+        hasLoadedOnce.current = true;
+        setLoading(false);
+      });
+    }, [fetchMemo])
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -289,7 +297,9 @@ export default function MemoDetailScreen() {
           <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
         </Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>{memo?.memo_number ?? 'Memo'}</Text>
-        <View style={styles.sideButton} />
+        <Pressable onPress={onRefresh} style={styles.sideButton} disabled={refreshing}>
+          <Ionicons name="refresh" size={22} color={refreshing ? colors.textMuted : colors.textPrimary} />
+        </Pressable>
       </View>
 
       {loading ? (
