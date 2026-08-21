@@ -378,6 +378,9 @@ export default function InventoryItemScreen() {
               {needsStorePicker(form.type) && (
                 <>
                   <Text style={styles.fieldLabel}>Toko Tujuan</Text>
+                  <Text style={styles.helperTextSmall}>
+                    Akun Anda tidak terikat ke 1 toko tertentu, jadi pilih dulu toko tujuan barang keluar ini.
+                  </Text>
                   <View style={styles.chipRow}>
                     {stores.map((s) => (
                       <Pressable
@@ -559,6 +562,7 @@ function createStyles(colors: typeof darkColors) {
     actionButtonText: { color: '#ffffff', fontSize: fontSize.sm, fontWeight: '700' },
     formTitle: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary },
     fieldLabel: { fontSize: fontSize.xs, color: colors.textMuted, marginBottom: spacing.xs },
+    helperTextSmall: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: -4, marginBottom: spacing.xs },
     chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginBottom: spacing.sm },
     chip: {
       paddingHorizontal: spacing.sm,

@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
+import { Button } from '@/components/ui/Button';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
 import { useStaffAuth } from '@/lib/staff-auth-context';
+import { hapticSuccess, hapticError } from '@/lib/haptics';
 
 interface CreateMemoResponse {
   data: { id: number };
@@ -65,8 +67,10 @@ export default function CreateMemoScreen() {
           ...(isFullAccess ? { store_id: storeId } : {}),
         }),
       });
+      hapticSuccess();
       router.replace({ pathname: '/staff/memos/[id]', params: { id: String(res.data.id) } } as never);
     } catch (err) {
+      hapticError();
       setError(err instanceof ApiError ? err.message : 'Gagal membuat memo.');
     } finally {
       setSubmitting(false);
@@ -89,6 +93,9 @@ export default function CreateMemoScreen() {
           {isFullAccess && (
             <>
               <Text style={styles.label}>Toko</Text>
+              <Text style={styles.helperText}>
+                Akun Anda tidak terikat ke 1 toko tertentu, jadi pilih dulu toko yang memo ini dibuat untuk siapa.
+              </Text>
               <View style={styles.storeChips}>
                 {stores.map((s) => (
                   <Pressable
@@ -133,9 +140,12 @@ export default function CreateMemoScreen() {
 
           {error && <Text style={styles.errorText}>{error}</Text>}
 
-          <Pressable style={[styles.submitBtn, submitting && styles.submitBtnDisabled]} onPress={handleSubmit} disabled={submitting}>
-            {submitting ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.submitText}>Buat Memo & Tambah Barang</Text>}
-          </Pressable>
+          <Button
+            label="Buat Memo & Tambah Barang"
+            onPress={handleSubmit}
+            loading={submitting}
+            style={styles.submitBtn}
+          />
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -171,6 +181,7 @@ function createStyles(colors: typeof darkColors) {
       color: colors.textPrimary,
     },
     textarea: { minHeight: 80, textAlignVertical: 'top' },
+    helperText: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: -2 },
     storeChips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
     storeChip: {
       paddingHorizontal: spacing.sm,
@@ -184,14 +195,6 @@ function createStyles(colors: typeof darkColors) {
     storeChipText: { fontSize: fontSize.xs, fontWeight: '600', color: colors.textSecondary },
     storeChipTextActive: { color: '#ffffff' },
     errorText: { fontSize: fontSize.sm, color: colors.danger, marginTop: spacing.sm },
-    submitBtn: {
-      marginTop: spacing.lg,
-      backgroundColor: colors.accent,
-      borderRadius: radius.pill,
-      paddingVertical: spacing.md,
-      alignItems: 'center',
-    },
-    submitBtnDisabled: { opacity: 0.6 },
-    submitText: { color: '#ffffff', fontWeight: '700', fontSize: fontSize.sm },
+    submitBtn: { marginTop: spacing.lg },
   });
 }

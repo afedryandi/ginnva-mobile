@@ -11,14 +11,17 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
+import { Button } from '@/components/ui/Button';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
+import { hapticSuccess, hapticError, hapticLight } from '@/lib/haptics';
 
 type ItemType = 'raw_material' | 'consumable_item' | 'inventory_item';
 
@@ -137,6 +140,7 @@ export default function MemoDetailScreen() {
   };
 
   const toggleMultiSelect = (item: SearchResult) => {
+    hapticLight();
     setSelectedMulti((prev) =>
       prev.some((s) => s.id === item.id) ? prev.filter((s) => s.id !== item.id) : [...prev, item]
     );
@@ -145,6 +149,29 @@ export default function MemoDetailScreen() {
   const openAddModal = () => {
     resetAddModal();
     setAddVisible(true);
+  };
+
+  // Dipanggil dari tombol X / tombol back HP Android — kalau user sudah
+  // sempat pilih jenis/barang/isi apa pun, konfirmasi dulu supaya tidak
+  // hilang tanpa sengaja (beda dari nutup modal yang masih kosong sama
+  // sekali, itu boleh langsung tutup tanpa nanya).
+  const hasUnsavedAddProgress = () =>
+    addType !== null &&
+    (selected !== null ||
+      selectedMulti.length > 0 ||
+      qtyInput.trim() !== '' ||
+      search.trim() !== '' ||
+      conditionNotes.trim() !== '');
+
+  const closeAddModal = () => {
+    if (!hasUnsavedAddProgress()) {
+      resetAddModal();
+      return;
+    }
+    Alert.alert('Batalkan Tambah Barang?', 'Pilihan dan jumlah yang sudah diisi akan hilang.', [
+      { text: 'Lanjutkan Isi', style: 'cancel' },
+      { text: 'Batalkan', style: 'destructive', onPress: resetAddModal },
+    ]);
   };
 
   const searchEndpoint = (type: ItemType) => {
@@ -193,13 +220,9 @@ export default function MemoDetailScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addType, search]);
 
-  const handleAddItem = async () => {
-    if (!addType || !selected || addSubmitting) return;
+  const submitAddItem = async () => {
+    if (!addType || !selected) return;
     const qty = parseFloat(qtyInput);
-    if (!qty || qty <= 0) {
-      setAddError('Isi jumlah yang valid.');
-      return;
-    }
 
     setAddSubmitting(true);
     setAddError(null);
@@ -219,33 +242,52 @@ export default function MemoDetailScreen() {
         method: 'POST',
         body: JSON.stringify(body),
       });
+      hapticSuccess();
       setMemo(res.data);
       resetAddModal();
+      Alert.alert('Berhasil', `"${selected.name}" ditambahkan ke memo.`);
     } catch (err) {
+      hapticError();
       setAddError(err instanceof ApiError ? err.message : 'Gagal menambah barang.');
     } finally {
       setAddSubmitting(false);
     }
   };
 
-  const handleAddMultiItems = async () => {
-    if (!addType || selectedMulti.length === 0 || addSubmitting) return;
-
-    const missing = selectedMulti.find((item) => {
-      const q = parseFloat(multiQty[item.id] ?? '');
-      return !q || q <= 0;
-    });
-    if (missing) {
-      setAddError(`Isi jumlah untuk "${missing.name}".`);
+  const handleAddItem = () => {
+    if (!addType || !selected || addSubmitting) return;
+    const qty = parseFloat(qtyInput);
+    if (!qty || qty <= 0) {
+      setAddError('Isi jumlah yang valid.');
       return;
     }
+
+    const unitLabel = addType === 'inventory_item' ? 'meter' : selected.unit ?? '';
+    Alert.alert(
+      'Konfirmasi Pengambilan',
+      `Catat ${qty.toLocaleString('id-ID')} ${unitLabel} "${selected.name}" diambil? Stok akan langsung berkurang.`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        { text: 'Catat', onPress: submitAddItem },
+      ]
+    );
+  };
+
+  const submitAddMultiItems = async () => {
+    if (!addType || selectedMulti.length === 0) return;
 
     setAddSubmitting(true);
     setAddError(null);
 
+    // Item yang GAGAL dan yang BELUM DICOBA tetap di sini kalau ada
+    // kegagalan di tengah jalan — supaya kalau user tekan "Tambahkan"
+    // lagi, barang yang SUDAH tersimpan tidak ikut ke-submit dobel.
+    const remaining = [...selectedMulti];
     let failedName: string | null = null;
+
     try {
-      for (const item of selectedMulti) {
+      while (remaining.length > 0) {
+        const item = remaining[0];
         const qty = parseFloat(multiQty[item.id]);
         failedName = item.name;
         // Sengaja berurutan (bukan Promise.all) — tiap item transaksi
@@ -262,15 +304,50 @@ export default function MemoDetailScreen() {
           }),
         });
         setMemo(res.data);
+        remaining.shift();
       }
+      hapticSuccess();
+      const count = selectedMulti.length;
       resetAddModal();
+      Alert.alert('Berhasil', `${count} barang ditambahkan ke memo.`);
     } catch (err) {
+      hapticError();
       const baseMsg = err instanceof ApiError ? err.message : 'Gagal menambah barang.';
-      setAddError(`"${failedName}": ${baseMsg} (barang sebelumnya di daftar ini sudah tersimpan.)`);
+      const savedCount = selectedMulti.length - remaining.length;
+      setAddError(
+        `"${failedName}": ${baseMsg}` +
+          (savedCount > 0 ? ` (${savedCount} barang sebelumnya di daftar ini sudah tersimpan.)` : '')
+      );
+      // Sisakan cuma yang belum berhasil di form — barang yang sudah
+      // tersimpan dicoret dari daftar centang supaya tidak ke-submit lagi
+      // kalau user tekan "Tambahkan" ulang.
+      setSelectedMulti(remaining);
       await fetchMemo();
     } finally {
       setAddSubmitting(false);
     }
+  };
+
+  const handleAddMultiItems = () => {
+    if (!addType || selectedMulti.length === 0 || addSubmitting) return;
+
+    const missing = selectedMulti.find((item) => {
+      const q = parseFloat(multiQty[item.id] ?? '');
+      return !q || q <= 0;
+    });
+    if (missing) {
+      setAddError(`Isi jumlah untuk "${missing.name}".`);
+      return;
+    }
+
+    Alert.alert(
+      'Konfirmasi Pengambilan',
+      `Tambahkan ${selectedMulti.length} barang ke memo ini? Stok masing-masing akan langsung berkurang sesuai jumlah yang diisi.`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        { text: 'Tambahkan', onPress: submitAddMultiItems },
+      ]
+    );
   };
 
   // ── Catat pengembalian ─────────────────────────────────────────────
@@ -285,7 +362,28 @@ export default function MemoDetailScreen() {
     setReturnError(null);
   };
 
-  const handleReturn = async () => {
+  const submitReturn = async (qty: number) => {
+    if (!returnTarget) return;
+    setReturnSubmitting(true);
+    setReturnError(null);
+    try {
+      const res = await staffApiFetch<{ data: MemoDetail }>(`/api/staff/memos/${id}/items/${returnTarget.id}/return`, {
+        method: 'POST',
+        body: JSON.stringify({ qty_returned: qty }),
+      });
+      hapticSuccess();
+      setMemo(res.data);
+      setReturnTarget(null);
+      Alert.alert('Berhasil', 'Pengembalian berhasil dicatat.');
+    } catch (err) {
+      hapticError();
+      setReturnError(err instanceof ApiError ? err.message : 'Gagal mencatat pengembalian.');
+    } finally {
+      setReturnSubmitting(false);
+    }
+  };
+
+  const handleReturn = () => {
     if (!returnTarget || returnSubmitting) return;
     const qty = parseFloat(returnQtyInput);
     if (isNaN(qty) || qty < 0) {
@@ -297,20 +395,16 @@ export default function MemoDetailScreen() {
       return;
     }
 
-    setReturnSubmitting(true);
-    setReturnError(null);
-    try {
-      const res = await staffApiFetch<{ data: MemoDetail }>(`/api/staff/memos/${id}/items/${returnTarget.id}/return`, {
-        method: 'POST',
-        body: JSON.stringify({ qty_returned: qty }),
-      });
-      setMemo(res.data);
-      setReturnTarget(null);
-    } catch (err) {
-      setReturnError(err instanceof ApiError ? err.message : 'Gagal mencatat pengembalian.');
-    } finally {
-      setReturnSubmitting(false);
-    }
+    const usedQty = n(returnTarget.qty_taken) - qty;
+    const message =
+      qty === 0
+        ? `Semua ${returnTarget.qty_taken} ${returnTarget.unit} yang diambil dianggap HABIS terpakai — tidak ada yang balik ke stok. Lanjutkan?`
+        : `${qty.toLocaleString('id-ID')} ${returnTarget.unit} balik ke stok, sisanya (${usedQty.toLocaleString('id-ID')} ${returnTarget.unit}) dianggap terpakai. Lanjutkan?`;
+
+    Alert.alert('Konfirmasi Pengembalian', message, [
+      { text: 'Batal', style: 'cancel' },
+      { text: 'Catat', onPress: () => submitReturn(qty) },
+    ]);
   };
 
   // ── Edit jumlah (koreksi salah input) ──────────────────────────────
@@ -328,14 +422,8 @@ export default function MemoDetailScreen() {
     setEditError(null);
   };
 
-  const handleEditSubmit = async () => {
-    if (!editTarget || editSubmitting) return;
-    const qty = parseFloat(editQtyInput);
-    if (!qty || qty <= 0) {
-      setEditError('Isi jumlah yang valid.');
-      return;
-    }
-
+  const submitEdit = async (qty: number) => {
+    if (!editTarget) return;
     setEditSubmitting(true);
     setEditError(null);
     try {
@@ -344,13 +432,41 @@ export default function MemoDetailScreen() {
         method: 'PATCH',
         body: JSON.stringify(body),
       });
+      hapticSuccess();
       setMemo(res.data);
       setEditTarget(null);
+      Alert.alert('Berhasil', 'Jumlah berhasil dikoreksi.');
     } catch (err) {
+      hapticError();
       setEditError(err instanceof ApiError ? err.message : 'Gagal mengoreksi jumlah.');
     } finally {
       setEditSubmitting(false);
     }
+  };
+
+  const handleEditSubmit = () => {
+    if (!editTarget || editSubmitting) return;
+    const qty = parseFloat(editQtyInput);
+    if (!qty || qty <= 0) {
+      setEditError('Isi jumlah yang valid.');
+      return;
+    }
+
+    const oldQty = editTarget.item_type === 'inventory_item' ? editTarget.meters_used : editTarget.qty_taken;
+    const unitLabel = editTarget.item_type === 'inventory_item' ? 'meter' : editTarget.unit ?? '';
+    if (qty === parseFloat(oldQty ?? '0')) {
+      setEditTarget(null);
+      return;
+    }
+
+    Alert.alert(
+      'Konfirmasi Koreksi',
+      `Ubah jumlah "${editTarget.item_name}" dari ${oldQty} ${unitLabel} menjadi ${qty.toLocaleString('id-ID')} ${unitLabel}?`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        { text: 'Ubah', onPress: () => submitEdit(qty) },
+      ]
+    );
   };
 
   const renderItem = ({ item }: { item: MemoItem }) => {
@@ -375,7 +491,7 @@ export default function MemoDetailScreen() {
           <View style={styles.itemQtyRow}>
             <Text style={styles.itemQty}>Diambil: {item.qty_taken} {item.unit}</Text>
             <Text style={styles.itemQty}>
-              Dikembalikan: {item.qty_returned === null ? 'Belum diisi' : `${item.qty_returned} ${item.unit}`}
+              Dikembalikan: {item.qty_returned === null ? 'Belum Dikembalikan' : `${item.qty_returned} ${item.unit}`}
             </Text>
             {item.qty_used !== null && (
               <Text style={[styles.itemQty, styles.itemQtyUsed]}>Terpakai: {item.qty_used} {item.unit}</Text>
@@ -386,7 +502,7 @@ export default function MemoDetailScreen() {
         {item.condition_notes && <Text style={styles.itemNotes}>{item.condition_notes}</Text>}
 
         {needsReturn && (
-          <Pressable style={styles.returnBtn} onPress={() => openReturnModal(item)}>
+          <Pressable style={styles.returnBtn} onPress={() => openReturnModal(item)} hitSlop={8}>
             <Ionicons name="arrow-undo-outline" size={14} color={colors.accent} />
             <Text style={styles.returnBtnText}>Catat Pengembalian</Text>
           </Pressable>
@@ -436,6 +552,7 @@ export default function MemoDetailScreen() {
             renderItem={renderItem}
             ListEmptyComponent={
               <View style={styles.centerState}>
+                <Ionicons name="cube-outline" size={36} color={colors.textMuted} />
                 <Text style={styles.centerStateText}>Belum ada barang di memo ini. Ketuk "Tambah Barang" di bawah.</Text>
               </View>
             }
@@ -449,12 +566,25 @@ export default function MemoDetailScreen() {
       )}
 
       {/* Modal: tambah barang */}
-      <Modal visible={addVisible} animationType="slide" transparent onRequestClose={resetAddModal}>
+      <Modal visible={addVisible} animationType="slide" transparent onRequestClose={closeAddModal}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Tambah Barang</Text>
-              <Pressable onPress={resetAddModal} hitSlop={8}>
+              <View>
+                <Text style={styles.modalTitle}>Tambah Barang</Text>
+                <Text style={styles.modalStep}>
+                  {!addType
+                    ? 'Langkah 1/3 · Pilih jenis'
+                    : addType !== 'inventory_item' && multiQtyStep
+                      ? 'Langkah 3/3 · Isi jumlah'
+                      : addType !== 'inventory_item'
+                        ? 'Langkah 2/3 · Cari & centang'
+                        : !selected
+                          ? 'Langkah 2/3 · Cari & pilih'
+                          : 'Langkah 3/3 · Isi jumlah'}
+                </Text>
+              </View>
+              <Pressable onPress={closeAddModal} hitSlop={8}>
                 <Ionicons name="close" size={22} color={colors.textPrimary} />
               </Pressable>
             </View>
@@ -462,7 +592,7 @@ export default function MemoDetailScreen() {
             {!addType ? (
               <View style={{ gap: spacing.sm }}>
                 {(Object.keys(TYPE_LABEL) as ItemType[]).map((t) => (
-                  <Pressable key={t} style={styles.typeOption} onPress={() => setAddType(t)}>
+                  <Pressable key={t} style={styles.typeOption} onPress={() => { hapticLight(); setAddType(t); }}>
                     <Text style={styles.typeOptionText}>{TYPE_LABEL[t]}</Text>
                     <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
                   </Pressable>
@@ -502,20 +632,18 @@ export default function MemoDetailScreen() {
                 />
                 {addError && <Text style={styles.errorText}>{addError}</Text>}
                 <View style={{ flexDirection: 'row', gap: spacing.sm }}>
-                  <Pressable style={styles.backBtn} onPress={() => setMultiQtyStep(false)} disabled={addSubmitting}>
-                    <Text style={styles.backBtnText}>Kembali</Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.submitBtn, { flex: 1 }, addSubmitting && styles.submitBtnDisabled]}
-                    onPress={handleAddMultiItems}
+                  <Button
+                    label="Kembali"
+                    variant="outline"
+                    onPress={() => setMultiQtyStep(false)}
                     disabled={addSubmitting}
-                  >
-                    {addSubmitting ? (
-                      <ActivityIndicator color="#ffffff" />
-                    ) : (
-                      <Text style={styles.submitText}>Tambahkan {selectedMulti.length} Barang</Text>
-                    )}
-                  </Pressable>
+                  />
+                  <Button
+                    label={`Tambahkan ${selectedMulti.length} Barang`}
+                    onPress={handleAddMultiItems}
+                    loading={addSubmitting}
+                    style={{ flex: 1 }}
+                  />
                 </View>
               </View>
             ) : addType !== 'inventory_item' ? (
@@ -560,15 +688,15 @@ export default function MemoDetailScreen() {
                   />
                 )}
                 {selectedMulti.length > 0 && (
-                  <Pressable
-                    style={styles.submitBtn}
+                  <Button
+                    label={`Lanjut (${selectedMulti.length} dipilih)`}
                     onPress={() => {
+                      hapticLight();
                       setMultiQty(Object.fromEntries(selectedMulti.map((s) => [s.id, multiQty[s.id] ?? ''])));
                       setMultiQtyStep(true);
                     }}
-                  >
-                    <Text style={styles.submitText}>Lanjut ({selectedMulti.length} dipilih)</Text>
-                  </Pressable>
+                    style={{ marginTop: spacing.sm }}
+                  />
                 )}
               </View>
             ) : !selected ? (
@@ -630,9 +758,15 @@ export default function MemoDetailScreen() {
                   multiline
                 />
                 {addError && <Text style={styles.errorText}>{addError}</Text>}
-                <Pressable style={[styles.submitBtn, addSubmitting && styles.submitBtnDisabled]} onPress={handleAddItem} disabled={addSubmitting}>
-                  {addSubmitting ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.submitText}>Tambahkan</Text>}
-                </Pressable>
+                <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                  <Button
+                    label="Kembali"
+                    variant="outline"
+                    onPress={() => setSelected(null)}
+                    disabled={addSubmitting}
+                  />
+                  <Button label="Tambahkan" onPress={handleAddItem} loading={addSubmitting} style={{ flex: 1 }} />
+                </View>
               </View>
             )}
           </View>
@@ -660,9 +794,7 @@ export default function MemoDetailScreen() {
               keyboardType="decimal-pad"
             />
             {returnError && <Text style={styles.errorText}>{returnError}</Text>}
-            <Pressable style={[styles.submitBtn, returnSubmitting && styles.submitBtnDisabled]} onPress={handleReturn} disabled={returnSubmitting}>
-              {returnSubmitting ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.submitText}>Simpan</Text>}
-            </Pressable>
+            <Button label="Simpan" onPress={handleReturn} loading={returnSubmitting} />
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -692,9 +824,7 @@ export default function MemoDetailScreen() {
               keyboardType="decimal-pad"
             />
             {editError && <Text style={styles.errorText}>{editError}</Text>}
-            <Pressable style={[styles.submitBtn, editSubmitting && styles.submitBtnDisabled]} onPress={handleEditSubmit} disabled={editSubmitting}>
-              {editSubmitting ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.submitText}>Simpan Koreksi</Text>}
-            </Pressable>
+            <Button label="Simpan Koreksi" onPress={handleEditSubmit} loading={editSubmitting} />
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -788,8 +918,9 @@ function createStyles(colors: typeof darkColors) {
       maxHeight: '85%',
       gap: spacing.sm,
     },
-    modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    modalHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
     modalTitle: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary },
+    modalStep: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: 2 },
 
     typeOption: {
       flexDirection: 'row',
@@ -846,17 +977,6 @@ function createStyles(colors: typeof darkColors) {
       color: colors.textPrimary,
       marginTop: 4,
     },
-    backBtn: {
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.md,
-      borderRadius: radius.pill,
-      borderWidth: 1,
-      borderColor: colors.border,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    backBtnText: { color: colors.textSecondary, fontWeight: '700', fontSize: fontSize.sm },
-
     selectedName: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
     input: {
       backgroundColor: colors.surface,
@@ -870,13 +990,5 @@ function createStyles(colors: typeof darkColors) {
     },
     textarea: { minHeight: 60, textAlignVertical: 'top' },
     errorText: { fontSize: fontSize.sm, color: colors.danger },
-    submitBtn: {
-      backgroundColor: colors.accent,
-      borderRadius: radius.pill,
-      paddingVertical: spacing.md,
-      alignItems: 'center',
-    },
-    submitBtnDisabled: { opacity: 0.6 },
-    submitText: { color: '#ffffff', fontWeight: '700', fontSize: fontSize.sm },
   });
 }
