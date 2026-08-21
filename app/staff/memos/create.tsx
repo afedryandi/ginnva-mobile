@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
@@ -25,7 +25,8 @@ interface StoreOption {
 // ditunda sampai seluruh form disubmit sekaligus).
 export default function CreateMemoScreen() {
   const { theme, colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
+  const styles = useMemo(() => createStyles(colors, insets.bottom), [colors, insets.bottom]);
   const { staff } = useStaffAuth();
   // Sama pola dengan needsStorePicker di staff/inventory/[code].tsx — akun
   // super_admin/direksi tidak terikat 1 toko, jadi WAJIB pilih toko manual
@@ -181,7 +182,7 @@ export default function CreateMemoScreen() {
   );
 }
 
-function createStyles(colors: typeof darkColors) {
+function createStyles(colors: typeof darkColors, insetsBottom: number) {
   return StyleSheet.create({
     flex: { flex: 1 },
     container: { flex: 1, backgroundColor: colors.bg },
@@ -197,7 +198,7 @@ function createStyles(colors: typeof darkColors) {
     },
     sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
     headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-    form: { padding: spacing.md, gap: spacing.md, paddingBottom: spacing.xxl },
+    form: { padding: spacing.md, gap: spacing.md, paddingBottom: spacing.xxl + insetsBottom },
 
     section: {
       backgroundColor: colors.surface,

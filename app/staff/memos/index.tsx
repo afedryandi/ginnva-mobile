@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, FlatList, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -26,6 +26,11 @@ function formatDate(iso: string): string {
 
 export default function MemoListScreen() {
   const { theme, colors } = useAppTheme();
+  // SafeAreaView di sini SENGAJA edges={['top','left','right']} (tanpa
+  // 'bottom') — jadi elemen posisi absolute di bawah (FAB ini) tidak ikut
+  // dijauhkan dari navigasi gesture Android secara otomatis, harus
+  // ditambah insets.bottom manual.
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [memos, setMemos] = useState<MemoListItem[]>([]);
@@ -181,7 +186,14 @@ export default function MemoListScreen() {
         />
       )}
 
-      <Pressable style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]} onPress={goToCreate}>
+      <Pressable
+        style={({ pressed }) => [
+          styles.fab,
+          { bottom: spacing.lg + insets.bottom },
+          pressed && styles.fabPressed,
+        ]}
+        onPress={goToCreate}
+      >
         <Ionicons name="add" size={20} color="#ffffff" />
         <Text style={styles.fabText}>Buat Memo</Text>
       </Pressable>

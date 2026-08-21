@@ -13,7 +13,7 @@ import {
   Platform,
   Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
@@ -84,7 +84,11 @@ function n(v: string | null): number {
 export default function MemoDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { theme, colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  // SafeAreaView di sini SENGAJA edges={['top','left','right']} (tanpa
+  // 'bottom') — jadi tombol "Tambah Barang" (posisi absolute di bawah)
+  // tidak ikut dijauhkan dari navigasi gesture Android secara otomatis.
+  const insets = useSafeAreaInsets();
+  const styles = useMemo(() => createStyles(colors, insets.bottom), [colors, insets.bottom]);
 
   const [memo, setMemo] = useState<MemoDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -760,7 +764,14 @@ export default function MemoDetailScreen() {
             }
           />
 
-          <Pressable style={({ pressed }) => [styles.addBtn, pressed && styles.addBtnPressed]} onPress={openAddModal}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.addBtn,
+              { bottom: spacing.lg + insets.bottom },
+              pressed && styles.addBtnPressed,
+            ]}
+            onPress={openAddModal}
+          >
             <Ionicons name="add-circle" size={20} color="#ffffff" />
             <Text style={styles.addBtnText}>Tambah Barang</Text>
           </Pressable>
@@ -1098,7 +1109,7 @@ export default function MemoDetailScreen() {
   );
 }
 
-function createStyles(colors: typeof darkColors) {
+function createStyles(colors: typeof darkColors, insetsBottom: number) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
 
@@ -1227,6 +1238,10 @@ function createStyles(colors: typeof darkColors) {
       borderTopLeftRadius: radius.lg,
       borderTopRightRadius: radius.lg,
       padding: spacing.md,
+      // Modal (dan tombol Simpan/Tambahkan di dalamnya) TIDAK otomatis
+      // dijauhkan dari navigasi gesture Android — modal render di luar
+      // SafeAreaView layar ini, jadi insets.bottom ditambah manual.
+      paddingBottom: spacing.md + insetsBottom,
       gap: spacing.sm,
     },
     // Tambah Barang butuh ruang jauh lebih besar dari modal lain (return/edit)
