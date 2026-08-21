@@ -613,7 +613,7 @@ export default function MemoDetailScreen() {
       {/* Modal: tambah barang */}
       <Modal visible={addVisible} animationType="slide" transparent onRequestClose={closeAddModal}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, styles.addModalCard]}>
             <View style={styles.modalHeader}>
               <View>
                 <Text style={styles.modalTitle}>Tambah Barang</Text>
@@ -648,7 +648,7 @@ export default function MemoDetailScreen() {
                 <FlatList
                   data={selectedMulti}
                   keyExtractor={(item) => String(item.id)}
-                  style={{ maxHeight: 320 }}
+                  style={{ flex: 1 }}
                   contentContainerStyle={{ gap: spacing.sm }}
                   renderItem={({ item }) => (
                     <View style={styles.multiQtyRow}>
@@ -709,7 +709,7 @@ export default function MemoDetailScreen() {
                   <FlatList
                     data={searchResults}
                     keyExtractor={(item) => String(item.id)}
-                    style={{ maxHeight: 240 }}
+                    style={{ flex: 1 }}
                     ListEmptyComponent={<Text style={styles.centerStateText}>Tidak ada hasil.</Text>}
                     renderItem={({ item }) => {
                       const checked = selectedMulti.some((s) => s.id === item.id);
@@ -762,7 +762,7 @@ export default function MemoDetailScreen() {
                   <FlatList
                     data={searchResults}
                     keyExtractor={(item) => String(item.id)}
-                    style={{ maxHeight: 280 }}
+                    style={{ flex: 1 }}
                     ListEmptyComponent={<Text style={styles.centerStateText}>Tidak ada hasil.</Text>}
                     renderItem={({ item }) => (
                       <Pressable style={styles.pickRow} onPress={() => setSelected(item)}>
@@ -960,9 +960,13 @@ function createStyles(colors: typeof darkColors) {
       borderTopLeftRadius: radius.lg,
       borderTopRightRadius: radius.lg,
       padding: spacing.md,
-      maxHeight: '85%',
       gap: spacing.sm,
     },
+    // Tambah Barang butuh ruang jauh lebih besar dari modal lain (return/edit)
+    // karena isinya daftar pencarian yang bisa panjang — dikunci 85% tinggi
+    // layar supaya daftar barangnya kebaca banyak sekaligus, bukan cuma
+    // beberapa baris lalu harus scroll kecil-kecil.
+    addModalCard: { height: '85%' },
     modalHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
     modalTitle: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary },
     modalStep: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: 2 },
