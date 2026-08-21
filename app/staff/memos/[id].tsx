@@ -16,9 +16,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import type { ComponentProps } from 'react';
+import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Button } from '@/components/ui/Button';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { darkColors, fontSize, spacing, radius, shadow } from '@/constants/theme';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
 import { hapticSuccess, hapticError, hapticLight } from '@/lib/haptics';
@@ -61,6 +63,18 @@ const TYPE_LABEL: Record<ItemType, string> = {
   raw_material: 'Bahan Baku',
   consumable_item: 'Barang Habis Pakai',
   inventory_item: 'PPF/WF',
+};
+
+const TYPE_ICON: Record<ItemType, ComponentProps<typeof Ionicons>['name']> = {
+  raw_material: 'flask-outline',
+  consumable_item: 'layers-outline',
+  inventory_item: 'film-outline',
+};
+
+const TYPE_DESC: Record<ItemType, string> = {
+  raw_material: 'Cairan/bahan yang diambil dari stok, mis. cleaner, wax',
+  consumable_item: 'Barang pakai habis, mis. lap, sarung tangan, tisu',
+  inventory_item: 'Gulungan film — catat meter yang dipakai',
 };
 
 function n(v: string | null): number {
@@ -507,25 +521,34 @@ export default function MemoDetailScreen() {
     );
   };
 
+  const typeColor = (t: ItemType) =>
+    t === 'raw_material' ? colors.accent : t === 'consumable_item' ? colors.warning : colors.success;
+  const typeColorBg = (t: ItemType) =>
+    t === 'raw_material' ? colors.accentSoft : t === 'consumable_item' ? colors.warningBg : colors.successBg;
+
   const renderItem = ({ item }: { item: MemoItem }) => {
     const needsReturn = item.item_type !== 'inventory_item' && item.qty_returned === null;
+    const tColor = typeColor(item.item_type);
     return (
-      <View style={styles.itemRow}>
+      <View style={[styles.itemRow, { borderLeftColor: tColor }]}>
         <View style={styles.itemHeader}>
-          <View style={styles.itemTypeBadge}>
-            <Text style={styles.itemTypeBadgeText}>{TYPE_LABEL[item.item_type]}</Text>
+          <View style={[styles.itemIconWrap, { backgroundColor: typeColorBg(item.item_type) }]}>
+            <Ionicons name={TYPE_ICON[item.item_type]} size={16} color={tColor} />
           </View>
-          <Text style={styles.itemName} numberOfLines={2}>{item.item_name}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.itemName} numberOfLines={2}>{item.item_name}</Text>
+            <Text style={[styles.itemTypeLabel, { color: tColor }]}>{TYPE_LABEL[item.item_type]}</Text>
+          </View>
           {canEditItem(item) && (
-            <Pressable onPress={() => openEditModal(item)} hitSlop={8} disabled={deletingId === item.id}>
-              <Ionicons name="pencil-outline" size={16} color={colors.textMuted} />
+            <Pressable onPress={() => openEditModal(item)} hitSlop={8} disabled={deletingId === item.id} style={styles.itemActionBtn}>
+              <Ionicons name="pencil-outline" size={15} color={colors.textSecondary} />
             </Pressable>
           )}
-          <Pressable onPress={() => handleDelete(item)} hitSlop={8} disabled={deletingId === item.id} style={{ marginLeft: spacing.xs }}>
+          <Pressable onPress={() => handleDelete(item)} hitSlop={8} disabled={deletingId === item.id} style={[styles.itemActionBtn, styles.itemActionBtnDanger]}>
             {deletingId === item.id ? (
               <ActivityIndicator size="small" color={colors.danger} />
             ) : (
-              <Ionicons name="trash-outline" size={16} color={colors.danger} />
+              <Ionicons name="trash-outline" size={15} color={colors.danger} />
             )}
           </Pressable>
         </View>
@@ -572,16 +595,45 @@ export default function MemoDetailScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.sideButton}>
-          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
-        </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>{memo?.memo_number ?? 'Memo'}</Text>
-        <Pressable onPress={onRefresh} style={styles.sideButton} disabled={refreshing}>
-          <Ionicons name="refresh" size={22} color={refreshing ? colors.textMuted : colors.textPrimary} />
-        </Pressable>
-      </View>
+      <StatusBar style="light" />
+      <LinearGradient colors={[colors.accent, '#c4123f']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
+        <View style={styles.heroTopRow}>
+          <Pressable onPress={() => router.back()} style={styles.heroIconBtn} hitSlop={8}>
+            <Ionicons name="chevron-back" size={22} color="#ffffff" />
+          </Pressable>
+          <Pressable onPress={onRefresh} style={styles.heroIconBtn} disabled={refreshing} hitSlop={8}>
+            {refreshing ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="refresh" size={20} color="#ffffff" />}
+          </Pressable>
+        </View>
+        <Text style={styles.heroTitle} numberOfLines={1}>{memo?.memo_number ?? 'Memo'}</Text>
+        {memo && (
+          <>
+            <Text style={styles.heroSubtitle} numberOfLines={1}>
+              {[memo.vehicle_info, memo.spk_number ? `SPK ${memo.spk_number}` : null].filter(Boolean).join(' · ') || 'Tanpa info kendaraan'}
+            </Text>
+            <View style={styles.heroMetaRow}>
+              <View style={styles.heroChip}>
+                <Ionicons name="storefront-outline" size={12} color="#ffffff" />
+                <Text style={styles.heroChipText}>{memo.store?.name ?? '—'}</Text>
+              </View>
+              <View style={styles.heroChip}>
+                <Ionicons name="person-circle-outline" size={12} color="#ffffff" />
+                <Text style={styles.heroChipText}>{memo.creator?.name ?? '—'}</Text>
+              </View>
+              <View style={styles.heroChip}>
+                <Ionicons name="cube-outline" size={12} color="#ffffff" />
+                <Text style={styles.heroChipText}>{memo.items.length} barang</Text>
+              </View>
+            </View>
+            {memo.notes && (
+              <View style={styles.heroNotesBox}>
+                <Ionicons name="chatbox-ellipses-outline" size={13} color="rgba(255,255,255,0.85)" />
+                <Text style={styles.heroNotesText} numberOfLines={2}>{memo.notes}</Text>
+              </View>
+            )}
+          </>
+        )}
+      </LinearGradient>
 
       {loading ? (
         <View style={styles.centerState}>
@@ -600,25 +652,21 @@ export default function MemoDetailScreen() {
             contentContainerStyle={styles.listContent}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
             ListHeaderComponent={
-              <View style={styles.infoCard}>
-                <Text style={styles.infoLine}>
-                  {[memo.vehicle_info, memo.spk_number ? `SPK ${memo.spk_number}` : null].filter(Boolean).join(' · ') || 'Tanpa info kendaraan'}
-                </Text>
-                <Text style={styles.infoMeta}>{memo.store?.name ?? '—'} · Dibuat oleh {memo.creator?.name ?? '—'}</Text>
-                {memo.notes && <Text style={styles.infoNotes}>{memo.notes}</Text>}
-              </View>
+              memo.items.length > 0 ? <Text style={styles.listSectionTitle}>Daftar Barang</Text> : null
             }
             renderItem={renderItem}
             ListEmptyComponent={
               <View style={styles.centerState}>
-                <Ionicons name="cube-outline" size={36} color={colors.textMuted} />
+                <View style={styles.emptyIconWrap}>
+                  <Ionicons name="cube-outline" size={32} color={colors.accent} />
+                </View>
                 <Text style={styles.centerStateText}>Belum ada barang di memo ini. Ketuk "Tambah Barang" di bawah.</Text>
               </View>
             }
           />
 
-          <Pressable style={styles.addBtn} onPress={openAddModal}>
-            <Ionicons name="add-circle-outline" size={20} color="#ffffff" />
+          <Pressable style={({ pressed }) => [styles.addBtn, pressed && styles.addBtnPressed]} onPress={openAddModal}>
+            <Ionicons name="add-circle" size={20} color="#ffffff" />
             <Text style={styles.addBtnText}>Tambah Barang</Text>
           </Pressable>
         </>
@@ -628,31 +676,44 @@ export default function MemoDetailScreen() {
       <Modal visible={addVisible} animationType="slide" transparent onRequestClose={closeAddModal}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={[styles.modalCard, styles.addModalCard]}>
+            <View style={styles.dragHandle} />
             <View style={styles.modalHeader}>
-              <View>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.modalTitle}>Tambah Barang</Text>
                 <Text style={styles.modalStep}>
                   {!addType
-                    ? 'Langkah 1/3 · Pilih jenis'
+                    ? 'Pilih jenis barang'
                     : addType !== 'inventory_item' && multiQtyStep
-                      ? 'Langkah 3/3 · Isi jumlah'
+                      ? 'Isi jumlah tiap barang'
                       : addType !== 'inventory_item'
-                        ? 'Langkah 2/3 · Cari & centang'
+                        ? 'Cari & centang barang'
                         : !selected
-                          ? 'Langkah 2/3 · Cari & pilih'
-                          : 'Langkah 3/3 · Isi jumlah'}
+                          ? 'Cari & pilih gulungan'
+                          : 'Isi meter dipakai'}
                 </Text>
               </View>
-              <Pressable onPress={closeAddModal} hitSlop={8}>
-                <Ionicons name="close" size={22} color={colors.textPrimary} />
+              <Pressable onPress={closeAddModal} hitSlop={8} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={20} color={colors.textPrimary} />
               </Pressable>
+            </View>
+            <View style={styles.stepDots}>
+              {[1, 2, 3].map((step) => {
+                const current = !addType ? 1 : (addType !== 'inventory_item' && multiQtyStep) || (addType === 'inventory_item' && selected) ? 3 : 2;
+                return <View key={step} style={[styles.stepDot, step <= current && styles.stepDotActive]} />;
+              })}
             </View>
 
             {!addType ? (
               <View style={{ gap: spacing.sm }}>
                 {(Object.keys(TYPE_LABEL) as ItemType[]).map((t) => (
                   <Pressable key={t} style={styles.typeOption} onPress={() => { hapticLight(); setAddType(t); }}>
-                    <Text style={styles.typeOptionText}>{TYPE_LABEL[t]}</Text>
+                    <View style={[styles.itemIconWrap, { backgroundColor: typeColorBg(t) }]}>
+                      <Ionicons name={TYPE_ICON[t]} size={18} color={typeColor(t)} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.typeOptionText}>{TYPE_LABEL[t]}</Text>
+                      <Text style={styles.typeOptionDesc}>{TYPE_DESC[t]}</Text>
+                    </View>
                     <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
                   </Pressable>
                 ))}
@@ -780,7 +841,10 @@ export default function MemoDetailScreen() {
                     ListEmptyComponent={<Text style={styles.centerStateText}>Tidak ada hasil.</Text>}
                     renderItem={({ item }) => (
                       <Pressable style={styles.pickRow} onPress={() => setSelected(item)}>
-                        <View style={{ flex: 1 }}>
+                        <View style={[styles.itemIconWrap, { backgroundColor: typeColorBg('inventory_item'), width: 30, height: 30 }]}>
+                          <Ionicons name={TYPE_ICON.inventory_item} size={14} color={typeColor('inventory_item')} />
+                        </View>
+                        <View style={{ flex: 1, marginLeft: spacing.xs }}>
                           <Text style={styles.pickRowName}>{item.name}</Text>
                           {item.subtitle && <Text style={styles.pickRowSubtitle}>{item.subtitle}</Text>}
                         </View>
@@ -836,10 +900,11 @@ export default function MemoDetailScreen() {
       <Modal visible={returnTarget !== null} animationType="fade" transparent onRequestClose={() => setReturnTarget(null)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalCard}>
+            <View style={styles.dragHandle} />
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Catat Pengembalian</Text>
-              <Pressable onPress={() => setReturnTarget(null)} hitSlop={8}>
-                <Ionicons name="close" size={22} color={colors.textPrimary} />
+              <Pressable onPress={() => setReturnTarget(null)} hitSlop={8} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={20} color={colors.textPrimary} />
               </Pressable>
             </View>
             <Text style={styles.selectedName}>{returnTarget?.item_name}</Text>
@@ -862,10 +927,11 @@ export default function MemoDetailScreen() {
       <Modal visible={editTarget !== null} animationType="fade" transparent onRequestClose={() => setEditTarget(null)}>
         <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.modalCard}>
+            <View style={styles.dragHandle} />
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Koreksi Jumlah</Text>
-              <Pressable onPress={() => setEditTarget(null)} hitSlop={8}>
-                <Ionicons name="close" size={22} color={colors.textPrimary} />
+              <Pressable onPress={() => setEditTarget(null)} hitSlop={8} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={20} color={colors.textPrimary} />
               </Pressable>
             </View>
             <Text style={styles.selectedName}>{editTarget?.item_name}</Text>
@@ -894,52 +960,81 @@ export default function MemoDetailScreen() {
 function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
-    header: {
+
+    hero: {
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.sm,
+      paddingBottom: spacing.md,
+      borderBottomLeftRadius: radius.lg,
+      borderBottomRightRadius: radius.lg,
+      gap: 2,
+    },
+    heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    heroIconBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: radius.pill,
+      backgroundColor: 'rgba(255,255,255,0.18)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    heroTitle: { fontSize: fontSize.xl, fontWeight: '800', color: '#ffffff', marginTop: spacing.sm, letterSpacing: 0.3 },
+    heroSubtitle: { fontSize: fontSize.sm, color: 'rgba(255,255,255,0.9)', marginTop: 2 },
+    heroMetaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: spacing.sm },
+    heroChip: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
+      gap: 4,
+      backgroundColor: 'rgba(255,255,255,0.16)',
       paddingHorizontal: spacing.sm,
-      paddingVertical: spacing.sm,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-      backgroundColor: colors.bg,
+      paddingVertical: 4,
+      borderRadius: radius.pill,
     },
-    sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    headerTitle: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
+    heroChipText: { fontSize: 11, color: '#ffffff', fontWeight: '600' },
+    heroNotesBox: {
+      flexDirection: 'row',
+      gap: 6,
+      backgroundColor: 'rgba(255,255,255,0.12)',
+      borderRadius: radius.md,
+      padding: spacing.sm,
+      marginTop: spacing.sm,
+    },
+    heroNotesText: { flex: 1, fontSize: fontSize.xs, color: 'rgba(255,255,255,0.92)', lineHeight: 16 },
+
     centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.xl },
     centerStateText: { fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center' },
     listContent: { padding: spacing.md, paddingBottom: 100, gap: spacing.sm },
+    listSectionTitle: { fontSize: fontSize.xs, fontWeight: '700', color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
 
-    infoCard: {
-      backgroundColor: colors.surface,
-      borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: colors.border,
-      padding: spacing.md,
-      marginBottom: spacing.xs,
-      gap: 4,
-    },
-    infoLine: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
     infoMeta: { fontSize: fontSize.xs, color: colors.textMuted },
-    infoNotes: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 4, fontStyle: 'italic' },
 
     itemRow: {
       backgroundColor: colors.surface,
-      borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: colors.border,
+      borderRadius: radius.lg,
+      borderLeftWidth: 3,
       padding: spacing.sm,
       gap: 4,
+      ...shadow.sm,
     },
-    itemHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-    itemTypeBadge: {
-      backgroundColor: colors.accentSoft,
+    itemHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+    itemIconWrap: {
+      width: 34,
+      height: 34,
+      borderRadius: radius.md,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    itemTypeLabel: { fontSize: 10, fontWeight: '700', marginTop: 1 },
+    itemName: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
+    itemActionBtn: {
+      width: 30,
+      height: 30,
       borderRadius: radius.pill,
-      paddingHorizontal: spacing.xs,
-      paddingVertical: 2,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.bg,
     },
-    itemTypeBadgeText: { fontSize: 10, fontWeight: '700', color: colors.accent },
-    itemName: { flex: 1, fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
+    itemActionBtnDanger: { marginLeft: 2 },
     itemQtyRow: { gap: 2 },
     // Label kecil-muted vs angka besar-tebal-beraksen — supaya jumlahnya
     // yang paling penting langsung "kena mata", tidak tenggelam di antara
@@ -972,6 +1067,16 @@ function createStyles(colors: typeof darkColors) {
       backgroundColor: colors.accent,
       borderRadius: radius.pill,
       paddingVertical: spacing.md,
+      ...shadow.card,
+    },
+    addBtnPressed: { opacity: 0.9 },
+    emptyIconWrap: {
+      width: 64,
+      height: 64,
+      borderRadius: 32,
+      backgroundColor: colors.accentSoft,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     addBtnText: { color: '#ffffff', fontWeight: '700', fontSize: fontSize.sm },
 
@@ -988,20 +1093,39 @@ function createStyles(colors: typeof darkColors) {
     // layar supaya daftar barangnya kebaca banyak sekaligus, bukan cuma
     // beberapa baris lalu harus scroll kecil-kecil.
     addModalCard: { height: '85%' },
+    dragHandle: {
+      width: 40,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: colors.border,
+      alignSelf: 'center',
+      marginBottom: spacing.xs,
+    },
     modalHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
-    modalTitle: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary },
-    modalStep: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: 2 },
+    modalCloseBtn: {
+      width: 30,
+      height: 30,
+      borderRadius: radius.pill,
+      backgroundColor: colors.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    modalTitle: { fontSize: fontSize.lg, fontWeight: '800', color: colors.textPrimary },
+    modalStep: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: 1 },
+    stepDots: { flexDirection: 'row', gap: 4, marginBottom: spacing.xs },
+    stepDot: { flex: 1, height: 3, borderRadius: 2, backgroundColor: colors.border },
+    stepDotActive: { backgroundColor: colors.accent },
 
     typeOption: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
+      gap: spacing.sm,
       backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: radius.md,
+      borderRadius: radius.lg,
       padding: spacing.md,
+      ...shadow.sm,
     },
+    typeOptionDesc: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
     typeOptionText: { fontSize: fontSize.sm, fontWeight: '600', color: colors.textPrimary },
 
     searchWrap: {
@@ -1020,9 +1144,10 @@ function createStyles(colors: typeof darkColors) {
     pickRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingVertical: spacing.sm,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
+      padding: spacing.sm,
+      borderRadius: radius.md,
+      marginBottom: spacing.xs,
+      backgroundColor: colors.surface,
     },
     pickRowName: { fontSize: fontSize.sm, fontWeight: '600', color: colors.textPrimary },
     pickRowSubtitle: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: 2 },

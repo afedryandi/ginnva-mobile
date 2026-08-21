@@ -3,8 +3,9 @@ import { View, Text, Pressable, FlatList, StyleSheet, ActivityIndicator, Refresh
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { darkColors, fontSize, spacing, radius, shadow } from '@/constants/theme';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
 
@@ -65,18 +66,28 @@ export default function MemoListScreen() {
     setRefreshing(false);
   }, [fetchMemos]);
 
+  const goToCreate = () => router.push('/staff/memos/create' as never);
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.sideButton}>
-          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
-        </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>Memo Pengambilan/Pengembalian</Text>
-        <Pressable onPress={onRefresh} style={styles.sideButton} disabled={refreshing}>
-          <Ionicons name="refresh" size={22} color={refreshing ? colors.textMuted : colors.textPrimary} />
-        </Pressable>
-      </View>
+      <StatusBar style="light" />
+
+      {/* Hero header — gradient (sama nuansa aksen brand dengan Beranda),
+          bukan header polos bar tipis seperti sebelumnya. */}
+      <LinearGradient colors={[colors.accent, '#c4123f']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
+        <View style={styles.heroTopRow}>
+          <Pressable onPress={() => router.back()} style={styles.heroIconBtn} hitSlop={8}>
+            <Ionicons name="chevron-back" size={22} color="#ffffff" />
+          </Pressable>
+          <Pressable onPress={onRefresh} style={styles.heroIconBtn} disabled={refreshing} hitSlop={8}>
+            {refreshing ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="refresh" size={20} color="#ffffff" />}
+          </Pressable>
+        </View>
+        <Text style={styles.heroTitle}>Memo Pengambilan/Pengembalian</Text>
+        <Text style={styles.heroSubtitle}>
+          {loading ? 'Memuat…' : `${memos.length} memo tercatat`}
+        </Text>
+      </LinearGradient>
 
       {loading ? (
         <View style={styles.centerState}>
@@ -84,13 +95,25 @@ export default function MemoListScreen() {
         </View>
       ) : error ? (
         <View style={styles.centerState}>
-          <Ionicons name="alert-circle" size={32} color={colors.danger} />
+          <View style={styles.emptyIconWrap}>
+            <Ionicons name="alert-circle-outline" size={32} color={colors.danger} />
+          </View>
           <Text style={styles.centerStateText}>{error}</Text>
+          <Pressable style={styles.retryBtn} onPress={onRefresh}>
+            <Text style={styles.retryBtnText}>Coba Lagi</Text>
+          </Pressable>
         </View>
       ) : memos.length === 0 ? (
         <View style={styles.centerState}>
-          <Ionicons name="clipboard-outline" size={36} color={colors.textMuted} />
-          <Text style={styles.centerStateText}>Belum ada memo. Ketuk tombol + untuk buat memo baru.</Text>
+          <View style={styles.emptyIconWrap}>
+            <Ionicons name="clipboard-outline" size={40} color={colors.accent} />
+          </View>
+          <Text style={styles.emptyTitle}>Belum Ada Memo</Text>
+          <Text style={styles.centerStateText}>Buat memo untuk catat barang keluar-masuk 1 instalasi sekaligus.</Text>
+          <Pressable style={styles.emptyCta} onPress={goToCreate}>
+            <Ionicons name="add" size={18} color="#ffffff" />
+            <Text style={styles.emptyCtaText}>Buat Memo Baru</Text>
+          </Pressable>
         </View>
       ) : (
         <FlatList
@@ -100,17 +123,23 @@ export default function MemoListScreen() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
           renderItem={({ item }) => (
             <Pressable
-              style={styles.row}
+              style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
               onPress={() => router.push({ pathname: '/staff/memos/[id]', params: { id: String(item.id) } } as never)}
             >
+              <View style={styles.cardIconWrap}>
+                <Ionicons name="document-text-outline" size={20} color={colors.accent} />
+              </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.rowNumber}>{item.memo_number}</Text>
-                <Text style={styles.rowInfo}>
+                <Text style={styles.rowInfo} numberOfLines={1}>
                   {[item.vehicle_info, item.spk_number ? `SPK ${item.spk_number}` : null].filter(Boolean).join(' · ') || 'Tanpa info kendaraan'}
                 </Text>
-                <Text style={styles.rowMeta}>
-                  {item.creator?.name ?? '—'} · {formatDate(item.created_at)}
-                </Text>
+                <View style={styles.rowMetaRow}>
+                  <Ionicons name="person-circle-outline" size={13} color={colors.textMuted} />
+                  <Text style={styles.rowMeta}>{item.creator?.name ?? '—'}</Text>
+                  <Text style={styles.rowMetaDot}>·</Text>
+                  <Text style={styles.rowMeta}>{formatDate(item.created_at)}</Text>
+                </View>
               </View>
               <View style={styles.rowBadge}>
                 <Text style={styles.rowBadgeText}>{item.items_count}</Text>
@@ -122,8 +151,9 @@ export default function MemoListScreen() {
         />
       )}
 
-      <Pressable style={styles.fab} onPress={() => router.push('/staff/memos/create' as never)}>
-        <Ionicons name="add" size={26} color="#ffffff" />
+      <Pressable style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]} onPress={goToCreate}>
+        <Ionicons name="add" size={20} color="#ffffff" />
+        <Text style={styles.fabText}>Buat Memo</Text>
       </Pressable>
     </SafeAreaView>
   );
@@ -132,52 +162,108 @@ export default function MemoListScreen() {
 function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
-    header: {
+
+    hero: {
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.sm,
+      paddingBottom: spacing.lg,
+      borderBottomLeftRadius: radius.lg,
+      borderBottomRightRadius: radius.lg,
+    },
+    heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    heroIconBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: radius.pill,
+      backgroundColor: 'rgba(255,255,255,0.18)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    heroTitle: { fontSize: fontSize.xl, fontWeight: '800', color: '#ffffff', marginTop: spacing.md },
+    heroSubtitle: { fontSize: fontSize.sm, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
+
+    centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.xl },
+    centerStateText: { fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center', lineHeight: 20 },
+    emptyIconWrap: {
+      width: 72,
+      height: 72,
+      borderRadius: 36,
+      backgroundColor: colors.accentSoft,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: spacing.xs,
+    },
+    emptyTitle: { fontSize: fontSize.lg, fontWeight: '800', color: colors.textPrimary },
+    emptyCta: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: spacing.sm,
+      gap: spacing.xs,
+      backgroundColor: colors.accent,
+      paddingHorizontal: spacing.lg,
       paddingVertical: spacing.sm,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-      backgroundColor: colors.bg,
+      borderRadius: radius.pill,
+      marginTop: spacing.sm,
     },
-    sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    headerTitle: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-    centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.xl },
-    centerStateText: { fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center' },
-    listContent: { padding: spacing.md, paddingBottom: spacing.xxl, gap: spacing.xs },
-    row: {
+    emptyCtaText: { color: '#ffffff', fontWeight: '700', fontSize: fontSize.sm },
+    retryBtn: {
+      marginTop: spacing.xs,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.sm,
+      backgroundColor: colors.surface,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    retryBtnText: { color: colors.textPrimary, fontWeight: '600', fontSize: fontSize.sm },
+
+    listContent: { padding: spacing.md, paddingTop: spacing.md, paddingBottom: 100, gap: spacing.sm },
+    card: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: spacing.sm,
       backgroundColor: colors.surface,
-      borderRadius: radius.md,
+      borderRadius: radius.lg,
       padding: spacing.sm,
-      borderWidth: 1,
-      borderColor: colors.border,
+      ...shadow.sm,
     },
-    rowNumber: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
-    rowInfo: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
-    rowMeta: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: 2 },
-    rowBadge: { alignItems: 'center', paddingHorizontal: spacing.xs },
+    cardPressed: { opacity: 0.85 },
+    cardIconWrap: {
+      width: 42,
+      height: 42,
+      borderRadius: radius.md,
+      backgroundColor: colors.accentSoft,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    rowNumber: { fontSize: fontSize.sm, fontWeight: '800', color: colors.textPrimary, letterSpacing: 0.2 },
+    rowInfo: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 3 },
+    rowMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 4 },
+    rowMeta: { fontSize: 11, color: colors.textMuted },
+    rowMetaDot: { fontSize: 11, color: colors.textMuted },
+    rowBadge: {
+      alignItems: 'center',
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 4,
+      backgroundColor: colors.accentSoft,
+      borderRadius: radius.md,
+    },
     rowBadgeText: { fontSize: fontSize.base, fontWeight: '800', color: colors.accent },
-    rowBadgeLabel: { fontSize: 10, color: colors.textMuted },
+    rowBadgeLabel: { fontSize: 9, color: colors.accent, fontWeight: '600' },
+
     fab: {
       position: 'absolute',
       right: spacing.md,
       bottom: spacing.lg,
-      width: 56,
-      height: 56,
-      borderRadius: 28,
-      backgroundColor: colors.accent,
+      flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'center',
-      elevation: 4,
-      shadowColor: '#000',
-      shadowOpacity: 0.25,
-      shadowRadius: 6,
-      shadowOffset: { width: 0, height: 3 },
+      gap: 6,
+      paddingHorizontal: spacing.lg,
+      height: 52,
+      borderRadius: radius.pill,
+      backgroundColor: colors.accent,
+      ...shadow.card,
     },
+    fabPressed: { opacity: 0.9 },
+    fabText: { color: '#ffffff', fontWeight: '700', fontSize: fontSize.sm },
   });
 }

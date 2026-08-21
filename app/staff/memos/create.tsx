@@ -5,11 +5,11 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { Button } from '@/components/ui/Button';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { darkColors, fontSize, spacing, radius, shadow } from '@/constants/theme';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
 import { useStaffAuth } from '@/lib/staff-auth-context';
-import { hapticSuccess, hapticError } from '@/lib/haptics';
+import { hapticSuccess, hapticError, hapticLight } from '@/lib/haptics';
 
 interface CreateMemoResponse {
   data: { id: number };
@@ -81,7 +81,7 @@ export default function CreateMemoScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.sideButton}>
+        <Pressable onPress={() => router.back()} style={styles.sideButton} hitSlop={8}>
           <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
         </Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>Buat Memo Baru</Text>
@@ -91,54 +91,83 @@ export default function CreateMemoScreen() {
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
           {isFullAccess && (
-            <>
-              <Text style={styles.label}>Toko</Text>
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Ionicons name="storefront-outline" size={16} color={colors.accent} />
+                <Text style={styles.sectionTitle}>Toko</Text>
+              </View>
               <Text style={styles.helperText}>
                 Akun Anda tidak terikat ke 1 toko tertentu, jadi pilih dulu toko yang memo ini dibuat untuk siapa.
               </Text>
               <View style={styles.storeChips}>
-                {stores.map((s) => (
-                  <Pressable
-                    key={s.id}
-                    style={[styles.storeChip, storeId === s.id && styles.storeChipActive]}
-                    onPress={() => setStoreId(s.id)}
-                  >
-                    <Text style={[styles.storeChipText, storeId === s.id && styles.storeChipTextActive]}>{s.name}</Text>
-                  </Pressable>
-                ))}
+                {stores.map((s) => {
+                  const active = storeId === s.id;
+                  return (
+                    <Pressable
+                      key={s.id}
+                      style={[styles.storeChip, active && styles.storeChipActive]}
+                      onPress={() => {
+                        hapticLight();
+                        setStoreId(s.id);
+                      }}
+                    >
+                      {active && <Ionicons name="checkmark-circle" size={14} color="#ffffff" style={{ marginRight: 4 }} />}
+                      <Text style={[styles.storeChipText, active && styles.storeChipTextActive]}>{s.name}</Text>
+                    </Pressable>
+                  );
+                })}
               </View>
-            </>
+            </View>
           )}
 
-          <Text style={styles.label}>Info Kendaraan (opsional)</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Mis. Toyota Avanza - B 1234 XYZ"
-            placeholderTextColor={colors.textMuted}
-            value={vehicleInfo}
-            onChangeText={setVehicleInfo}
-          />
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Ionicons name="car-sport-outline" size={16} color={colors.accent} />
+              <Text style={styles.sectionTitle}>Info Kendaraan</Text>
+              <Text style={styles.optionalTag}>opsional</Text>
+            </View>
+            <TextInput
+              style={styles.input}
+              placeholder="Mis. Toyota Avanza - B 1234 XYZ"
+              placeholderTextColor={colors.textMuted}
+              value={vehicleInfo}
+              onChangeText={setVehicleInfo}
+            />
 
-          <Text style={styles.label}>SPK No (opsional)</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Nomor SPK"
-            placeholderTextColor={colors.textMuted}
-            value={spkNumber}
-            onChangeText={setSpkNumber}
-          />
+            <View style={[styles.sectionHeader, { marginTop: spacing.md }]}>
+              <Ionicons name="document-text-outline" size={16} color={colors.accent} />
+              <Text style={styles.sectionTitle}>SPK No</Text>
+              <Text style={styles.optionalTag}>opsional</Text>
+            </View>
+            <TextInput
+              style={styles.input}
+              placeholder="Nomor SPK"
+              placeholderTextColor={colors.textMuted}
+              value={spkNumber}
+              onChangeText={setSpkNumber}
+            />
 
-          <Text style={styles.label}>Catatan (opsional)</Text>
-          <TextInput
-            style={[styles.input, styles.textarea]}
-            placeholder="Catatan tambahan"
-            placeholderTextColor={colors.textMuted}
-            value={notes}
-            onChangeText={setNotes}
-            multiline
-          />
+            <View style={[styles.sectionHeader, { marginTop: spacing.md }]}>
+              <Ionicons name="chatbox-ellipses-outline" size={16} color={colors.accent} />
+              <Text style={styles.sectionTitle}>Catatan</Text>
+              <Text style={styles.optionalTag}>opsional</Text>
+            </View>
+            <TextInput
+              style={[styles.input, styles.textarea]}
+              placeholder="Catatan tambahan"
+              placeholderTextColor={colors.textMuted}
+              value={notes}
+              onChangeText={setNotes}
+              multiline
+            />
+          </View>
 
-          {error && <Text style={styles.errorText}>{error}</Text>}
+          {error && (
+            <View style={styles.errorBox}>
+              <Ionicons name="alert-circle" size={16} color={colors.danger} />
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          )}
 
           <Button
             label="Buat Memo & Tambah Barang"
@@ -168,10 +197,21 @@ function createStyles(colors: typeof darkColors) {
     },
     sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
     headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-    form: { padding: spacing.md, gap: spacing.xs },
-    label: { fontSize: fontSize.xs, fontWeight: '600', color: colors.textSecondary, marginTop: spacing.sm },
-    input: {
+    form: { padding: spacing.md, gap: spacing.md, paddingBottom: spacing.xxl },
+
+    section: {
       backgroundColor: colors.surface,
+      borderRadius: radius.lg,
+      padding: spacing.md,
+      gap: spacing.xs,
+      ...shadow.sm,
+    },
+    sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    sectionTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
+    optionalTag: { fontSize: 10, color: colors.textMuted, marginLeft: 'auto' },
+
+    input: {
+      backgroundColor: colors.bg,
       borderWidth: 1,
       borderColor: colors.border,
       borderRadius: radius.md,
@@ -179,22 +219,34 @@ function createStyles(colors: typeof darkColors) {
       paddingVertical: spacing.sm,
       fontSize: fontSize.sm,
       color: colors.textPrimary,
+      marginTop: spacing.xs,
     },
     textarea: { minHeight: 80, textAlignVertical: 'top' },
-    helperText: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: -2 },
-    storeChips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+    helperText: { fontSize: fontSize.xs, color: colors.textMuted, lineHeight: 16 },
+    storeChips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.xs },
     storeChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
       paddingHorizontal: spacing.sm,
       paddingVertical: spacing.xs,
       borderRadius: radius.pill,
       borderWidth: 1,
       borderColor: colors.border,
-      backgroundColor: colors.surface,
+      backgroundColor: colors.bg,
     },
     storeChipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
     storeChipText: { fontSize: fontSize.xs, fontWeight: '600', color: colors.textSecondary },
     storeChipTextActive: { color: '#ffffff' },
-    errorText: { fontSize: fontSize.sm, color: colors.danger, marginTop: spacing.sm },
-    submitBtn: { marginTop: spacing.lg },
+
+    errorBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      backgroundColor: colors.dangerBg,
+      borderRadius: radius.md,
+      padding: spacing.sm,
+    },
+    errorText: { fontSize: fontSize.sm, color: colors.danger, flex: 1 },
+    submitBtn: { marginTop: spacing.xs },
   });
 }
