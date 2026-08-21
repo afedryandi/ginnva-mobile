@@ -104,12 +104,19 @@ export default function MemoDetailScreen() {
   }, [fetchMemo]);
 
   // ── Tambah barang ──────────────────────────────────────────────────
+  // Bahan Baku/Barang Habis Pakai: bisa centang banyak sekaligus (search
+  // -> pilih beberapa -> isi jumlah masing-masing di layar berikutnya).
+  // PPF/WF: tetap 1 per 1 (pilih -> isi meter langsung), karena tiap
+  // gulungan beda kode & sisa panjangnya, kurang cocok dicentang massal.
   const [addVisible, setAddVisible] = useState(false);
   const [addType, setAddType] = useState<ItemType | null>(null);
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [selected, setSelected] = useState<SearchResult | null>(null);
+  const [selectedMulti, setSelectedMulti] = useState<SearchResult[]>([]);
+  const [multiQtyStep, setMultiQtyStep] = useState(false);
+  const [multiQty, setMultiQty] = useState<Record<number, string>>({});
   const [qtyInput, setQtyInput] = useState('');
   const [conditionNotes, setConditionNotes] = useState('');
   const [addSubmitting, setAddSubmitting] = useState(false);
@@ -121,9 +128,18 @@ export default function MemoDetailScreen() {
     setSearch('');
     setSearchResults([]);
     setSelected(null);
+    setSelectedMulti([]);
+    setMultiQtyStep(false);
+    setMultiQty({});
     setQtyInput('');
     setConditionNotes('');
     setAddError(null);
+  };
+
+  const toggleMultiSelect = (item: SearchResult) => {
+    setSelectedMulti((prev) =>
+      prev.some((s) => s.id === item.id) ? prev.filter((s) => s.id !== item.id) : [...prev, item]
+    );
   };
 
   const openAddModal = () => {
@@ -212,6 +228,51 @@ export default function MemoDetailScreen() {
     }
   };
 
+  const handleAddMultiItems = async () => {
+    if (!addType || selectedMulti.length === 0 || addSubmitting) return;
+
+    const missing = selectedMulti.find((item) => {
+      const q = parseFloat(multiQty[item.id] ?? '');
+      return !q || q <= 0;
+    });
+    if (missing) {
+      setAddError(`Isi jumlah untuk "${missing.name}".`);
+      return;
+    }
+
+    setAddSubmitting(true);
+    setAddError(null);
+
+    let failedName: string | null = null;
+    try {
+      for (const item of selectedMulti) {
+        const qty = parseFloat(multiQty[item.id]);
+        failedName = item.name;
+        // Sengaja berurutan (bukan Promise.all) — tiap item transaksi
+        // stoknya sendiri-sendiri di backend, kalau salah satu gagal
+        // (mis. stok kurang) yang sebelumnya tetap sudah tersimpan, jadi
+        // urutan & titik gagalnya harus jelas ketahuan.
+        const res = await staffApiFetch<{ data: MemoDetail }>(`/api/staff/memos/${id}/items`, {
+          method: 'POST',
+          body: JSON.stringify({
+            item_type: addType,
+            item_id: item.id,
+            qty_taken: qty,
+            condition_notes: conditionNotes.trim() || null,
+          }),
+        });
+        setMemo(res.data);
+      }
+      resetAddModal();
+    } catch (err) {
+      const baseMsg = err instanceof ApiError ? err.message : 'Gagal menambah barang.';
+      setAddError(`"${failedName}": ${baseMsg} (barang sebelumnya di daftar ini sudah tersimpan.)`);
+      await fetchMemo();
+    } finally {
+      setAddSubmitting(false);
+    }
+  };
+
   // ── Catat pengembalian ─────────────────────────────────────────────
   const [returnTarget, setReturnTarget] = useState<MemoItem | null>(null);
   const [returnQtyInput, setReturnQtyInput] = useState('');
@@ -252,6 +313,46 @@ export default function MemoDetailScreen() {
     }
   };
 
+  // ── Edit jumlah (koreksi salah input) ──────────────────────────────
+  const [editTarget, setEditTarget] = useState<MemoItem | null>(null);
+  const [editQtyInput, setEditQtyInput] = useState('');
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const canEditItem = (item: MemoItem) =>
+    item.item_type === 'inventory_item' ? true : item.qty_returned === null;
+
+  const openEditModal = (item: MemoItem) => {
+    setEditTarget(item);
+    setEditQtyInput(item.item_type === 'inventory_item' ? item.meters_used ?? '' : item.qty_taken ?? '');
+    setEditError(null);
+  };
+
+  const handleEditSubmit = async () => {
+    if (!editTarget || editSubmitting) return;
+    const qty = parseFloat(editQtyInput);
+    if (!qty || qty <= 0) {
+      setEditError('Isi jumlah yang valid.');
+      return;
+    }
+
+    setEditSubmitting(true);
+    setEditError(null);
+    try {
+      const body = editTarget.item_type === 'inventory_item' ? { meters_used: qty } : { qty_taken: qty };
+      const res = await staffApiFetch<{ data: MemoDetail }>(`/api/staff/memos/${id}/items/${editTarget.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+      setMemo(res.data);
+      setEditTarget(null);
+    } catch (err) {
+      setEditError(err instanceof ApiError ? err.message : 'Gagal mengoreksi jumlah.');
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
+
   const renderItem = ({ item }: { item: MemoItem }) => {
     const needsReturn = item.item_type !== 'inventory_item' && item.qty_returned === null;
     return (
@@ -261,6 +362,11 @@ export default function MemoDetailScreen() {
             <Text style={styles.itemTypeBadgeText}>{TYPE_LABEL[item.item_type]}</Text>
           </View>
           <Text style={styles.itemName} numberOfLines={2}>{item.item_name}</Text>
+          {canEditItem(item) && (
+            <Pressable onPress={() => openEditModal(item)} hitSlop={8}>
+              <Ionicons name="pencil-outline" size={16} color={colors.textMuted} />
+            </Pressable>
+          )}
         </View>
 
         {item.item_type === 'inventory_item' ? (
@@ -362,6 +468,109 @@ export default function MemoDetailScreen() {
                   </Pressable>
                 ))}
               </View>
+            ) : addType !== 'inventory_item' && multiQtyStep ? (
+              <View style={{ flex: 1, gap: spacing.sm }}>
+                <FlatList
+                  data={selectedMulti}
+                  keyExtractor={(item) => String(item.id)}
+                  style={{ maxHeight: 320 }}
+                  contentContainerStyle={{ gap: spacing.sm }}
+                  renderItem={({ item }) => (
+                    <View style={styles.multiQtyRow}>
+                      <Text style={styles.pickRowName} numberOfLines={2}>{item.name}</Text>
+                      {item.stockInfo && (
+                        <Text style={[styles.pickRowStock, item.lowStock && styles.pickRowStockLow]}>{item.stockInfo}</Text>
+                      )}
+                      <TextInput
+                        style={styles.multiQtyInput}
+                        placeholder={item.unit ? `Jumlah (${item.unit})` : 'Jumlah'}
+                        placeholderTextColor={colors.textMuted}
+                        value={multiQty[item.id] ?? ''}
+                        onChangeText={(v) => setMultiQty((prev) => ({ ...prev, [item.id]: v }))}
+                        keyboardType="decimal-pad"
+                      />
+                    </View>
+                  )}
+                />
+                <TextInput
+                  style={[styles.input, styles.textarea]}
+                  placeholder="Keterangan/Kondisi untuk semua barang ini (opsional)"
+                  placeholderTextColor={colors.textMuted}
+                  value={conditionNotes}
+                  onChangeText={setConditionNotes}
+                  multiline
+                />
+                {addError && <Text style={styles.errorText}>{addError}</Text>}
+                <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                  <Pressable style={styles.backBtn} onPress={() => setMultiQtyStep(false)} disabled={addSubmitting}>
+                    <Text style={styles.backBtnText}>Kembali</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.submitBtn, { flex: 1 }, addSubmitting && styles.submitBtnDisabled]}
+                    onPress={handleAddMultiItems}
+                    disabled={addSubmitting}
+                  >
+                    {addSubmitting ? (
+                      <ActivityIndicator color="#ffffff" />
+                    ) : (
+                      <Text style={styles.submitText}>Tambahkan {selectedMulti.length} Barang</Text>
+                    )}
+                  </Pressable>
+                </View>
+              </View>
+            ) : addType !== 'inventory_item' ? (
+              <View style={{ flex: 1 }}>
+                <View style={styles.searchWrap}>
+                  <Ionicons name="search" size={16} color={colors.textMuted} />
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder={`Cari ${TYPE_LABEL[addType].toLowerCase()}...`}
+                    placeholderTextColor={colors.textMuted}
+                    value={search}
+                    onChangeText={setSearch}
+                  />
+                </View>
+                {searchLoading ? (
+                  <ActivityIndicator color={colors.accent} style={{ marginTop: spacing.md }} />
+                ) : (
+                  <FlatList
+                    data={searchResults}
+                    keyExtractor={(item) => String(item.id)}
+                    style={{ maxHeight: 240 }}
+                    ListEmptyComponent={<Text style={styles.centerStateText}>Tidak ada hasil.</Text>}
+                    renderItem={({ item }) => {
+                      const checked = selectedMulti.some((s) => s.id === item.id);
+                      return (
+                        <Pressable style={styles.pickRow} onPress={() => toggleMultiSelect(item)}>
+                          <Ionicons
+                            name={checked ? 'checkbox' : 'square-outline'}
+                            size={20}
+                            color={checked ? colors.accent : colors.textMuted}
+                          />
+                          <View style={{ flex: 1, marginLeft: spacing.xs }}>
+                            <Text style={styles.pickRowName}>{item.name}</Text>
+                            {item.subtitle && <Text style={styles.pickRowSubtitle}>{item.subtitle}</Text>}
+                          </View>
+                          {item.stockInfo && (
+                            <Text style={[styles.pickRowStock, item.lowStock && styles.pickRowStockLow]}>{item.stockInfo}</Text>
+                          )}
+                        </Pressable>
+                      );
+                    }}
+                  />
+                )}
+                {selectedMulti.length > 0 && (
+                  <Pressable
+                    style={styles.submitBtn}
+                    onPress={() => {
+                      setMultiQty(Object.fromEntries(selectedMulti.map((s) => [s.id, multiQty[s.id] ?? ''])));
+                      setMultiQtyStep(true);
+                    }}
+                  >
+                    <Text style={styles.submitText}>Lanjut ({selectedMulti.length} dipilih)</Text>
+                  </Pressable>
+                )}
+              </View>
             ) : !selected ? (
               <View style={{ flex: 1 }}>
                 <View style={styles.searchWrap}>
@@ -453,6 +662,38 @@ export default function MemoDetailScreen() {
             {returnError && <Text style={styles.errorText}>{returnError}</Text>}
             <Pressable style={[styles.submitBtn, returnSubmitting && styles.submitBtnDisabled]} onPress={handleReturn} disabled={returnSubmitting}>
               {returnSubmitting ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.submitText}>Simpan</Text>}
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Modal: edit jumlah (koreksi salah input) */}
+      <Modal visible={editTarget !== null} animationType="fade" transparent onRequestClose={() => setEditTarget(null)}>
+        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Koreksi Jumlah</Text>
+              <Pressable onPress={() => setEditTarget(null)} hitSlop={8}>
+                <Ionicons name="close" size={22} color={colors.textPrimary} />
+              </Pressable>
+            </View>
+            <Text style={styles.selectedName}>{editTarget?.item_name}</Text>
+            <Text style={styles.infoMeta}>
+              {editTarget?.item_type === 'inventory_item'
+                ? `Sekarang: ${editTarget?.meters_used} meter`
+                : `Sekarang: ${editTarget?.qty_taken} ${editTarget?.unit}`}
+            </Text>
+            <TextInput
+              style={styles.input}
+              placeholder={editTarget?.item_type === 'inventory_item' ? 'Meter dipakai (koreksi)' : 'Jumlah diambil (koreksi)'}
+              placeholderTextColor={colors.textMuted}
+              value={editQtyInput}
+              onChangeText={setEditQtyInput}
+              keyboardType="decimal-pad"
+            />
+            {editError && <Text style={styles.errorText}>{editError}</Text>}
+            <Pressable style={[styles.submitBtn, editSubmitting && styles.submitBtnDisabled]} onPress={handleEditSubmit} disabled={editSubmitting}>
+              {editSubmitting ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.submitText}>Simpan Koreksi</Text>}
             </Pressable>
           </View>
         </KeyboardAvoidingView>
@@ -586,6 +827,35 @@ function createStyles(colors: typeof darkColors) {
     pickRowSubtitle: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: 2 },
     pickRowStock: { fontSize: fontSize.xs, fontWeight: '700', color: colors.success, marginRight: spacing.xs },
     pickRowStockLow: { color: colors.danger },
+    multiQtyRow: {
+      backgroundColor: colors.surface,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      padding: spacing.sm,
+      gap: 4,
+    },
+    multiQtyInput: {
+      backgroundColor: colors.bg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radius.sm,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 8,
+      fontSize: fontSize.sm,
+      color: colors.textPrimary,
+      marginTop: 4,
+    },
+    backBtn: {
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    backBtnText: { color: colors.textSecondary, fontWeight: '700', fontSize: fontSize.sm },
 
     selectedName: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
     input: {
