@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -7,9 +7,15 @@ import { StatusBar } from 'expo-status-bar';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
+import { useStaffAuth } from '@/lib/staff-auth-context';
 
 interface CreateMemoResponse {
   data: { id: number };
+}
+
+interface StoreOption {
+  id: number;
+  name: string;
 }
 
 // Header memo dulu — barang ditambahkan satu-satu di layar detail setelah
@@ -18,15 +24,35 @@ interface CreateMemoResponse {
 export default function CreateMemoScreen() {
   const { theme, colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { staff } = useStaffAuth();
+  // Sama pola dengan needsStorePicker di staff/inventory/[code].tsx — akun
+  // super_admin/direksi tidak terikat 1 toko, jadi WAJIB pilih toko manual
+  // (backend menolak tanpa store_id untuk akun full-access, lihat
+  // MaterialMemoController::store()). Staff toko biasa tidak lihat field
+  // ini sama sekali, otomatis pakai toko akunnya sendiri.
+  const isFullAccess = staff?.role === 'super_admin' || staff?.role === 'direksi';
 
+  const [stores, setStores] = useState<StoreOption[]>([]);
+  const [storeId, setStoreId] = useState<number | null>(null);
   const [vehicleInfo, setVehicleInfo] = useState('');
   const [spkNumber, setSpkNumber] = useState('');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!isFullAccess) return;
+    staffApiFetch<{ data: StoreOption[] }>('/api/stores', { skipAuth: true })
+      .then((res) => setStores(res.data ?? []))
+      .catch(() => setStores([]));
+  }, [isFullAccess]);
+
   const handleSubmit = async () => {
     if (submitting) return;
+    if (isFullAccess && !storeId) {
+      setError('Pilih toko dulu.');
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -36,6 +62,7 @@ export default function CreateMemoScreen() {
           vehicle_info: vehicleInfo.trim() || null,
           spk_number: spkNumber.trim() || null,
           notes: notes.trim() || null,
+          ...(isFullAccess ? { store_id: storeId } : {}),
         }),
       });
       router.replace({ pathname: '/staff/memos/[id]', params: { id: String(res.data.id) } } as never);
@@ -59,6 +86,23 @@ export default function CreateMemoScreen() {
 
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
+          {isFullAccess && (
+            <>
+              <Text style={styles.label}>Toko</Text>
+              <View style={styles.storeChips}>
+                {stores.map((s) => (
+                  <Pressable
+                    key={s.id}
+                    style={[styles.storeChip, storeId === s.id && styles.storeChipActive]}
+                    onPress={() => setStoreId(s.id)}
+                  >
+                    <Text style={[styles.storeChipText, storeId === s.id && styles.storeChipTextActive]}>{s.name}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </>
+          )}
+
           <Text style={styles.label}>Info Kendaraan (opsional)</Text>
           <TextInput
             style={styles.input}
@@ -127,6 +171,18 @@ function createStyles(colors: typeof darkColors) {
       color: colors.textPrimary,
     },
     textarea: { minHeight: 80, textAlignVertical: 'top' },
+    storeChips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+    storeChip: {
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    storeChipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+    storeChipText: { fontSize: fontSize.xs, fontWeight: '600', color: colors.textSecondary },
+    storeChipTextActive: { color: '#ffffff' },
     errorText: { fontSize: fontSize.sm, color: colors.danger, marginTop: spacing.sm },
     submitBtn: {
       marginTop: spacing.lg,
