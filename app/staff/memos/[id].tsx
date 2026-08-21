@@ -469,6 +469,44 @@ export default function MemoDetailScreen() {
     );
   };
 
+  // ── Hapus baris (salah pilih barang, bukan cuma salah angka) ───────
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  const submitDelete = async (item: MemoItem) => {
+    setDeletingId(item.id);
+    try {
+      const res = await staffApiFetch<{ data: MemoDetail }>(`/api/staff/memos/${id}/items/${item.id}`, {
+        method: 'DELETE',
+      });
+      hapticSuccess();
+      setMemo(res.data);
+      Alert.alert('Berhasil', `"${item.item_name}" dihapus dari memo.`);
+    } catch (err) {
+      hapticError();
+      Alert.alert('Gagal', err instanceof ApiError ? err.message : 'Gagal menghapus barang.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleDelete = (item: MemoItem) => {
+    if (deletingId !== null) return;
+
+    const stillOut =
+      item.item_type === 'inventory_item'
+        ? `${item.meters_used} meter`
+        : `${item.qty_returned !== null ? item.qty_used : item.qty_taken} ${item.unit}`;
+
+    Alert.alert(
+      'Hapus Barang Ini?',
+      `"${item.item_name}" akan dihapus dari memo, dan ${stillOut} yang masih tercatat keluar akan dikembalikan ke stok.`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        { text: 'Hapus', style: 'destructive', onPress: () => submitDelete(item) },
+      ]
+    );
+  };
+
   const renderItem = ({ item }: { item: MemoItem }) => {
     const needsReturn = item.item_type !== 'inventory_item' && item.qty_returned === null;
     return (
@@ -479,10 +517,17 @@ export default function MemoDetailScreen() {
           </View>
           <Text style={styles.itemName} numberOfLines={2}>{item.item_name}</Text>
           {canEditItem(item) && (
-            <Pressable onPress={() => openEditModal(item)} hitSlop={8}>
+            <Pressable onPress={() => openEditModal(item)} hitSlop={8} disabled={deletingId === item.id}>
               <Ionicons name="pencil-outline" size={16} color={colors.textMuted} />
             </Pressable>
           )}
+          <Pressable onPress={() => handleDelete(item)} hitSlop={8} disabled={deletingId === item.id} style={{ marginLeft: spacing.xs }}>
+            {deletingId === item.id ? (
+              <ActivityIndicator size="small" color={colors.danger} />
+            ) : (
+              <Ionicons name="trash-outline" size={16} color={colors.danger} />
+            )}
+          </Pressable>
         </View>
 
         {item.item_type === 'inventory_item' ? (
