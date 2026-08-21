@@ -531,15 +531,29 @@ export default function MemoDetailScreen() {
         </View>
 
         {item.item_type === 'inventory_item' ? (
-          <Text style={styles.itemQty}>{item.meters_used} meter dipakai</Text>
+          <Text style={styles.itemQty}>
+            <Text style={styles.itemQtyLabel}>Dipakai: </Text>
+            <Text style={styles.itemQtyValue}>{item.meters_used} meter</Text>
+          </Text>
         ) : (
           <View style={styles.itemQtyRow}>
-            <Text style={styles.itemQty}>Diambil: {item.qty_taken} {item.unit}</Text>
             <Text style={styles.itemQty}>
-              Dikembalikan: {item.qty_returned === null ? 'Belum Dikembalikan' : `${item.qty_returned} ${item.unit}`}
+              <Text style={styles.itemQtyLabel}>Diambil: </Text>
+              <Text style={styles.itemQtyValue}>{item.qty_taken} {item.unit}</Text>
+            </Text>
+            <Text style={styles.itemQty}>
+              <Text style={styles.itemQtyLabel}>Dikembalikan: </Text>
+              {item.qty_returned === null ? (
+                <Text style={styles.itemQtyMissing}>Belum Dikembalikan</Text>
+              ) : (
+                <Text style={styles.itemQtyValue}>{item.qty_returned} {item.unit}</Text>
+              )}
             </Text>
             {item.qty_used !== null && (
-              <Text style={[styles.itemQty, styles.itemQtyUsed]}>Terpakai: {item.qty_used} {item.unit}</Text>
+              <Text style={styles.itemQty}>
+                <Text style={styles.itemQtyLabel}>Terpakai: </Text>
+                <Text style={styles.itemQtyValueEmphasis}>{item.qty_used} {item.unit}</Text>
+              </Text>
             )}
           </View>
         )}
@@ -787,7 +801,7 @@ export default function MemoDetailScreen() {
                   <Text style={[styles.pickRowStock, selected.lowStock && styles.pickRowStockLow]}>{selected.stockInfo}</Text>
                 )}
                 <TextInput
-                  style={styles.input}
+                  style={styles.qtyInputField}
                   placeholder={addType === 'inventory_item' ? 'Meter dipakai' : 'Jumlah diambil'}
                   placeholderTextColor={colors.textMuted}
                   value={qtyInput}
@@ -831,7 +845,7 @@ export default function MemoDetailScreen() {
             <Text style={styles.selectedName}>{returnTarget?.item_name}</Text>
             <Text style={styles.infoMeta}>Diambil: {returnTarget?.qty_taken} {returnTarget?.unit}</Text>
             <TextInput
-              style={styles.input}
+              style={styles.qtyInputField}
               placeholder="Jumlah dikembalikan (0 kalau habis terpakai)"
               placeholderTextColor={colors.textMuted}
               value={returnQtyInput}
@@ -861,7 +875,7 @@ export default function MemoDetailScreen() {
                 : `Sekarang: ${editTarget?.qty_taken} ${editTarget?.unit}`}
             </Text>
             <TextInput
-              style={styles.input}
+              style={styles.qtyInputField}
               placeholder={editTarget?.item_type === 'inventory_item' ? 'Meter dipakai (koreksi)' : 'Jumlah diambil (koreksi)'}
               placeholderTextColor={colors.textMuted}
               value={editQtyInput}
@@ -927,8 +941,15 @@ function createStyles(colors: typeof darkColors) {
     itemTypeBadgeText: { fontSize: 10, fontWeight: '700', color: colors.accent },
     itemName: { flex: 1, fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
     itemQtyRow: { gap: 2 },
-    itemQty: { fontSize: fontSize.xs, color: colors.textSecondary },
-    itemQtyUsed: { fontWeight: '700', color: colors.textPrimary },
+    // Label kecil-muted vs angka besar-tebal-beraksen — supaya jumlahnya
+    // yang paling penting langsung "kena mata", tidak tenggelam di antara
+    // teks lain (insight dari referensi UX app picking/belanja: field
+    // kuantitas harus beda ukuran/warna dari teks biasa).
+    itemQty: { fontSize: fontSize.xs },
+    itemQtyLabel: { fontSize: fontSize.xs, color: colors.textMuted },
+    itemQtyValue: { fontSize: fontSize.sm, fontWeight: '800', color: colors.accent },
+    itemQtyValueEmphasis: { fontSize: fontSize.sm, fontWeight: '800', color: colors.textPrimary },
+    itemQtyMissing: { fontSize: fontSize.xs, color: colors.textMuted, fontStyle: 'italic' },
     itemNotes: { fontSize: fontSize.xs, color: colors.textMuted, fontStyle: 'italic' },
     returnBtn: {
       flexDirection: 'row',
@@ -1015,14 +1036,18 @@ function createStyles(colors: typeof darkColors) {
       padding: spacing.sm,
       gap: 4,
     },
+    // Field kuantitas SENGAJA dibuat beda dari field teks biasa (font
+    // lebih besar & tebal, border lebih tegas) — supaya kolom yang paling
+    // gampang salah ketik ini paling gampang dicek ulang sebelum submit.
     multiQtyInput: {
       backgroundColor: colors.bg,
-      borderWidth: 1,
-      borderColor: colors.border,
+      borderWidth: 1.5,
+      borderColor: colors.accent,
       borderRadius: radius.sm,
       paddingHorizontal: spacing.sm,
       paddingVertical: 8,
-      fontSize: fontSize.sm,
+      fontSize: fontSize.base,
+      fontWeight: '700',
       color: colors.textPrimary,
       marginTop: 4,
     },
@@ -1035,6 +1060,17 @@ function createStyles(colors: typeof darkColors) {
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
       fontSize: fontSize.sm,
+      color: colors.textPrimary,
+    },
+    qtyInputField: {
+      backgroundColor: colors.surface,
+      borderWidth: 1.5,
+      borderColor: colors.accent,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      fontSize: fontSize.lg,
+      fontWeight: '700',
       color: colors.textPrimary,
     },
     textarea: { minHeight: 60, textAlignVertical: 'top' },
