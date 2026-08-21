@@ -362,7 +362,6 @@ export default function MemoDetailScreen() {
                     placeholderTextColor={colors.textMuted}
                     value={search}
                     onChangeText={setSearch}
-                    autoFocus
                   />
                 </View>
                 {searchLoading ? (

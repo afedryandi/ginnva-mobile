@@ -109,7 +109,6 @@ export default function InventoryScanScreen() {
               placeholderTextColor={colors.textMuted}
               value={search}
               onChangeText={setSearch}
-              autoFocus
             />
           </View>
 

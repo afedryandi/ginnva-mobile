@@ -74,7 +74,6 @@ export default function MaterialsSearchScreen() {
           placeholderTextColor={colors.textMuted}
           value={search}
           onChangeText={setSearch}
-          autoFocus
         />
       </View>
 

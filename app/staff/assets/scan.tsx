@@ -117,7 +117,6 @@ export default function AssetScanScreen() {
               placeholderTextColor={colors.textMuted}
               value={search}
               onChangeText={setSearch}
-              autoFocus
             />
           </View>
 
