@@ -160,6 +160,23 @@ export default function MemoDetailScreen() {
     );
   };
 
+  // Batal-pilih 1 barang saat sudah di step isi jumlah (bukan cuma pas
+  // masih di daftar centang) — kalau ternyata cuma tersisa 1 barang lalu
+  // itu juga dibatalkan, otomatis balik ke step pencarian.
+  const removeFromMultiQty = (itemId: number) => {
+    hapticLight();
+    setSelectedMulti((prev) => {
+      const next = prev.filter((s) => s.id !== itemId);
+      if (next.length === 0) setMultiQtyStep(false);
+      return next;
+    });
+    setMultiQty((prev) => {
+      const next = { ...prev };
+      delete next[itemId];
+      return next;
+    });
+  };
+
   const openAddModal = () => {
     resetAddModal();
     setAddVisible(true);
@@ -526,6 +543,76 @@ export default function MemoDetailScreen() {
   const typeColorBg = (t: ItemType) =>
     t === 'raw_material' ? colors.accentSoft : t === 'consumable_item' ? colors.warningBg : colors.successBg;
 
+  // ── Edit info memo (vehicle_info/spk_number/notes) ─────────────────
+  const [editInfoVisible, setEditInfoVisible] = useState(false);
+  const [editVehicleInfo, setEditVehicleInfo] = useState('');
+  const [editSpkNumber, setEditSpkNumber] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editInfoSubmitting, setEditInfoSubmitting] = useState(false);
+  const [editInfoError, setEditInfoError] = useState<string | null>(null);
+
+  const openEditInfoModal = () => {
+    if (!memo) return;
+    setEditVehicleInfo(memo.vehicle_info ?? '');
+    setEditSpkNumber(memo.spk_number ?? '');
+    setEditNotes(memo.notes ?? '');
+    setEditInfoError(null);
+    setEditInfoVisible(true);
+  };
+
+  const submitEditInfo = async () => {
+    if (editInfoSubmitting) return;
+    setEditInfoSubmitting(true);
+    setEditInfoError(null);
+    try {
+      const res = await staffApiFetch<{ data: MemoDetail }>(`/api/staff/memos/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          vehicle_info: editVehicleInfo.trim() || null,
+          spk_number: editSpkNumber.trim() || null,
+          notes: editNotes.trim() || null,
+        }),
+      });
+      hapticSuccess();
+      setMemo(res.data);
+      setEditInfoVisible(false);
+    } catch (err) {
+      hapticError();
+      setEditInfoError(err instanceof ApiError ? err.message : 'Gagal memperbarui info memo.');
+    } finally {
+      setEditInfoSubmitting(false);
+    }
+  };
+
+  // ── Hapus memo utuh ─────────────────────────────────────────────────
+  const [deletingMemo, setDeletingMemo] = useState(false);
+
+  const submitDeleteMemo = async () => {
+    setDeletingMemo(true);
+    try {
+      await staffApiFetch(`/api/staff/memos/${id}`, { method: 'DELETE' });
+      hapticSuccess();
+      Alert.alert('Berhasil', 'Memo berhasil dihapus.');
+      router.replace('/staff/memos' as never);
+    } catch (err) {
+      hapticError();
+      Alert.alert('Gagal', err instanceof ApiError ? err.message : 'Gagal menghapus memo.');
+      setDeletingMemo(false);
+    }
+  };
+
+  const handleDeleteMemo = () => {
+    if (!memo || deletingMemo) return;
+    Alert.alert(
+      'Hapus Memo Ini?',
+      `Semua ${memo.items.length} barang di memo ini akan dibalik dulu (stok/sisa meter yang sudah terpakai dikembalikan), baru memonya dihapus permanen. Tindakan ini tidak bisa dibatalkan.`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        { text: 'Hapus Memo', style: 'destructive', onPress: submitDeleteMemo },
+      ]
+    );
+  };
+
   const renderItem = ({ item }: { item: MemoItem }) => {
     const needsReturn = item.item_type !== 'inventory_item' && item.qty_returned === null;
     const tColor = typeColor(item.item_type);
@@ -601,9 +688,17 @@ export default function MemoDetailScreen() {
           <Pressable onPress={() => router.back()} style={styles.heroIconBtn} hitSlop={8}>
             <Ionicons name="chevron-back" size={22} color="#ffffff" />
           </Pressable>
-          <Pressable onPress={onRefresh} style={styles.heroIconBtn} disabled={refreshing} hitSlop={8}>
-            {refreshing ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="refresh" size={20} color="#ffffff" />}
-          </Pressable>
+          <View style={{ flexDirection: 'row', gap: spacing.xs }}>
+            <Pressable onPress={onRefresh} style={styles.heroIconBtn} disabled={refreshing} hitSlop={8}>
+              {refreshing ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="refresh" size={20} color="#ffffff" />}
+            </Pressable>
+            <Pressable onPress={openEditInfoModal} style={styles.heroIconBtn} disabled={!memo} hitSlop={8}>
+              <Ionicons name="pencil" size={18} color="#ffffff" />
+            </Pressable>
+            <Pressable onPress={handleDeleteMemo} style={styles.heroIconBtn} disabled={!memo || deletingMemo} hitSlop={8}>
+              {deletingMemo ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="trash-outline" size={18} color="#ffffff" />}
+            </Pressable>
+          </View>
         </View>
         <Text style={styles.heroTitle} numberOfLines={1}>{memo?.memo_number ?? 'Memo'}</Text>
         {memo && (
@@ -727,10 +822,17 @@ export default function MemoDetailScreen() {
                   contentContainerStyle={{ gap: spacing.sm }}
                   renderItem={({ item }) => (
                     <View style={styles.multiQtyRow}>
-                      <Text style={styles.pickRowName} numberOfLines={2}>{item.name}</Text>
-                      {item.stockInfo && (
-                        <Text style={[styles.pickRowStock, item.lowStock && styles.pickRowStockLow]}>{item.stockInfo}</Text>
-                      )}
+                      <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.pickRowName} numberOfLines={2}>{item.name}</Text>
+                          {item.stockInfo && (
+                            <Text style={[styles.pickRowStock, item.lowStock && styles.pickRowStockLow]}>{item.stockInfo}</Text>
+                          )}
+                        </View>
+                        <Pressable onPress={() => removeFromMultiQty(item.id)} hitSlop={8}>
+                          <Ionicons name="close-circle" size={20} color={colors.textMuted} />
+                        </Pressable>
+                      </View>
                       <TextInput
                         style={styles.multiQtyInput}
                         placeholder={item.unit ? `Jumlah (${item.unit})` : 'Jumlah'}
@@ -953,6 +1055,45 @@ export default function MemoDetailScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Modal: edit info memo */}
+      <Modal visible={editInfoVisible} animationType="fade" transparent onRequestClose={() => setEditInfoVisible(false)}>
+        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={styles.modalCard}>
+            <View style={styles.dragHandle} />
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Edit Info Memo</Text>
+              <Pressable onPress={() => setEditInfoVisible(false)} hitSlop={8} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={20} color={colors.textPrimary} />
+              </Pressable>
+            </View>
+            <TextInput
+              style={styles.input}
+              placeholder="Info kendaraan (opsional)"
+              placeholderTextColor={colors.textMuted}
+              value={editVehicleInfo}
+              onChangeText={setEditVehicleInfo}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="SPK No (opsional)"
+              placeholderTextColor={colors.textMuted}
+              value={editSpkNumber}
+              onChangeText={setEditSpkNumber}
+            />
+            <TextInput
+              style={[styles.input, styles.textarea]}
+              placeholder="Catatan (opsional)"
+              placeholderTextColor={colors.textMuted}
+              value={editNotes}
+              onChangeText={setEditNotes}
+              multiline
+            />
+            {editInfoError && <Text style={styles.errorText}>{editInfoError}</Text>}
+            <Button label="Simpan" onPress={submitEditInfo} loading={editInfoSubmitting} />
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1164,14 +1305,18 @@ function createStyles(colors: typeof darkColors) {
     // Field kuantitas SENGAJA dibuat beda dari field teks biasa (font
     // lebih besar & tebal, border lebih tegas) — supaya kolom yang paling
     // gampang salah ketik ini paling gampang dicek ulang sebelum submit.
+    // Beda tipis dari field teks biasa (bg lembut beraksen + tebal
+    // sedikit) — cukup buat dilirik duluan tanpa jadi terlalu mencolok
+    // seperti versi sebelumnya (border merah tebal + font besar).
     multiQtyInput: {
-      backgroundColor: colors.bg,
+      backgroundColor: colors.accentSoft,
       borderWidth: 1,
       borderColor: colors.border,
       borderRadius: radius.sm,
       paddingHorizontal: spacing.sm,
       paddingVertical: 8,
       fontSize: fontSize.sm,
+      fontWeight: '600',
       color: colors.textPrimary,
       marginTop: 4,
     },
@@ -1187,13 +1332,14 @@ function createStyles(colors: typeof darkColors) {
       color: colors.textPrimary,
     },
     qtyInputField: {
-      backgroundColor: colors.surface,
+      backgroundColor: colors.accentSoft,
       borderWidth: 1,
       borderColor: colors.border,
       borderRadius: radius.md,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
       fontSize: fontSize.sm,
+      fontWeight: '600',
       color: colors.textPrimary,
     },
     textarea: { minHeight: 60, textAlignVertical: 'top' },

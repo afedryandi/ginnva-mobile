@@ -31,17 +31,36 @@ export default function MemoListScreen() {
   const [memos, setMemos] = useState<MemoListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchMemos = useCallback(async () => {
     setError(null);
     try {
-      const res = await staffApiFetch<{ data: MemoListItem[] }>('/api/staff/memos');
+      const res = await staffApiFetch<{ data: MemoListItem[]; has_more?: boolean }>('/api/staff/memos');
       setMemos(res.data ?? []);
+      setHasMore(res.has_more ?? false);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Gagal memuat daftar memo.');
     }
   }, []);
+
+  // Halaman berikutnya lewat offset — daftar sebelumnya dibatasi 50 tanpa
+  // cara lihat yang lebih lama sama sekali kalau toko sudah punya >50 memo.
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await staffApiFetch<{ data: MemoListItem[]; has_more?: boolean }>(`/api/staff/memos?offset=${memos.length}`);
+      setMemos((prev) => [...prev, ...(res.data ?? [])]);
+      setHasMore(res.has_more ?? false);
+    } catch {
+      // Senyap — user masih bisa coba lagi dengan scroll/tap lagi.
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, memos.length]);
 
   // Refetch tiap kali layar ini kembali dapat fokus (mis. balik dari buat
   // memo baru / dari detail) — bukan cuma sekali saat mount, supaya daftar
@@ -85,7 +104,7 @@ export default function MemoListScreen() {
         </View>
         <Text style={styles.heroTitle}>Memo Pengambilan/Pengembalian</Text>
         <Text style={styles.heroSubtitle}>
-          {loading ? 'Memuat…' : `${memos.length} memo tercatat`}
+          {loading ? 'Memuat…' : `${memos.length}${hasMore ? '+' : ''} memo tercatat`}
         </Text>
       </LinearGradient>
 
@@ -121,6 +140,17 @@ export default function MemoListScreen() {
           keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.listContent}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
+            loadingMore ? (
+              <ActivityIndicator color={colors.accent} style={{ marginTop: spacing.sm }} />
+            ) : hasMore ? (
+              <Pressable style={styles.loadMoreBtn} onPress={loadMore}>
+                <Text style={styles.loadMoreBtnText}>Muat Lebih Banyak</Text>
+              </Pressable>
+            ) : null
+          }
           renderItem={({ item }) => (
             <Pressable
               style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
@@ -249,6 +279,12 @@ function createStyles(colors: typeof darkColors) {
     },
     rowBadgeText: { fontSize: fontSize.base, fontWeight: '800', color: colors.accent },
     rowBadgeLabel: { fontSize: 9, color: colors.accent, fontWeight: '600' },
+    loadMoreBtn: {
+      alignItems: 'center',
+      paddingVertical: spacing.sm,
+      marginTop: spacing.xs,
+    },
+    loadMoreBtnText: { color: colors.accent, fontWeight: '700', fontSize: fontSize.sm },
 
     fab: {
       position: 'absolute',
