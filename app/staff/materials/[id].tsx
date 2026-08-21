@@ -37,10 +37,9 @@ interface MaterialData {
   reorder_point: string | null;
   movements: Movement[];
   batches: Batch[];
-  active_batches_count: number;
 }
 
-type MovementForm = { type: 'in' | 'out'; quantity: string; containerCount: string; note: string; receivedDate: string; expiryDate: string } | null;
+type MovementForm = { type: 'in' | 'out'; quantity: string; note: string; receivedDate: string; expiryDate: string } | null;
 
 // DD/MM/YYYY — sama format dengan template import Excel. Kosong = valid
 // (artinya pakai default backend: hari ini / tanpa kedaluwarsa).
@@ -133,7 +132,7 @@ export default function MaterialDetailScreen() {
   }, [fetchMaterial]);
 
   const openForm = (type: 'in' | 'out') => {
-    setForm({ type, quantity: '', containerCount: '1', note: '', receivedDate: '', expiryDate: '' });
+    setForm({ type, quantity: '', note: '', receivedDate: '', expiryDate: '' });
     setFormError(null);
   };
 
@@ -143,12 +142,6 @@ export default function MaterialDetailScreen() {
     const quantity = parseFloat(form.quantity.replace(',', '.'));
     if (!quantity || quantity <= 0) {
       setFormError('Isi jumlah yang valid (lebih dari 0).');
-      return;
-    }
-
-    const containerCount = form.type === 'in' ? parseInt(form.containerCount || '1', 10) : 1;
-    if (form.type === 'in' && (!containerCount || containerCount < 1)) {
-      setFormError('Isi Jumlah Botol/Wadah minimal 1.');
       return;
     }
 
@@ -173,7 +166,6 @@ export default function MaterialDetailScreen() {
         body: JSON.stringify({
           type: form.type,
           quantity,
-          container_count: form.type === 'in' ? containerCount : undefined,
           note: form.note.trim() || undefined,
           received_date: receivedDate ?? undefined,
           expiry_date: expiryDate ?? undefined,
@@ -301,7 +293,6 @@ export default function MaterialDetailScreen() {
                     {parseFloat(material.current_stock).toLocaleString('id-ID')} {material.unit}
                   </Text>
                 </View>
-                <Text style={styles.categoryText}>{material.active_batches_count} botol/wadah</Text>
               </View>
             </View>
             {isLowStock && (
@@ -318,23 +309,7 @@ export default function MaterialDetailScreen() {
                 {form.type === 'in' ? 'Catat Bahan Masuk' : 'Catat Bahan Keluar'}
               </Text>
 
-              {form.type === 'in' && (
-                <>
-                  <Text style={styles.fieldLabel}>Jumlah Botol/Wadah</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="1"
-                    placeholderTextColor={colors.textMuted}
-                    value={form.containerCount}
-                    onChangeText={(v) => setForm((f) => f && { ...f, containerCount: v })}
-                    keyboardType="number-pad"
-                  />
-                </>
-              )}
-
-              <Text style={styles.fieldLabel}>
-                {form.type === 'in' ? `Jumlah Total, Semua Botol/Wadah (${material.unit})` : `Jumlah (${material.unit})`}
-              </Text>
+              <Text style={styles.fieldLabel}>Jumlah ({material.unit})</Text>
               <TextInput
                 style={styles.input}
                 placeholder="0"
@@ -344,11 +319,6 @@ export default function MaterialDetailScreen() {
                 keyboardType="decimal-pad"
                 autoFocus
               />
-              {form.type === 'in' && parseInt(form.containerCount || '1', 10) > 1 && parseFloat(form.quantity.replace(',', '.')) > 0 && (
-                <Text style={styles.helperInline}>
-                  Otomatis dibagi rata: ±{(parseFloat(form.quantity.replace(',', '.')) / parseInt(form.containerCount || '1', 10)).toFixed(2)} per botol/wadah.
-                </Text>
-              )}
 
               {form.type === 'in' && (
                 <>
