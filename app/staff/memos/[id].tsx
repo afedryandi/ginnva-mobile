@@ -1155,7 +1155,10 @@ function createStyles(colors: typeof darkColors, insetsBottom: number) {
 
     centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.xl },
     centerStateText: { fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center' },
-    listContent: { padding: spacing.md, paddingBottom: 100, gap: spacing.sm },
+    // 100 dulu tetap, ditambah insetsBottom lagi supaya kartu paling
+    // bawah tidak ketutup tombol "Tambah Barang" (yang juga naik ikut
+    // insets.bottom) di device dengan navigasi gesture Android.
+    listContent: { padding: spacing.md, paddingBottom: 100 + insetsBottom, gap: spacing.sm },
     listSectionTitle: { fontSize: fontSize.xs, fontWeight: '700', color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
 
     infoMeta: { fontSize: fontSize.xs, color: colors.textMuted },

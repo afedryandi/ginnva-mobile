@@ -31,7 +31,7 @@ export default function MemoListScreen() {
   // dijauhkan dari navigasi gesture Android secara otomatis, harus
   // ditambah insets.bottom manual.
   const insets = useSafeAreaInsets();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const styles = useMemo(() => createStyles(colors, insets.bottom), [colors, insets.bottom]);
 
   const [memos, setMemos] = useState<MemoListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -201,7 +201,7 @@ export default function MemoListScreen() {
   );
 }
 
-function createStyles(colors: typeof darkColors) {
+function createStyles(colors: typeof darkColors, insetsBottom: number) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
 
@@ -258,7 +258,7 @@ function createStyles(colors: typeof darkColors) {
     },
     retryBtnText: { color: colors.textPrimary, fontWeight: '600', fontSize: fontSize.sm },
 
-    listContent: { padding: spacing.md, paddingTop: spacing.md, paddingBottom: 100, gap: spacing.sm },
+    listContent: { padding: spacing.md, paddingTop: spacing.md, paddingBottom: 100 + insetsBottom, gap: spacing.sm },
     card: {
       flexDirection: 'row',
       alignItems: 'center',
