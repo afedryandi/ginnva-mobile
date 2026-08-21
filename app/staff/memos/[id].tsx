@@ -50,6 +50,8 @@ interface SearchResult {
   name: string;
   unit?: string;
   subtitle?: string;
+  stockInfo?: string;
+  lowStock?: boolean;
 }
 
 const TYPE_LABEL: Record<ItemType, string> = {
@@ -135,14 +137,29 @@ export default function MemoDetailScreen() {
         .then((res) => {
           const mapped: SearchResult[] = (res.data ?? [])
             .filter((raw) => addType !== 'inventory_item' || raw.scroll_code)
-            .map((raw) => ({
-              id: raw.id,
-              name: raw.name,
-              unit: raw.unit,
-              subtitle: addType === 'inventory_item'
-                ? `Kode gulungan: ${raw.scroll_code?.code ?? '—'}`
-                : [raw.code, raw.category].filter(Boolean).join(' · '),
-            }));
+            .map((raw) => {
+              if (addType === 'inventory_item') {
+                const remaining = raw.scroll_code?.remaining_length_meters;
+                return {
+                  id: raw.id,
+                  name: raw.name,
+                  subtitle: `Kode gulungan: ${raw.scroll_code?.code ?? '—'}`,
+                  stockInfo: remaining !== null && remaining !== undefined ? `Sisa ${parseFloat(remaining).toLocaleString('id-ID')} meter` : undefined,
+                };
+              }
+
+              const currentStock = parseFloat(raw.current_stock ?? '0');
+              const reorderPoint = raw.reorder_point !== null && raw.reorder_point !== undefined ? parseFloat(raw.reorder_point) : null;
+
+              return {
+                id: raw.id,
+                name: raw.name,
+                unit: raw.unit,
+                subtitle: [raw.code, raw.category].filter(Boolean).join(' · '),
+                stockInfo: `Stok: ${currentStock.toLocaleString('id-ID')} ${raw.unit ?? ''}`.trim(),
+                lowStock: reorderPoint !== null && currentStock <= reorderPoint,
+              };
+            });
           setSearchResults(mapped);
         })
         .catch(() => setSearchResults([]))
@@ -362,6 +379,9 @@ export default function MemoDetailScreen() {
                           <Text style={styles.pickRowName}>{item.name}</Text>
                           {item.subtitle && <Text style={styles.pickRowSubtitle}>{item.subtitle}</Text>}
                         </View>
+                        {item.stockInfo && (
+                          <Text style={[styles.pickRowStock, item.lowStock && styles.pickRowStockLow]}>{item.stockInfo}</Text>
+                        )}
                         <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
                       </Pressable>
                     )}
@@ -371,6 +391,10 @@ export default function MemoDetailScreen() {
             ) : (
               <View style={{ gap: spacing.sm }}>
                 <Text style={styles.selectedName}>{selected.name}</Text>
+                {selected.subtitle && <Text style={styles.pickRowSubtitle}>{selected.subtitle}</Text>}
+                {selected.stockInfo && (
+                  <Text style={[styles.pickRowStock, selected.lowStock && styles.pickRowStockLow]}>{selected.stockInfo}</Text>
+                )}
                 <TextInput
                   style={styles.input}
                   placeholder={addType === 'inventory_item' ? 'Meter dipakai' : 'Jumlah diambil'}
@@ -551,6 +575,8 @@ function createStyles(colors: typeof darkColors) {
     },
     pickRowName: { fontSize: fontSize.sm, fontWeight: '600', color: colors.textPrimary },
     pickRowSubtitle: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: 2 },
+    pickRowStock: { fontSize: fontSize.xs, fontWeight: '700', color: colors.success, marginRight: spacing.xs },
+    pickRowStockLow: { color: colors.danger },
 
     selectedName: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
     input: {
