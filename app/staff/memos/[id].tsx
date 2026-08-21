@@ -37,6 +37,7 @@ interface MemoItem {
   qty_used: string | null;
   meters_used: string | null;
   condition_notes: string | null;
+  created_at: string;
 }
 
 interface MemoDetail {
@@ -79,6 +80,10 @@ const TYPE_DESC: Record<ItemType, string> = {
 
 function n(v: string | null): number {
   return v === null ? 0 : parseFloat(v);
+}
+
+function formatItemDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
 export default function MemoDetailScreen() {
@@ -674,6 +679,11 @@ export default function MemoDetailScreen() {
 
         {item.condition_notes && <Text style={styles.itemNotes}>{item.condition_notes}</Text>}
 
+        <View style={styles.itemTimeRow}>
+          <Ionicons name="time-outline" size={11} color={colors.textMuted} />
+          <Text style={styles.itemTimeText}>Diambil {formatItemDate(item.created_at)}</Text>
+        </View>
+
         {needsReturn && (
           <Pressable style={styles.returnBtn} onPress={() => openReturnModal(item)} hitSlop={8}>
             <Ionicons name="arrow-undo-outline" size={14} color={colors.accent} />
@@ -1201,6 +1211,8 @@ function createStyles(colors: typeof darkColors, insetsBottom: number) {
     itemQtyValueEmphasis: { fontSize: fontSize.sm, fontWeight: '800', color: colors.textPrimary },
     itemQtyMissing: { fontSize: fontSize.xs, color: colors.textMuted, fontStyle: 'italic' },
     itemNotes: { fontSize: fontSize.xs, color: colors.textMuted, fontStyle: 'italic' },
+    itemTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 },
+    itemTimeText: { fontSize: 10, color: colors.textMuted },
     returnBtn: {
       flexDirection: 'row',
       alignItems: 'center',
