@@ -12,8 +12,9 @@ import { hapticSuccess, hapticError } from '@/lib/haptics';
 
 interface Movement {
   id: number;
-  type: 'in' | 'out' | 'adjustment';
+  type: 'in' | 'out' | 'adjustment' | 'correction';
   quantity: string;
+  unit_cost: string | null;
   note: string | null;
   user: { id: number; name: string } | null;
   created_at: string;
@@ -28,6 +29,11 @@ interface ConsumableData {
   current_stock: string;
   reorder_point: string | null;
   movements: Movement[];
+}
+
+interface ShowResponse {
+  data: ConsumableData;
+  movements_has_more: boolean;
 }
 
 type MovementForm = { type: 'in' | 'out'; quantity: string; note: string } | null;
@@ -45,6 +51,7 @@ function formatDateTime(dateString: string): string {
 function movementLabel(type: Movement['type']): string {
   if (type === 'in') return 'Masuk';
   if (type === 'out') return 'Keluar';
+  if (type === 'correction') return 'Koreksi';
   return 'Penyesuaian';
 }
 
@@ -68,14 +75,38 @@ export default function ConsumableDetailScreen() {
   const [adjustError, setAdjustError] = useState<string | null>(null);
   const [adjustSubmitting, setAdjustSubmitting] = useState(false);
 
+  // "Muat Riwayat Lainnya" — sama pola dengan app/staff/inventory/[code].tsx.
+  const [extraMovements, setExtraMovements] = useState<Movement[]>([]);
+  const [hasMoreMovements, setHasMoreMovements] = useState(false);
+  const [loadingMoreMovements, setLoadingMoreMovements] = useState(false);
+
   const fetchItem = useCallback(() => {
     setError(null);
-    return staffApiFetch<{ data: ConsumableData }>(`/api/staff/consumables/${id}`)
-      .then((res) => setItem(res.data))
+    return staffApiFetch<ShowResponse>(`/api/staff/consumables/${id}`)
+      .then((res) => {
+        setItem(res.data);
+        setExtraMovements([]);
+        setHasMoreMovements(res.movements_has_more);
+      })
       .catch((err) => {
         setError(err instanceof ApiError ? err.message : 'Barang tidak ditemukan atau koneksi bermasalah.');
       });
   }, [id]);
+
+  const loadMoreMovements = useCallback(() => {
+    if (!item) return;
+
+    setLoadingMoreMovements(true);
+    staffApiFetch<{ data: Movement[]; has_more: boolean }>(
+      `/api/staff/consumables/${id}/movements?offset=${item.movements.length + extraMovements.length}`
+    )
+      .then((res) => {
+        setExtraMovements((prev) => [...prev, ...res.data]);
+        setHasMoreMovements(res.has_more);
+      })
+      .catch(() => hapticError())
+      .finally(() => setLoadingMoreMovements(false));
+  }, [id, item, extraMovements.length]);
 
   useEffect(() => {
     setLoading(true);
@@ -345,24 +376,43 @@ export default function ConsumableDetailScreen() {
           {item.movements.length === 0 ? (
             <Text style={styles.emptyHistoryText}>Belum ada riwayat keluar/masuk untuk barang ini.</Text>
           ) : (
-            item.movements.map((m) => (
-              <View key={m.id} style={styles.historyRow}>
-                <Ionicons
-                  name={m.type === 'in' ? 'arrow-down-circle' : m.type === 'out' ? 'arrow-up-circle' : 'swap-vertical'}
-                  size={20}
-                  color={m.type === 'in' ? colors.success : m.type === 'out' ? colors.danger : colors.warning}
-                />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.historyText}>
-                    {movementLabel(m.type)} {parseFloat(m.quantity) > 0 && m.type === 'adjustment' ? '+' : ''}
-                    {parseFloat(m.quantity).toLocaleString('id-ID')} {item.unit}
-                    {m.user ? ` — ${m.user.name}` : ''}
-                  </Text>
-                  {m.note && <Text style={styles.historyNote}>{m.note}</Text>}
-                  <Text style={styles.historyDate}>{formatDateTime(m.created_at)}</Text>
+            <>
+              {[...item.movements, ...extraMovements].map((m) => (
+                <View key={m.id} style={styles.historyRow}>
+                  <Ionicons
+                    name={m.type === 'in' ? 'arrow-down-circle' : m.type === 'out' ? 'arrow-up-circle' : m.type === 'correction' ? 'arrow-undo-circle' : 'swap-vertical'}
+                    size={20}
+                    color={m.type === 'in' ? colors.success : m.type === 'out' ? colors.danger : m.type === 'correction' ? colors.textMuted : colors.warning}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.historyText}>
+                      {movementLabel(m.type)} {parseFloat(m.quantity) > 0 && m.type === 'adjustment' ? '+' : ''}
+                      {parseFloat(m.quantity).toLocaleString('id-ID')} {item.unit}
+                      {m.user ? ` — ${m.user.name}` : ''}
+                    </Text>
+                    {m.unit_cost && (
+                      <Text style={styles.historyNote}>Rp {parseFloat(m.unit_cost).toLocaleString('id-ID')} / {item.unit}</Text>
+                    )}
+                    {m.note && <Text style={styles.historyNote}>{m.note}</Text>}
+                    <Text style={styles.historyDate}>{formatDateTime(m.created_at)}</Text>
+                  </View>
                 </View>
-              </View>
-            ))
+              ))}
+
+              {hasMoreMovements && (
+                <Pressable
+                  style={styles.loadMoreButton}
+                  onPress={loadMoreMovements}
+                  disabled={loadingMoreMovements}
+                >
+                  {loadingMoreMovements ? (
+                    <ActivityIndicator size="small" color={colors.accent} />
+                  ) : (
+                    <Text style={styles.loadMoreText}>Muat Riwayat Lainnya</Text>
+                  )}
+                </Pressable>
+              )}
+            </>
           )}
         </ScrollView>
       )}
@@ -438,6 +488,8 @@ function createStyles(colors: typeof darkColors) {
     cancelButtonText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
     historyTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary, marginTop: spacing.sm },
     emptyHistoryText: { fontSize: fontSize.sm, color: colors.textMuted },
+    loadMoreButton: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.sm, marginTop: spacing.xs },
+    loadMoreText: { fontSize: fontSize.sm, fontWeight: '600', color: colors.accent },
     historyRow: {
       flexDirection: 'row',
       gap: spacing.sm,

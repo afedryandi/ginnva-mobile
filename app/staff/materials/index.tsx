@@ -16,6 +16,9 @@ interface MaterialListItem {
   unit: string;
   current_stock: string;
   reorder_point: string | null;
+  nearest_expiry_date: string | null;
+  is_expired: boolean;
+  is_near_expiry: boolean;
 }
 
 // Bahan baku TIDAK punya kode fisik per unit (beda dari Barang/Aset yang
@@ -107,11 +110,27 @@ export default function MaterialsSearchScreen() {
                     {[item.code, item.category].filter(Boolean).join(' · ')}
                   </Text>
                 )}
+                {(item.is_expired || item.is_near_expiry) && (
+                  <View style={[styles.expiryBadge, item.is_expired ? styles.expiryDanger : styles.expiryWarning]}>
+                    <Text style={[styles.expiryText, { color: item.is_expired ? colors.danger : colors.warning }]}>
+                      {item.is_expired ? 'Sudah Kedaluwarsa' : 'Mendekati Kedaluwarsa'}
+                    </Text>
+                  </View>
+                )}
               </View>
               <View style={{ alignItems: 'flex-end' }}>
-                <Text style={[styles.rowStock, isLowStock(item) && { color: colors.danger }]}>
-                  {parseFloat(item.current_stock).toLocaleString('id-ID')} {item.unit}
-                </Text>
+                {/* Pill+ikon — disatukan dengan pola status di modul
+                    lain (sebelumnya cuma angka berwarna tanpa badge). */}
+                <View style={[styles.stockBadge, isLowStock(item) ? styles.stockDanger : styles.stockOk]}>
+                  <Ionicons
+                    name={isLowStock(item) ? 'alert-circle' : 'checkmark-circle'}
+                    size={13}
+                    color={isLowStock(item) ? colors.danger : colors.success}
+                  />
+                  <Text style={[styles.rowStock, { color: isLowStock(item) ? colors.danger : colors.success }]}>
+                    {parseFloat(item.current_stock).toLocaleString('id-ID')} {item.unit}
+                  </Text>
+                </View>
               </View>
               <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
             </Pressable>
@@ -166,6 +185,19 @@ function createStyles(colors: typeof darkColors) {
     },
     rowName: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
     rowCategory: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
-    rowStock: { fontSize: fontSize.sm, fontWeight: '700', color: colors.success },
+    rowStock: { fontSize: fontSize.sm, fontWeight: '700' },
+    stockBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill },
+    stockOk: { backgroundColor: colors.successBg },
+    stockDanger: { backgroundColor: colors.dangerBg },
+    expiryBadge: {
+      alignSelf: 'flex-start',
+      marginTop: 4,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: radius.sm,
+    },
+    expiryDanger: { backgroundColor: colors.danger + '22' },
+    expiryWarning: { backgroundColor: colors.warning + '22' },
+    expiryText: { fontSize: fontSize.xs, fontWeight: '700' },
   });
 }

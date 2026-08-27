@@ -166,8 +166,15 @@ export default function MyWarrantiesScreen() {
                     {item.car_type} ({item.car_plate})
                   </Text>
                   {item.status === 'active' && (
-                    <Text style={styles.remainingText}>
-                      Sisa {item.remaining_days} hari masa garansi
+                    // Warning kuning kalau sisa hari <= 30 — SEBELUMNYA
+                    // semua garansi aktif ditampilkan sama (hijau/normal)
+                    // sampai benar-benar expired, tidak ada dorongan
+                    // visual buat customer yang garansinya mau habis.
+                    // Lihat audit modul Garansi 2026-08-27.
+                    <Text style={[styles.remainingText, item.remaining_days <= 30 && { color: colors.warning, fontWeight: '700' }]}>
+                      {item.remaining_days <= 30
+                        ? `⚠️ Sisa ${item.remaining_days} hari masa garansi`
+                        : `Sisa ${item.remaining_days} hari masa garansi`}
                     </Text>
                   )}
                 </View>

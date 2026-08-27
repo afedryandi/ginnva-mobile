@@ -126,13 +126,29 @@ export default function StaffBookingListScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
-        {staff?.has_inventory_access ? (
-          <Pressable onPress={() => router.push('/staff/inventory' as never)} style={styles.sideButton}>
-            <Ionicons name="cube-outline" size={22} color={colors.textPrimary} />
+        <View style={styles.leftButtons}>
+          {/* Absensi SENGAJA selalu tampil (tidak dibatasi hasMenuAccess
+              seperti Inventaris) — absen kewajiban dasar semua staff, lihat
+              catatan di AttendanceController. */}
+          <Pressable onPress={() => router.push('/staff/attendance' as never)} style={styles.sideButton}>
+            <Ionicons name="finger-print-outline" size={22} color={colors.textPrimary} />
           </Pressable>
-        ) : (
-          <View style={styles.sideButton} />
-        )}
+          {/* Slip Gaji juga selalu tampil — lihat gaji sendiri, sama
+              filosofi dengan Absensi (lihat PayrollController). */}
+          <Pressable onPress={() => router.push('/staff/payroll' as never)} style={styles.sideButton}>
+            <Ionicons name="cash-outline" size={22} color={colors.textPrimary} />
+          </Pressable>
+          {staff?.has_quotation_access ? (
+            <Pressable onPress={() => router.push('/staff/quotations' as never)} style={styles.sideButton}>
+              <Ionicons name="document-text-outline" size={22} color={colors.textPrimary} />
+            </Pressable>
+          ) : null}
+          {staff?.has_inventory_access ? (
+            <Pressable onPress={() => router.push('/staff/inventory' as never)} style={styles.sideButton}>
+              <Ionicons name="cube-outline" size={22} color={colors.textPrimary} />
+            </Pressable>
+          ) : null}
+        </View>
         <Text style={styles.headerTitle} numberOfLines={1}>Booking Toko</Text>
         <Pressable onPress={handleLogout} style={styles.sideButton}>
           <Ionicons name="log-out-outline" size={22} color={colors.accent} />
@@ -241,6 +257,7 @@ function createStyles(colors: typeof darkColors) {
     borderBottomColor: colors.border,
     backgroundColor: colors.bg,
   },
+  leftButtons: { flexDirection: 'row', alignItems: 'center' },
   sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
   subheader: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, backgroundColor: colors.surface },

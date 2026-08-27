@@ -17,7 +17,6 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
-import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { Button } from '@/components/ui/Button';
 import { darkColors, fontSize, spacing, radius, shadow } from '@/constants/theme';
@@ -696,53 +695,51 @@ export default function MemoDetailScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <StatusBar style="light" />
-      <LinearGradient colors={[colors.accent, '#c4123f']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
-        <View style={styles.heroTopRow}>
-          <Pressable onPress={() => router.back()} style={styles.heroIconBtn} hitSlop={8}>
-            <Ionicons name="chevron-back" size={22} color="#ffffff" />
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      {/* Header flat — SEBELUMNYA gradient hero, satu-satunya modul
+          inventaris bergaya "generasi baru" berbeda dari 4 modul lain
+          yang semuanya flat, padahal diakses dari hub yang sama. */}
+      <View style={styles.header}>
+        <Pressable onPress={() => router.back()} style={styles.sideButton}>
+          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+        </Pressable>
+        <Text style={styles.headerTitle} numberOfLines={1}>{memo?.memo_number ?? 'Memo'}</Text>
+        <View style={{ flexDirection: 'row' }}>
+          <Pressable onPress={onRefresh} style={styles.sideButton} disabled={refreshing} hitSlop={8}>
+            {refreshing ? <ActivityIndicator size="small" color={colors.accent} /> : <Ionicons name="refresh" size={20} color={colors.accent} />}
           </Pressable>
-          <View style={{ flexDirection: 'row', gap: spacing.xs }}>
-            <Pressable onPress={onRefresh} style={styles.heroIconBtn} disabled={refreshing} hitSlop={8}>
-              {refreshing ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="refresh" size={20} color="#ffffff" />}
-            </Pressable>
-            <Pressable onPress={openEditInfoModal} style={styles.heroIconBtn} disabled={!memo} hitSlop={8}>
-              <Ionicons name="pencil" size={18} color="#ffffff" />
-            </Pressable>
-            <Pressable onPress={handleDeleteMemo} style={styles.heroIconBtn} disabled={!memo || deletingMemo} hitSlop={8}>
-              {deletingMemo ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="trash-outline" size={18} color="#ffffff" />}
-            </Pressable>
-          </View>
+          <Pressable onPress={openEditInfoModal} style={styles.sideButton} disabled={!memo} hitSlop={8}>
+            <Ionicons name="pencil" size={18} color={colors.accent} />
+          </Pressable>
+          <Pressable onPress={handleDeleteMemo} style={styles.sideButton} disabled={!memo || deletingMemo} hitSlop={8}>
+            {deletingMemo ? <ActivityIndicator size="small" color={colors.danger} /> : <Ionicons name="trash-outline" size={18} color={colors.danger} />}
+          </Pressable>
         </View>
-        <Text style={styles.heroTitle} numberOfLines={1}>{memo?.memo_number ?? 'Memo'}</Text>
-        {memo && (
-          <>
-            <Text style={styles.heroSubtitle} numberOfLines={1}>
-              {[memo.vehicle_info, memo.spk_number ? `SPK ${memo.spk_number}` : null].filter(Boolean).join(' · ') || 'Tanpa info kendaraan'}
-            </Text>
-            <View style={styles.heroMetaRow}>
-              <View style={styles.heroChip}>
-                <Ionicons name="storefront-outline" size={12} color="#ffffff" />
-                <Text style={styles.heroChipText}>{memo.store?.name ?? '—'}</Text>
-              </View>
-              <View style={styles.heroChip}>
-                <Ionicons name="person-circle-outline" size={12} color="#ffffff" />
-                <Text style={styles.heroChipText}>{memo.creator?.name ?? '—'}</Text>
-              </View>
-              <View style={styles.heroChip}>
-                <Ionicons name="cube-outline" size={12} color="#ffffff" />
-                <Text style={styles.heroChipText}>{memo.items.length} barang</Text>
-              </View>
+      </View>
+
+      {memo && (
+        <View style={styles.infoCard}>
+          <Text style={styles.infoCardTitle} numberOfLines={1}>
+            {[memo.vehicle_info, memo.spk_number ? `SPK ${memo.spk_number}` : null].filter(Boolean).join(' · ') || 'Tanpa info kendaraan'}
+          </Text>
+          <View style={styles.infoRow}>
+            <Ionicons name="storefront-outline" size={14} color={colors.textMuted} />
+            <Text style={styles.infoText}>{memo.store?.name ?? '—'}</Text>
+            <Text style={styles.infoDot}>·</Text>
+            <Ionicons name="person-circle-outline" size={14} color={colors.textMuted} />
+            <Text style={styles.infoText}>{memo.creator?.name ?? '—'}</Text>
+            <Text style={styles.infoDot}>·</Text>
+            <Ionicons name="cube-outline" size={14} color={colors.textMuted} />
+            <Text style={styles.infoText}>{memo.items.length} barang</Text>
+          </View>
+          {memo.notes && (
+            <View style={styles.infoRow}>
+              <Ionicons name="chatbox-ellipses-outline" size={14} color={colors.textMuted} />
+              <Text style={[styles.infoText, { flex: 1 }]} numberOfLines={2}>{memo.notes}</Text>
             </View>
-            {memo.notes && (
-              <View style={styles.heroNotesBox}>
-                <Ionicons name="chatbox-ellipses-outline" size={13} color="rgba(255,255,255,0.85)" />
-                <Text style={styles.heroNotesText} numberOfLines={2}>{memo.notes}</Text>
-              </View>
-            )}
-          </>
-        )}
-      </LinearGradient>
+          )}
+        </View>
+      )}
 
       {loading ? (
         <View style={styles.centerState}>
@@ -1123,45 +1120,32 @@ function createStyles(colors: typeof darkColors, insetsBottom: number) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
 
-    hero: {
-      paddingHorizontal: spacing.md,
-      paddingTop: spacing.sm,
-      paddingBottom: spacing.md,
-      borderBottomLeftRadius: radius.lg,
-      borderBottomRightRadius: radius.lg,
-      gap: 2,
-    },
-    heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    heroIconBtn: {
-      width: 36,
-      height: 36,
-      borderRadius: radius.pill,
-      backgroundColor: 'rgba(255,255,255,0.18)',
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    heroTitle: { fontSize: fontSize.xl, fontWeight: '800', color: '#ffffff', marginTop: spacing.sm, letterSpacing: 0.3 },
-    heroSubtitle: { fontSize: fontSize.sm, color: 'rgba(255,255,255,0.9)', marginTop: 2 },
-    heroMetaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: spacing.sm },
-    heroChip: {
+    header: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 4,
-      backgroundColor: 'rgba(255,255,255,0.16)',
+      justifyContent: 'space-between',
       paddingHorizontal: spacing.sm,
-      paddingVertical: 4,
-      borderRadius: radius.pill,
+      paddingVertical: spacing.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      backgroundColor: colors.bg,
     },
-    heroChipText: { fontSize: 11, color: '#ffffff', fontWeight: '600' },
-    heroNotesBox: {
-      flexDirection: 'row',
-      gap: 6,
-      backgroundColor: 'rgba(255,255,255,0.12)',
-      borderRadius: radius.md,
-      padding: spacing.sm,
+    sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+    headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
+    infoCard: {
+      marginHorizontal: spacing.md,
       marginTop: spacing.sm,
+      padding: spacing.sm,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      gap: 4,
     },
-    heroNotesText: { flex: 1, fontSize: fontSize.xs, color: 'rgba(255,255,255,0.92)', lineHeight: 16 },
+    infoCardTitle: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary },
+    infoRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
+    infoText: { fontSize: fontSize.xs, color: colors.textSecondary },
+    infoDot: { fontSize: fontSize.xs, color: colors.textMuted },
 
     centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.xl },
     centerStateText: { fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center' },

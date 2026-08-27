@@ -11,12 +11,23 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
+import { Linking } from 'react-native';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError, API_BASE_URL, getToken } from '@/lib/api';
+import { toWhatsAppNumber } from '@/lib/phone';
 import { useAppTheme } from '@/lib/theme-context';
 import { hapticLight, hapticError } from '@/lib/haptics';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+
+interface WarrantyClaimSummary {
+  claim_number: string;
+  category: string;
+  description: string;
+  status: 'pending' | 'pass' | 'reject';
+  rejection_reason: string | null;
+  created_at: string;
+}
 
 interface WarrantyDetail {
   id: number;
@@ -45,7 +56,20 @@ interface WarrantyDetail {
   roll_number_side_rear: string | null;
   film_model_front: string | null;
   film_model_side_rear: string | null;
+  // Toko/dealer terkait (kalau warranty ditautkan ke Store, bukan cuma
+  // teks dealer_name) — dipakai untuk CTA "Hubungi Toko untuk Klaim".
+  // Riwayat klaim after-sales — SEBELUMNYA tidak pernah dikirim ke
+  // customer sama sekali walau datanya sudah ada di database (staff isi
+  // lewat Filament). Lihat audit modul Garansi 2026-08-27.
+  store: { name: string; phone: string | null } | null;
+  claims: WarrantyClaimSummary[];
 }
+
+const CLAIM_STATUS_LABEL: Record<WarrantyClaimSummary['status'], string> = {
+  pending: 'Menunggu Review',
+  pass: 'Disetujui',
+  reject: 'Ditolak',
+};
 
 function formatDate(raw: string | null | undefined): string {
   if (!raw) return '-';
@@ -150,8 +174,12 @@ export default function WarrantyDetailScreen() {
             <Ionicons name={meta.icon as never} size={20} color={meta.color} />
             <Text style={[styles.statusLabel, { color: meta.color }]}>{meta.label}</Text>
             {warranty.status === 'active' && (
-              <Text style={[styles.statusSub, { color: meta.color }]}>
-                — sisa {warranty.remaining_days} hari
+              // Warning kuning kalau sisa hari <= 30 — sama pola dengan
+              // my-warranties.tsx. Lihat audit modul Garansi 2026-08-27.
+              <Text style={[styles.statusSub, { color: warranty.remaining_days <= 30 ? colors.warning : meta.color }]}>
+                {warranty.remaining_days <= 30
+                  ? `— ⚠️ sisa ${warranty.remaining_days} hari`
+                  : `— sisa ${warranty.remaining_days} hari`}
               </Text>
             )}
           </View>
@@ -237,6 +265,85 @@ export default function WarrantyDetailScreen() {
                     <Text style={styles.rowValue}>{row.value}</Text>
                   </View>
                 ))}
+            </View>
+          )}
+
+          {/* CTA klaim after-sales — SEBELUMNYA tidak ada indikasi apa pun
+              di layar ini soal cara mengajukan klaim, padahal klaim cuma
+              bisa dibuat staff lewat Filament (customer datang langsung
+              ke toko). Cuma tampil untuk garansi yang sudah aktif/approved
+              — belum ada gunanya kalau garansinya sendiri belum sah. */}
+          {warranty.status === 'active' && (warranty.store?.phone || warranty.dealer_name) && (
+            <Pressable
+              style={styles.claimCtaBtn}
+              onPress={() => {
+                hapticLight();
+                if (warranty.store?.phone) {
+                  Linking.openURL(`https://wa.me/${toWhatsAppNumber(warranty.store.phone)}`);
+                }
+              }}
+            >
+              <Ionicons name="build-outline" size={18} color={colors.accent} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.claimCtaTitle}>Butuh Klaim After-Sales?</Text>
+                <Text style={styles.claimCtaText}>
+                  {warranty.store?.phone
+                    ? `Hubungi ${warranty.store.name} lewat WhatsApp untuk mengajukan klaim.`
+                    : `Datangi langsung ${warranty.dealer_name} untuk mengajukan klaim after-sales.`}
+                </Text>
+              </View>
+              {warranty.store?.phone && (
+                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+              )}
+            </Pressable>
+          )}
+
+          {/* Riwayat klaim — SEBELUMNYA tidak pernah ditampilkan sama
+              sekali walau staff sudah bisa mencatatnya lewat Filament. */}
+          {warranty.claims.length > 0 && (
+            <View style={styles.table}>
+              <View style={styles.techHeader}>
+                <Text style={styles.techHeaderText}>RIWAYAT KLAIM AFTER-SALES</Text>
+              </View>
+              {warranty.claims.map((claim, i) => (
+                <View key={claim.claim_number} style={[styles.claimRow, i > 0 && styles.rowBorder]}>
+                  <View style={styles.claimRowHeader}>
+                    <Text style={styles.claimNumber}>{claim.claim_number}</Text>
+                    <View
+                      style={[
+                        styles.claimBadge,
+                        {
+                          backgroundColor:
+                            claim.status === 'pass' ? colors.successBg
+                              : claim.status === 'reject' ? colors.dangerBg
+                              : colors.warningBg,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.claimBadgeText,
+                          {
+                            color:
+                              claim.status === 'pass' ? colors.success
+                                : claim.status === 'reject' ? colors.danger
+                                : colors.warning,
+                          },
+                        ]}
+                      >
+                        {CLAIM_STATUS_LABEL[claim.status]}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.claimCategory}>{claim.category}</Text>
+                  {claim.description ? <Text style={styles.claimDescription}>{claim.description}</Text> : null}
+                  {claim.status === 'reject' && claim.rejection_reason ? (
+                    <Text style={[styles.claimDescription, { color: colors.danger }]}>
+                      Alasan ditolak: {claim.rejection_reason}
+                    </Text>
+                  ) : null}
+                </View>
+              ))}
             </View>
           )}
 
@@ -363,5 +470,24 @@ function createStyles(colors: typeof darkColors) {
     padding: spacing.md,
   },
   pendingText: { flex: 1, fontSize: fontSize.sm, color: colors.warning, lineHeight: 18 },
+  claimCtaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+  },
+  claimCtaTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
+  claimCtaText: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2, lineHeight: 16 },
+  claimRow: { padding: spacing.md, gap: 4 },
+  claimRowHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  claimNumber: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
+  claimBadge: { paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.pill },
+  claimBadgeText: { fontSize: fontSize.xs, fontWeight: '700' },
+  claimCategory: { fontSize: fontSize.sm, color: colors.textSecondary },
+  claimDescription: { fontSize: fontSize.xs, color: colors.textMuted, lineHeight: 16 },
   });
 }

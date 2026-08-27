@@ -10,6 +10,7 @@ interface StaffUser {
   store_id: number | null;
   // Dipakai buat putuskan halaman awal setelah login (lihat app/auth/login.tsx)
   has_booking_access: boolean;
+  has_quotation_access: boolean;
   has_inventory_access: boolean;
   // Granular per-submenu — dipakai buat filter menu Inventaris
   // (lihat app/staff/inventory/index.tsx & app/staff/bookings/index.tsx)

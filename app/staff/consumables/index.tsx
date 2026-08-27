@@ -109,9 +109,18 @@ export default function ConsumablesSearchScreen() {
                   </Text>
                 )}
               </View>
-              <Text style={[styles.rowStock, isLowStock(item) && { color: colors.danger }]}>
-                {parseFloat(item.current_stock).toLocaleString('id-ID')} {item.unit}
-              </Text>
+              {/* Pill+ikon — disatukan dengan pola status di modul lain
+                  (sebelumnya cuma angka berwarna tanpa badge). */}
+              <View style={[styles.stockBadge, isLowStock(item) ? styles.stockDanger : styles.stockOk]}>
+                <Ionicons
+                  name={isLowStock(item) ? 'alert-circle' : 'checkmark-circle'}
+                  size={13}
+                  color={isLowStock(item) ? colors.danger : colors.success}
+                />
+                <Text style={[styles.rowStock, { color: isLowStock(item) ? colors.danger : colors.success }]}>
+                  {parseFloat(item.current_stock).toLocaleString('id-ID')} {item.unit}
+                </Text>
+              </View>
               <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
             </Pressable>
           )}
@@ -165,6 +174,9 @@ function createStyles(colors: typeof darkColors) {
     },
     rowName: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
     rowCategory: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
-    rowStock: { fontSize: fontSize.sm, fontWeight: '700', color: colors.success },
+    rowStock: { fontSize: fontSize.sm, fontWeight: '700' },
+    stockBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill },
+    stockOk: { backgroundColor: colors.successBg },
+    stockDanger: { backgroundColor: colors.dangerBg },
   });
 }

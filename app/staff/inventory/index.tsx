@@ -30,6 +30,33 @@ export default function InventoryHomeScreen() {
   // backend. Lihat AuthController::transform() untuk asal flag ini.
   const menuItems = [
     {
+      key: 'attendance',
+      icon: 'finger-print-outline' as const,
+      title: 'Absensi & Izin',
+      description: 'Absen masuk/keluar dan ajukan izin/cuti',
+      onPress: () => router.push('/staff/attendance' as never),
+      // SENGAJA selalu true (tidak dibatasi hasMenuAccess seperti item
+      // lain di bawah) — absen kewajiban dasar semua staff, lihat catatan
+      // di AttendanceController.
+      visible: true,
+    },
+    {
+      key: 'payroll',
+      icon: 'cash-outline' as const,
+      title: 'Slip Gaji',
+      description: 'Lihat rincian gaji bulanan sendiri',
+      onPress: () => router.push('/staff/payroll' as never),
+      visible: true,
+    },
+    {
+      key: 'quotations',
+      icon: 'document-text-outline' as const,
+      title: 'Lead Quotation',
+      description: 'Kelola lead permintaan penawaran dari customer',
+      onPress: () => router.push('/staff/quotations' as never),
+      visible: staff?.has_quotation_access,
+    },
+    {
       key: 'inventory',
       icon: 'cube-outline' as const,
       title: 'Barang (Produk PPF/WF)',

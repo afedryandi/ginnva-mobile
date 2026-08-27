@@ -30,7 +30,19 @@ interface BookingMessage {
 interface StaffOption {
   id: number;
   name: string;
+  // Cuma terisi untuk installer yang punya baris di roster Teknisi (lihat
+  // TechnicianResource) — direksi (watchers) tidak punya level. Backend
+  // sudah menyembunyikan installer 'pending_review'/'inactive' dari
+  // daftar ini sama sekali, jadi apa yang tampil di sini selalu boleh
+  // ditugaskan. Lihat audit modul Teknisi 2026-08-27.
+  level?: 'intermediate' | 'advanced' | 'mentor' | null;
 }
+
+const TECHNICIAN_LEVEL_LABEL: Record<string, string> = {
+  intermediate: 'Intermediate',
+  advanced: 'Advanced',
+  mentor: 'Mentor',
+};
 
 interface BookingDetail {
   installers: StaffOption[];
@@ -1063,7 +1075,10 @@ export default function StaffBookingChatScreen() {
                           size={18}
                           color={checked ? colors.accent : colors.textMuted}
                         />
-                        <Text style={styles.assignOptionText}>{opt.name}</Text>
+                        <Text style={styles.assignOptionText}>
+                          {opt.name}
+                          {opt.level ? ` (${TECHNICIAN_LEVEL_LABEL[opt.level] ?? opt.level})` : ''}
+                        </Text>
                       </Pressable>
                     );
                   })}

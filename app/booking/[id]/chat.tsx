@@ -20,6 +20,18 @@ interface StoreInfo {
 
 type Sentiment = 'positive' | 'neutral' | 'negative';
 
+// Dipakai bareng oleh modal review (pilihan sentimen) & kartu ringkasan
+// "Ulasan kamu" setelah submit — sebelumnya array ini cuma inline di
+// dalam modal, sekarang diekstrak supaya bisa dipakai ulang. Lihat audit
+// modul Review Toko 2026-08-27.
+const SENTIMENT_META: Record<Sentiment, { label: string; icon: keyof typeof Ionicons.glyphMap }> = {
+  positive: { label: 'Puas', icon: 'happy-outline' },
+  neutral: { label: 'Biasa Saja', icon: 'remove-circle-outline' },
+  negative: { label: 'Kurang Puas', icon: 'sad-outline' },
+};
+
+const REVIEW_COMMENT_MAX_LENGTH = 2000;
+
 // Sama persis dengan StoreReview::TAGS di backend — kalau berubah di
 // sana, samakan juga di sini.
 const REVIEW_TAGS: { key: string; label: string }[] = [
@@ -121,6 +133,11 @@ export default function CustomerBookingChatScreen() {
   // positif (lihat handleSubmitReview), supaya tidak menyembunyikan
   // keluhan tapi juga tidak aktif dorong publish keluhan ke publik.
   const [hasReview, setHasReview] = useState(false);
+  // Ringkasan ulasan yang sudah dikirim — SEBELUMNYA cuma boolean
+  // hasReview yang dipakai buat sembunyikan banner total, customer tidak
+  // bisa lihat ulang apa yang mereka kirim dari dalam app. Lihat audit
+  // modul Review Toko 2026-08-27.
+  const [review, setReview] = useState<{ sentiment: Sentiment; comment: string | null; created_at: string } | null>(null);
   // Dismiss lokal per-sesi (bukan disimpan ke backend) — supaya customer
   // yang belum siap kasih review tidak terjebak melihat banner yang sama
   // setiap kali buka chat ini, tanpa harus benar-benar submit review cuma
@@ -144,6 +161,7 @@ export default function CustomerBookingChatScreen() {
         messages: BookingMessage[];
         store: StoreInfo | null;
         has_review: boolean;
+        review: { sentiment: Sentiment; comment: string | null; created_at: string } | null;
       };
     }>(`/api/customer/bookings/${bookingId}/messages`)
       .then((res) => {
@@ -154,6 +172,7 @@ export default function CustomerBookingChatScreen() {
         setProductPpf(res.data.product_ppf);
         setStore(res.data.store);
         setHasReview(res.data.has_review);
+        setReview(res.data.review);
       })
       .catch(() => { /* silent, polling akan coba lagi */ });
   }, [bookingId]);
@@ -184,6 +203,7 @@ export default function CustomerBookingChatScreen() {
       .then((res) => {
         setReviewModalOpen(false);
         setHasReview(true);
+        setReview({ sentiment: reviewSentiment, comment: reviewComment.trim() || null, created_at: new Date().toISOString() });
         resetReviewForm();
 
         if (res.data.suggest_google_review && store?.google_place_id) {
@@ -342,6 +362,24 @@ export default function CustomerBookingChatScreen() {
         </Pressable>
       )}
 
+      {/* Ringkasan ulasan yang sudah dikirim — SEBELUMNYA banner cuma
+          disembunyikan total setelah submit, customer tidak bisa lihat
+          ulang apa yang mereka kirim tanpa buka Filament (yang mereka
+          tak punya akses). Lihat audit modul Review Toko 2026-08-27. */}
+      {currentStage === 'completed' && hasReview && review && (
+        <View style={styles.reviewSummaryCard}>
+          <Ionicons name={SENTIMENT_META[review.sentiment].icon} size={20} color={colors.accent} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.reviewSummaryTitle}>
+              Ulasan kamu: {SENTIMENT_META[review.sentiment].label}
+            </Text>
+            {review.comment ? (
+              <Text style={styles.reviewSummaryComment} numberOfLines={2}>{review.comment}</Text>
+            ) : null}
+          </View>
+        </View>
+      )}
+
       {!currentStage && (
         <View style={styles.pendingNotice}>
           <Ionicons name="time-outline" size={16} color={colors.textSecondary} />
@@ -456,17 +494,13 @@ export default function CustomerBookingChatScreen() {
             </View>
 
             <View style={styles.reviewSentimentRow}>
-              {([
-                { key: 'positive', label: 'Puas', icon: 'happy-outline' },
-                { key: 'neutral', label: 'Biasa Saja', icon: 'remove-circle-outline' },
-                { key: 'negative', label: 'Kurang Puas', icon: 'sad-outline' },
-              ] as { key: Sentiment; label: string; icon: keyof typeof Ionicons.glyphMap }[]).map((opt) => {
-                const active = reviewSentiment === opt.key;
+              {(Object.entries(SENTIMENT_META) as [Sentiment, typeof SENTIMENT_META[Sentiment]][]).map(([key, opt]) => {
+                const active = reviewSentiment === key;
                 return (
                   <Pressable
-                    key={opt.key}
+                    key={key}
                     style={[styles.reviewSentimentBtn, active && styles.reviewSentimentBtnActive]}
-                    onPress={() => setReviewSentiment(opt.key)}
+                    onPress={() => setReviewSentiment(key)}
                   >
                     <Ionicons name={opt.icon} size={26} color={active ? '#ffffff' : colors.textPrimary} />
                     <Text style={[styles.reviewSentimentLabel, active && styles.reviewSentimentLabelActive]}>
@@ -497,13 +531,24 @@ export default function CustomerBookingChatScreen() {
                   })}
                 </View>
 
-                <Text style={styles.reviewSectionLabel}>Komentar tambahan (opsional)</Text>
+                <View style={styles.reviewSectionLabelRow}>
+                  <Text style={styles.reviewSectionLabel}>Komentar tambahan (opsional)</Text>
+                  {/* Sebelumnya tidak ada validasi panjang di client sama
+                      sekali — baru gagal setelah request ke server kalau
+                      user paste teks sangat panjang. Backend membatasi
+                      max:2000 (lihat StoreReviewController::store()).
+                      Lihat audit modul Review Toko 2026-08-27. */}
+                  <Text style={styles.reviewCharCount}>
+                    {reviewComment.length}/{REVIEW_COMMENT_MAX_LENGTH}
+                  </Text>
+                </View>
                 <TextInput
                   style={styles.reviewCommentInput}
                   placeholder="Ceritakan pengalamanmu lebih lanjut..."
                   placeholderTextColor={colors.textMuted}
                   value={reviewComment}
                   onChangeText={setReviewComment}
+                  maxLength={REVIEW_COMMENT_MAX_LENGTH}
                   multiline
                   numberOfLines={3}
                 />
@@ -651,6 +696,14 @@ function createStyles(colors: typeof darkColors) {
   reviewBannerTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
   reviewBannerSubtitle: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
 
+  reviewSummaryCard: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm,
+    padding: spacing.md, backgroundColor: colors.surface,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  reviewSummaryTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
+  reviewSummaryComment: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
+
   reviewModalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -695,6 +748,16 @@ function createStyles(colors: typeof darkColors) {
     fontWeight: '600',
     color: colors.textPrimary,
     marginBottom: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  reviewSectionLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  reviewCharCount: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
     marginTop: spacing.sm,
   },
   reviewTagsWrap: {

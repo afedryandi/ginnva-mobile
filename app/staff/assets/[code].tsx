@@ -26,6 +26,14 @@ interface Store {
   name: string;
 }
 
+interface ActivityLogEntry {
+  id: number;
+  event: 'created' | 'updated' | 'deleted' | null;
+  description: string;
+  causer: { id: number; name: string } | null;
+  created_at: string;
+}
+
 interface AssetData {
   id: number;
   asset_tag: string;
@@ -37,6 +45,32 @@ interface AssetData {
   purchase_date: string | null;
   purchase_cost: string | null;
   notes: string | null;
+  activities: ActivityLogEntry[];
+}
+
+function formatDateTime(dateString: string): string {
+  return new Date(dateString).toLocaleDateString('id-ID', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatDate(dateString: string): string {
+  return new Date(dateString).toLocaleDateString('id-ID', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+function eventLabel(event: ActivityLogEntry['event']): string {
+  if (event === 'created') return 'Dibuat';
+  if (event === 'updated') return 'Diubah';
+  if (event === 'deleted') return 'Dihapus';
+  return '—';
 }
 
 function statusColor(status: AssetStatus, colors: typeof darkColors) {
@@ -167,7 +201,14 @@ export default function AssetDetailScreen() {
                 <Text style={styles.nameText}>{asset.name}</Text>
                 {asset.category && <Text style={styles.categoryText}>{asset.category}</Text>}
               </View>
+              {/* Pill+ikon — disatukan dengan pola status di modul lain
+                  (sebelumnya cuma teks berwarna tanpa ikon). */}
               <View style={[styles.statusBadge, { backgroundColor: statusColor(asset.status, colors) + '22' }]}>
+                <Ionicons
+                  name={asset.status === 'aktif' ? 'checkmark-circle' : 'alert-circle'}
+                  size={13}
+                  color={statusColor(asset.status, colors)}
+                />
                 <Text style={[styles.statusText, { color: statusColor(asset.status, colors) }]}>
                   {STATUS_LABEL[asset.status]}
                 </Text>
@@ -186,6 +227,18 @@ export default function AssetDetailScreen() {
               <View style={styles.infoRow}>
                 <Ionicons name="document-text-outline" size={16} color={colors.textMuted} />
                 <Text style={styles.infoText}>{asset.notes}</Text>
+              </View>
+            )}
+            {/* SEBELUMNYA data ini sudah dikirim backend tapi tidak
+                pernah ditampilkan — staff tidak pernah tahu kapan/berapa
+                harga beli aset walau datanya sudah nyampai ke app. */}
+            {(asset.purchase_date || asset.purchase_cost) && (
+              <View style={styles.infoRow}>
+                <Ionicons name="cash-outline" size={16} color={colors.textMuted} />
+                <Text style={styles.infoText}>
+                  {asset.purchase_cost ? `Rp ${parseFloat(asset.purchase_cost).toLocaleString('id-ID')}` : 'Harga tidak diketahui'}
+                  {asset.purchase_date ? ` — dibeli ${formatDate(asset.purchase_date)}` : ''}
+                </Text>
               </View>
             )}
           </View>
@@ -253,6 +306,24 @@ export default function AssetDetailScreen() {
           ) : (
             <Button label="Ubah Status / Lokasi" onPress={openEdit} />
           )}
+
+          <Text style={styles.historyTitle}>Riwayat Perubahan</Text>
+          {asset.activities.length === 0 ? (
+            <Text style={styles.emptyHistoryText}>Belum ada riwayat perubahan untuk aset ini.</Text>
+          ) : (
+            asset.activities.map((a) => (
+              <View key={a.id} style={styles.historyRow}>
+                <Ionicons name="time-outline" size={20} color={colors.textMuted} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.historyText}>
+                    {eventLabel(a.event)}{a.causer ? ` — ${a.causer.name}` : ' — Sistem'}
+                  </Text>
+                  {a.description && <Text style={styles.historyNote}>{a.description}</Text>}
+                  <Text style={styles.historyDate}>{formatDateTime(a.created_at)}</Text>
+                </View>
+              </View>
+            ))
+          )}
         </ScrollView>
       )}
     </SafeAreaView>
@@ -297,7 +368,7 @@ function createStyles(colors: typeof darkColors) {
     codeText: { fontSize: fontSize.xs, fontWeight: '700', color: colors.accent, letterSpacing: 0.5 },
     nameText: { fontSize: fontSize.xl, fontWeight: '800', color: colors.textPrimary, marginTop: 2 },
     categoryText: { fontSize: fontSize.sm, color: colors.textSecondary, marginTop: 2 },
-    statusBadge: { paddingHorizontal: spacing.sm, paddingVertical: 6, borderRadius: radius.pill },
+    statusBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm, paddingVertical: 6, borderRadius: radius.pill },
     statusText: { fontSize: fontSize.xs, fontWeight: '700' },
     infoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
     infoText: { fontSize: fontSize.sm, color: colors.textSecondary, flex: 1 },
@@ -328,5 +399,19 @@ function createStyles(colors: typeof darkColors) {
     formActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
     cancelButton: { paddingHorizontal: spacing.lg, alignItems: 'center', justifyContent: 'center' },
     cancelButtonText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
+    historyTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary, marginTop: spacing.sm },
+    emptyHistoryText: { fontSize: fontSize.sm, color: colors.textMuted },
+    historyRow: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+      backgroundColor: colors.surface,
+      borderRadius: radius.md,
+      padding: spacing.sm,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    historyText: { fontSize: fontSize.sm, fontWeight: '600', color: colors.textPrimary },
+    historyNote: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
+    historyDate: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: 2 },
   });
 }
