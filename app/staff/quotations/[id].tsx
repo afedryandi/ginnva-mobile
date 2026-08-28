@@ -188,7 +188,11 @@ export default function StaffQuotationDetailScreen() {
 
           <Text style={styles.sectionLabel}>Produk Diminati</Text>
           <View style={styles.card}>
-            {quotation.items.length === 0 ? (
+            {/* Pengaman: (quotation.items ?? []) — kalau suatu saat ada
+                respons API yang lupa eager-load relasi items (lihat bug
+                yang ditemukan di updateStatus() 2026-08-27), layar ini
+                tampil kosong alih-alih crash. */}
+            {(quotation.items ?? []).length === 0 ? (
               <Text style={styles.emptyItemsText}>Tidak ada produk tercatat.</Text>
             ) : (
               quotation.items.map((item) => (
