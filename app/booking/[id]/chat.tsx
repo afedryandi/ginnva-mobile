@@ -415,7 +415,8 @@ export default function CustomerBookingChatScreen() {
 
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        // Sama bug dengan layar chat staff — lihat catatan di sana.
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
       >
         <FlatList
