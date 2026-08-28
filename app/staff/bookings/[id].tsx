@@ -709,16 +709,18 @@ export default function StaffBookingChatScreen() {
     const isMarkedInTrack = markedStage !== null && trackStages.some((s) => s.key === markedStage);
     const effectiveStage = isMarkedInTrack ? markedStage : columnValue;
     let effectiveIdx = trackStages.findIndex((s) => s.key === effectiveStage);
-    // BUG: begitu progress sudah masuk tahap bersama (QC/Selesai, SHARED_
-    // STAGES), currentStage tidak lagi cocok dengan KACA_FILM_STAGES atau
-    // PPF_STAGES manapun (mis. 'qc' bukan bagian dari track Kaca Film),
-    // findIndex balik -1 — sebelumnya itu diartikan "belum ada yang
-    // ditandai" (semua tombol "Tandai" jadi kebuka lagi), padahal
-    // seharusnya "track ini sudah selesai semua" (semua tombol tetap
-    // terkunci). PPF tidak kena karena dia punya kolom secondaryStage
-    // terpisah yang tetap menyimpan progress track-nya sendiri. Ditemukan
-    // & diperbaiki 2026-08-28.
-    if (effectiveIdx === -1) {
+    // -1 punya 2 arti berbeda yang HARUS dibedakan:
+    // 1. effectiveStage === null (booking baru, belum ada tahap ditandai
+    //    sama sekali) -> track ini BELUM MULAI, semua "Tandai" harus
+    //    tetap terbuka. Biarkan effectiveIdx = -1 (perilaku asli).
+    // 2. effectiveStage adalah tahap BERSAMA (SHARED_STAGES, mis. 'qc')
+    //    -> progress sudah lewat dari track produk manapun, track ini
+    //    SUDAH SELESAI SEMUA, semua "Tandai" harus tetap terkunci.
+    // SEBELUMNYA kedua kasus disamakan (fix 2026-08-28 pertama cuma
+    // tangani kasus 2, tapi jadi ikut mengunci kasus 1 — booking baru
+    // yang belum mulai sama sekali malah semua tombolnya ikut terkunci).
+    const isSharedStageValue = effectiveStage !== null && SHARED_STAGES.some((s) => s.key === effectiveStage);
+    if (effectiveIdx === -1 && isSharedStageValue) {
       effectiveIdx = trackStages.length - 1;
     }
 
