@@ -115,6 +115,20 @@ export default function StaffBookingChatScreen() {
   // foto (tanpa bikin pesan tahap dobel).
   const [markedStage, setMarkedStage] = useState<string | null>(null);
   const [viewerImage, setViewerImage] = useState<string | null>(null);
+
+  // Alur foto susulan tahap DIROMBAK — SEBELUMNYA ikon kamera terpisah per
+  // baris tahap (klik = langsung buka galeri, langsung kirim tanpa
+  // preview). Sekarang: begitu "Tandai" ditekan → pop-up tanya mau upload
+  // foto atau tidak → pilih sumber (Galeri/Kamera) → foto masuk ke
+  // "keranjang" pendingStagePhotos yang bisa ditambah berkali-kali dari
+  // sumber mana pun → staff cek preview & buang yang tidak perlu → baru
+  // eksplisit tekan "Kirim" untuk benar-benar kirim ke chat. Diminta user
+  // 2026-08-28.
+  const [photoPromptOpen, setPhotoPromptOpen] = useState(false);
+  const [photoPreviewOpen, setPhotoPreviewOpen] = useState(false);
+  const [photoPromptStage, setPhotoPromptStage] = useState<string | null>(null);
+  const [pendingStagePhotos, setPendingStagePhotos] = useState<{ uri: string; name: string; type: string }[]>([]);
+  const [sendingStagePhotos, setSendingStagePhotos] = useState(false);
   const [completeModalOpen, setCompleteModalOpen] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [sendingReminder, setSendingReminder] = useState(false);
@@ -433,14 +447,9 @@ export default function StaffBookingChatScreen() {
     if (!ok) setInput(trimmed);
   };
 
-  const handlePickPhoto = async (stageForPhoto?: string) => {
-    // Minta izin galeri secara eksplisit HANYA di iOS. Di Android,
-    // launchImageLibraryAsync() di bawah otomatis pakai Photo Picker
-    // bawaan sistem (Android 13+) yang TIDAK butuh izin apa pun —
-    // memanggil requestMediaLibraryPermissionsAsync() di Android malah
-    // memaksa app minta izin lawas READ_MEDIA_IMAGES/READ_MEDIA_VIDEO
-    // yang justru dilarang kebijakan Google Play kalau Photo Picker
-    // sudah cukup untuk fungsi ini (lihat catatan Play Console).
+  // Tombol kamera bebas ("Ketik pesan" → ikon kamera di bawah, foto BUKAN
+  // susulan tahap tertentu) — dipertahankan apa adanya, cuma dari galeri.
+  const handlePickPhoto = async () => {
     if (Platform.OS === 'ios') {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
@@ -460,8 +469,6 @@ export default function StaffBookingChatScreen() {
       }
     }
 
-    // allowsMultipleSelection — 1 tahap boleh disertai beberapa foto
-    // sekaligus (mis. beberapa sudut mobil), tidak perlu kirim satu-satu.
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       quality: 0.7,
@@ -473,7 +480,6 @@ export default function StaffBookingChatScreen() {
 
     const form = new FormData();
     form.append('type', 'photo');
-    if (stageForPhoto) form.append('stage', stageForPhoto);
     result.assets.forEach((asset, i) => {
       form.append('photos[]', {
         uri: asset.uri,
@@ -482,33 +488,19 @@ export default function StaffBookingChatScreen() {
       } as any);
     });
 
-    if (!stageForPhoto) {
-      setStagePickerOpen(false);
-    }
-    // Picker sengaja TIDAK ditutup untuk foto susulan tahap, biar staff
-    // langsung lihat ikon kameranya terkunci lalu lanjut ke tahap berikutnya.
+    setStagePickerOpen(false);
     sendMessage(form);
   };
 
-  const handlePickStage = (stage: string, withPhoto: boolean) => {
+  const handlePickStage = (stage: string) => {
     // Tahap "Selesai" = booking benar-benar selesai & customer sudah bayar
-    // di toko — SELALU lewat modal (baik tombol teks maupun kamera),
-    // BUKAN langsung kirim pesan tahap seperti biasa. Kalau tombol kamera
-    // yang dipisah dibiarkan lolos ke handlePickPhoto(), endpoint
-    // /complete tidak pernah kepanggil — kode referral/voucher tidak
-    // pernah diproses sama sekali (poin tidak keluar tanpa error apapun).
+    // di toko — SELALU lewat modal complete, TIDAK lewat pop-up foto tahap
+    // biasa (endpoint /complete yang urus kode referral/voucher, bukan
+    // pesan tahap biasa).
     if (stage === 'completed') {
       if (currentStage === 'completed') return; // sudah selesai, tidak bisa diulang
       setStagePickerOpen(false);
       setCompleteModalOpen(true);
-      return;
-    }
-
-    if (withPhoto) {
-      // Susulan foto SETELAH tahap ditandai — kirim sebagai foto biasa
-      // (tanpa pill "Tahap: X" dobel di chat). Boleh berkali-kali selama
-      // masih di tahap yang sama (tandai belum pindah ke tahap berikutnya).
-      handlePickPhoto(stage);
       return;
     }
 
@@ -517,6 +509,142 @@ export default function StaffBookingChatScreen() {
     form.append('stage', stage);
     setMarkedStage(stage);
     sendMessage(form);
+
+    // Begitu tahap ditandai, tanya mau susulkan foto atau tidak — bukan
+    // langsung buka galeri seperti sebelumnya.
+    setPhotoPromptStage(stage);
+    setPendingStagePhotos([]);
+    setPhotoPromptOpen(true);
+  };
+
+  const requestGalleryPermission = async (): Promise<boolean> => {
+    // Cuma iOS — Android pakai Photo Picker bawaan sistem (Android 13+)
+    // yang tidak butuh izin apa pun. Lihat catatan Play Console soal
+    // READ_MEDIA_IMAGES/READ_MEDIA_VIDEO.
+    if (Platform.OS !== 'ios') return true;
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (permission.granted) return true;
+
+    if (!permission.canAskAgain) {
+      Alert.alert(
+        'Izin Ditolak Permanen',
+        'Aktifkan izin akses galeri lewat Pengaturan untuk mengirim foto.',
+        [
+          { text: 'Batal', style: 'cancel' },
+          { text: 'Buka Pengaturan', onPress: () => Linking.openSettings() },
+        ]
+      );
+    } else {
+      Alert.alert('Izin Diperlukan', 'Aktifkan izin akses galeri untuk mengirim foto.');
+    }
+    return false;
+  };
+
+  const requestCameraPermission = async (): Promise<boolean> => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (permission.granted) return true;
+
+    if (!permission.canAskAgain) {
+      Alert.alert(
+        'Izin Ditolak Permanen',
+        'Aktifkan izin akses kamera lewat Pengaturan untuk memotret foto tahap.',
+        [
+          { text: 'Batal', style: 'cancel' },
+          { text: 'Buka Pengaturan', onPress: () => Linking.openSettings() },
+        ]
+      );
+    } else {
+      Alert.alert('Izin Diperlukan', 'Aktifkan izin akses kamera untuk memotret foto tahap.');
+    }
+    return false;
+  };
+
+  // Dipanggil dari pop-up "Ingin upload foto tahap?" — hasil dari galeri
+  // MAUPUN kamera masuk ke keranjang pendingStagePhotos yang sama, bisa
+  // ditambah berkali-kali dari sumber campuran sebelum benar-benar
+  // dikirim.
+  const addStagePhotosFromGallery = async () => {
+    if (!(await requestGalleryPermission())) return;
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.7,
+      allowsMultipleSelection: true,
+      selectionLimit: 10,
+    });
+
+    if (result.canceled || !result.assets?.length) return;
+
+    setPendingStagePhotos((prev) => [
+      ...prev,
+      ...result.assets.map((asset, i) => ({
+        uri: asset.uri,
+        name: asset.fileName || `photo-${Date.now()}-${i}.jpg`,
+        type: asset.mimeType || 'image/jpeg',
+      })),
+    ]);
+    setPhotoPromptOpen(false);
+    setPhotoPreviewOpen(true);
+  };
+
+  const addStagePhotoFromCamera = async () => {
+    if (!(await requestCameraPermission())) return;
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.7,
+    });
+
+    if (result.canceled || !result.assets?.length) return;
+
+    const asset = result.assets[0];
+    setPendingStagePhotos((prev) => [
+      ...prev,
+      { uri: asset.uri, name: asset.fileName || `photo-${Date.now()}.jpg`, type: asset.mimeType || 'image/jpeg' },
+    ]);
+    setPhotoPromptOpen(false);
+    setPhotoPreviewOpen(true);
+  };
+
+  const removePendingStagePhoto = (index: number) => {
+    setPendingStagePhotos((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const skipStagePhotos = () => {
+    setPhotoPromptOpen(false);
+    setPhotoPreviewOpen(false);
+    setPhotoPromptStage(null);
+    setPendingStagePhotos([]);
+  };
+
+  const sendStagePhotos = async () => {
+    if (pendingStagePhotos.length === 0 || !photoPromptStage) return;
+
+    // Backend batasi maks 10 foto per pesan (lihat
+    // StaffBookingMessageController::store()) — keranjang di sini bisa
+    // dipupuk dari beberapa kali pilih galeri/kamera, jadi perlu dicek
+    // sebelum kirim, bukan cuma andalkan validasi server.
+    if (pendingStagePhotos.length > 10) {
+      Alert.alert('Terlalu Banyak Foto', 'Maksimal 10 foto per pengiriman. Buang beberapa foto dulu, atau kirim sisanya sebagai pesan susulan.');
+      return;
+    }
+
+    setSendingStagePhotos(true);
+    const form = new FormData();
+    form.append('type', 'photo');
+    form.append('stage', photoPromptStage);
+    pendingStagePhotos.forEach((photo) => {
+      form.append('photos[]', photo as any);
+    });
+
+    const ok = await sendMessage(form);
+    setSendingStagePhotos(false);
+    if (ok) {
+      setPhotoPreviewOpen(false);
+      setPhotoPromptStage(null);
+      setPendingStagePhotos([]);
+    }
   };
 
   // Booking dengan KEDUA produk → Kaca Film & PPF jalan paralel (Kaca Film
@@ -582,30 +710,20 @@ export default function StaffBookingChatScreen() {
       const tandaiDisabled = isCompletedRow
         ? currentStage !== 'qc'
         : idx <= effectiveIdx;
-      const cameraDisabled = isCompletedRow
-        ? currentStage !== 'qc'
-        : idx !== effectiveIdx;
+      // Ikon kamera per baris DIHAPUS — dirombak jadi alur pop-up setelah
+      // "Tandai" ditekan (lihat handlePickStage & modal photoPromptOpen/
+      // photoPreviewOpen). Ditemukan cocok lewat permintaan redesain user
+      // 2026-08-28.
       return (
         <View key={s.key} style={styles.stagePickerRow}>
           <Ionicons name={s.icon} size={16} color={colors.textPrimary} />
           <Text style={styles.stagePickerLabel}>{s.label}</Text>
           <Pressable
             style={[styles.stagePickerBtn, tandaiDisabled && styles.stagePickerBtnDisabled]}
-            onPress={() => handlePickStage(s.key, false)}
+            onPress={() => handlePickStage(s.key)}
             disabled={tandaiDisabled}
           >
             <Text style={styles.stagePickerBtnText}>Tandai</Text>
-          </Pressable>
-          <Pressable
-            style={[
-              styles.stagePickerBtn,
-              styles.stagePickerBtnPhoto,
-              cameraDisabled && styles.stagePickerBtnDisabled,
-            ]}
-            onPress={() => handlePickStage(s.key, true)}
-            disabled={cameraDisabled}
-          >
-            <Ionicons name="camera-outline" size={14} color={cameraDisabled ? colors.textMuted : colors.accent} />
           </Pressable>
         </View>
       );
@@ -939,6 +1057,88 @@ export default function StaffBookingChatScreen() {
                   <ActivityIndicator size="small" color="#ffffff" />
                 ) : (
                   <Text style={styles.completeBtnConfirmText}>Selesaikan</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Pop-up "Ingin upload foto tahap?" — muncul begitu tahap ditandai.
+          Diminta user 2026-08-28 sebagai pengganti ikon kamera per baris. */}
+      <Modal visible={photoPromptOpen} transparent animationType="fade" onRequestClose={skipStagePhotos}>
+        <View style={styles.completeBackdrop}>
+          <View style={styles.completeSheet}>
+            <Text style={styles.completeTitle}>Ingin Upload Foto Tahap?</Text>
+            <Text style={styles.completeSubtitle}>
+              Lampirkan foto progress untuk tahap ini (opsional) — bisa ambil dari galeri atau motret langsung.
+            </Text>
+
+            <View style={{ gap: spacing.sm, marginTop: spacing.sm }}>
+              <Pressable style={[styles.completeBtn, styles.completeBtnConfirm, { flexDirection: 'row' }]} onPress={addStagePhotosFromGallery}>
+                <Ionicons name="images-outline" size={18} color="#ffffff" />
+                <Text style={styles.completeBtnConfirmText}>  Pilih dari Galeri</Text>
+              </Pressable>
+              <Pressable style={[styles.completeBtn, styles.completeBtnConfirm, { flexDirection: 'row' }]} onPress={addStagePhotoFromCamera}>
+                <Ionicons name="camera-outline" size={18} color="#ffffff" />
+                <Text style={styles.completeBtnConfirmText}>  Ambil Foto</Text>
+              </Pressable>
+              <Pressable style={[styles.completeBtn, styles.completeBtnCancel]} onPress={skipStagePhotos}>
+                <Text style={styles.completeBtnCancelText}>Lewati, Tidak Ada Foto</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Preview foto tahap sebelum dikirim — bisa tambah lebih banyak
+          (loop balik ke pop-up sumber) atau buang satu-satu sebelum
+          benar-benar kirim ke chat. */}
+      <Modal visible={photoPreviewOpen} transparent animationType="fade" onRequestClose={() => setPhotoPreviewOpen(false)}>
+        <View style={styles.completeBackdrop}>
+          <View style={styles.completeSheet}>
+            <Text style={styles.completeTitle}>Foto Tahap ({pendingStagePhotos.length})</Text>
+            <Text style={styles.completeSubtitle}>
+              Cek foto yang akan dikirim — ketuk × untuk buang, atau tambah lagi dari galeri/kamera.
+            </Text>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: spacing.sm }}>
+              <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                {pendingStagePhotos.map((photo, i) => (
+                  <View key={photo.uri + i} style={styles.stagePhotoPreviewItem}>
+                    <Image source={{ uri: photo.uri }} style={styles.stagePhotoPreviewImage} />
+                    <Pressable style={styles.stagePhotoPreviewRemove} onPress={() => removePendingStagePhoto(i)}>
+                      <Ionicons name="close" size={14} color="#ffffff" />
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+
+            <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
+              <Pressable style={[styles.completeBtn, styles.completeBtnCancel, { flex: 1, flexDirection: 'row' }]} onPress={addStagePhotosFromGallery}>
+                <Ionicons name="images-outline" size={16} color={colors.textPrimary} />
+                <Text style={styles.completeBtnCancelText}>  Galeri</Text>
+              </Pressable>
+              <Pressable style={[styles.completeBtn, styles.completeBtnCancel, { flex: 1, flexDirection: 'row' }]} onPress={addStagePhotoFromCamera}>
+                <Ionicons name="camera-outline" size={16} color={colors.textPrimary} />
+                <Text style={styles.completeBtnCancelText}>  Kamera</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.completeActions}>
+              <Pressable style={[styles.completeBtn, styles.completeBtnCancel]} onPress={skipStagePhotos} disabled={sendingStagePhotos}>
+                <Text style={styles.completeBtnCancelText}>Batal</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.completeBtn, styles.completeBtnConfirm]}
+                onPress={sendStagePhotos}
+                disabled={sendingStagePhotos || pendingStagePhotos.length === 0}
+              >
+                {sendingStagePhotos ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={styles.completeBtnConfirmText}>Kirim ({pendingStagePhotos.length})</Text>
                 )}
               </Pressable>
             </View>
@@ -1343,8 +1543,13 @@ function createStyles(colors: typeof darkColors) {
     backgroundColor: colors.accent,
   },
   stagePickerBtnText: { fontSize: fontSize.xs, fontWeight: '700', color: '#ffffff' },
-  stagePickerBtnPhoto: { backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.accent, paddingHorizontal: 8 },
   stagePickerBtnDisabled: { backgroundColor: colors.border, borderColor: colors.border, opacity: 0.5 },
+  stagePhotoPreviewItem: { width: 90, height: 90, borderRadius: radius.md, overflow: 'hidden' },
+  stagePhotoPreviewImage: { width: '100%', height: '100%' },
+  stagePhotoPreviewRemove: {
+    position: 'absolute', top: 4, right: 4, width: 20, height: 20, borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center',
+  },
 
   messageList: { padding: spacing.md, gap: spacing.sm },
 
