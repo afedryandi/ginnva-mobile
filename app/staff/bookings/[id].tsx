@@ -1173,6 +1173,16 @@ function MessageBubble({
 
   return (
     <View style={[styles.bubbleWrap, isAdmin ? styles.bubbleWrapRight : styles.bubbleWrapLeft]}>
+      {/* SEBELUMNYA sender_name sudah dikirim backend tapi tidak pernah
+          ditampilkan di sini — semua pesan staff (installer, store
+          manager, siapa pun) tampil identik, staff lain yang buka
+          booking yang sama tidak tahu siapa sebenarnya yang menulis
+          pesan itu. Cuma untuk pesan admin — pesan customer selalu dari
+          1 orang yang sama (pemilik booking), tidak perlu label.
+          Ditemukan & diperbaiki 2026-08-28. */}
+      {isAdmin && message.sender_name && (
+        <Text style={styles.senderNameLabel}>{message.sender_name}</Text>
+      )}
       <View style={[styles.bubble, isAdmin ? styles.bubbleAdmin : styles.bubbleCustomer]}>
         {message.photo_urls.length > 0 && (
           <PhotoGrid photoUrls={message.photo_urls} onPhotoPress={onPhotoPress} styles={styles} />
@@ -1324,6 +1334,7 @@ function createStyles(colors: typeof darkColors) {
   },
   photoGridItem: { width: 98, height: 98, borderRadius: radius.sm },
   messageTime: { fontSize: 10, color: colors.textMuted, alignSelf: 'flex-end' },
+  senderNameLabel: { fontSize: 10, fontWeight: '700', color: colors.textMuted, alignSelf: 'flex-end', marginBottom: 2, marginRight: 2 },
   stageMessageTime: { fontSize: 10, color: colors.textMuted, alignSelf: 'center' },
 
   stageMessageWrap: { alignSelf: 'center', alignItems: 'center', gap: 4, marginVertical: spacing.xs },
