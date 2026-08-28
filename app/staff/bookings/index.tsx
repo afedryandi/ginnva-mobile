@@ -208,21 +208,24 @@ export default function StaffBookingListScreen() {
             style={styles.card}
             onPress={() => router.push(`/staff/bookings/${item.id}` as never)}
           >
+            {/* Badge status tetap sejajar nomor booking (kanan atas).
+                Badge tahap DIPISAH ke baris sendiri di bawahnya — SEBELUMNYA
+                digabung 1 grup, jadi begitu keduanya tidak muat 1 baris,
+                badge status ikut turun juga (harusnya cuma badge tahap
+                yang turun). Diminta user 2026-08-28. */}
             <View style={styles.cardHeader}>
               <Text style={styles.bookingNumber} numberOfLines={1}>{item.booking_number}</Text>
-              <View style={styles.badgeGroup}>
-                <View style={[styles.statusBadge, { backgroundColor: colors[statusMeta.bg] }]}>
-                  <Text style={[styles.statusBadgeText, { color: colors[statusMeta.color] }]}>
-                    {statusMeta.label}
-                  </Text>
-                </View>
-                {item.current_stage && item.status !== 'cancelled' && (
-                  <View style={styles.stageBadge}>
-                    <Text style={styles.stageBadgeText}>{STAGE_LABEL[item.current_stage] ?? item.current_stage}</Text>
-                  </View>
-                )}
+              <View style={[styles.statusBadge, { backgroundColor: colors[statusMeta.bg] }]}>
+                <Text style={[styles.statusBadgeText, { color: colors[statusMeta.color] }]}>
+                  {statusMeta.label}
+                </Text>
               </View>
             </View>
+            {item.current_stage && item.status !== 'cancelled' && (
+              <View style={styles.stageBadge}>
+                <Text style={styles.stageBadgeText}>{STAGE_LABEL[item.current_stage] ?? item.current_stage}</Text>
+              </View>
+            )}
             <Text style={styles.customerName}>
               {item.customer?.name || item.customer_name || 'Customer'}
             </Text>
@@ -278,19 +281,19 @@ function createStyles(colors: typeof darkColors) {
     backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.md,
     gap: 6, borderWidth: 1, borderColor: colors.border,
   },
-  // SEBELUMNYA cardHeader nowrap tanpa shrink apapun — booking_number +
-  // 2 badge (status + tahap) meluber keluar batas kartu begitu total
-  // lebarnya tidak muat 1 baris (mis. tahap "Instalasi Kaca Film" yang
-  // panjang). flexWrap membiarkan badgeGroup turun ke baris baru kalau
-  // perlu; bookingNumber dikasih flexShrink+numberOfLines supaya
-  // truncate dulu sebelum badge yang dikorbankan. Ditemukan & diperbaiki
-  // 2026-08-28.
-  cardHeader: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 6 },
+  // Badge tahap dipisah jadi baris sendiri (lihat renderItem) — badge
+  // status tetap sejajar booking_number, dikasih flexShrink0 implisit
+  // (View tanpa flex, ukuran natural) supaya tidak ikut kegencet.
+  // bookingNumber dikasih flexShrink+numberOfLines supaya truncate dulu
+  // kalau kepanjangan. Ditemukan & diperbaiki 2026-08-28.
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 6 },
   bookingNumber: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary, flexShrink: 1 },
-  badgeGroup: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
   statusBadge: { paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.pill },
   statusBadgeText: { fontSize: fontSize.xs, fontWeight: '700' },
-  stageBadge: { backgroundColor: colors.accentSoft, paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.pill },
+  // alignSelf: 'flex-start' WAJIB — tanpa ini, sebagai child langsung
+  // `card` (flex column, default alignItems 'stretch'), badge ini
+  // melebar penuh selebar kartu alih-alih cuma selebar teksnya sendiri.
+  stageBadge: { alignSelf: 'flex-start', backgroundColor: colors.accentSoft, paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.pill },
   stageBadgeText: { fontSize: fontSize.xs, fontWeight: '600', color: colors.accent },
   customerName: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary },
   detailRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
