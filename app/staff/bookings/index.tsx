@@ -241,7 +241,7 @@ export default function StaffBookingListScreen() {
             {item.current_stage && item.status !== 'cancelled' && (
               <View style={styles.stageBadgeRow}>
                 <View style={styles.stageBadge}>
-                  <Text style={styles.stageBadgeText}>{STAGE_LABEL[item.current_stage] ?? item.current_stage}</Text>
+                  <Text style={styles.stageBadgeText}>Tahap: {STAGE_LABEL[item.current_stage] ?? item.current_stage}</Text>
                 </View>
               </View>
             )}
