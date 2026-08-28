@@ -221,11 +221,6 @@ export default function StaffBookingListScreen() {
                 </Text>
               </View>
             </View>
-            {item.current_stage && item.status !== 'cancelled' && (
-              <View style={styles.stageBadge}>
-                <Text style={styles.stageBadgeText}>{STAGE_LABEL[item.current_stage] ?? item.current_stage}</Text>
-              </View>
-            )}
             <Text style={styles.customerName}>
               {item.customer?.name || item.customer_name || 'Customer'}
             </Text>
@@ -239,6 +234,17 @@ export default function StaffBookingListScreen() {
                 {formatDateRange(item.preferred_date, item.end_date, item.duration_days)}
               </Text>
             </View>
+            {/* Dipindah ke bawah tanggal (diminta user 2026-08-28) — dikasih
+                marginTop ekstra & border atas tipis supaya kelihatan
+                sebagai elemen terpisah, tidak berbaur dengan baris info
+                polos di atasnya (yang sama-sama teks abu-abu kecil). */}
+            {item.current_stage && item.status !== 'cancelled' && (
+              <View style={styles.stageBadgeRow}>
+                <View style={styles.stageBadge}>
+                  <Text style={styles.stageBadgeText}>{STAGE_LABEL[item.current_stage] ?? item.current_stage}</Text>
+                </View>
+              </View>
+            )}
           </Pressable>
           );
         }}
@@ -290,6 +296,9 @@ function createStyles(colors: typeof darkColors) {
   bookingNumber: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary, flexShrink: 1 },
   statusBadge: { paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.pill },
   statusBadgeText: { fontSize: fontSize.xs, fontWeight: '700' },
+  stageBadgeRow: {
+    marginTop: 4, paddingTop: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border,
+  },
   // alignSelf: 'flex-start' WAJIB — tanpa ini, sebagai child langsung
   // `card` (flex column, default alignItems 'stretch'), badge ini
   // melebar penuh selebar kartu alih-alih cuma selebar teksnya sendiri.
