@@ -448,26 +448,24 @@ export default function StaffBookingChatScreen() {
   };
 
   // Tombol kamera bebas ("Ketik pesan" → ikon kamera di bawah, foto BUKAN
-  // susulan tahap tertentu) — dipertahankan apa adanya, cuma dari galeri.
-  const handlePickPhoto = async () => {
-    if (Platform.OS === 'ios') {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        if (!permission.canAskAgain) {
-          Alert.alert(
-            'Izin Ditolak Permanen',
-            'Aktifkan izin akses galeri lewat Pengaturan untuk mengirim foto.',
-            [
-              { text: 'Batal', style: 'cancel' },
-              { text: 'Buka Pengaturan', onPress: () => Linking.openSettings() },
-            ]
-          );
-        } else {
-          Alert.alert('Izin Diperlukan', 'Aktifkan izin akses galeri untuk mengirim foto.');
-        }
-        return;
-      }
-    }
+  // susulan tahap tertentu) — SEBELUMNYA langsung buka galeri tanpa
+  // pilihan. Sekarang tanya sumbernya dulu, sama seperti alur foto
+  // tahap. Diminta user 2026-08-28.
+  const sendGeneralPhotos = async (assets: { uri: string; name: string; type: string }[]) => {
+    if (!assets.length) return;
+
+    const form = new FormData();
+    form.append('type', 'photo');
+    assets.forEach((asset) => {
+      form.append('photos[]', asset as any);
+    });
+
+    setStagePickerOpen(false);
+    sendMessage(form);
+  };
+
+  const handlePickPhotoFromGallery = async () => {
+    if (!(await requestGalleryPermission())) return;
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
@@ -478,18 +476,29 @@ export default function StaffBookingChatScreen() {
 
     if (result.canceled || !result.assets?.length) return;
 
-    const form = new FormData();
-    form.append('type', 'photo');
-    result.assets.forEach((asset, i) => {
-      form.append('photos[]', {
-        uri: asset.uri,
-        name: asset.fileName || `photo-${i}.jpg`,
-        type: asset.mimeType || 'image/jpeg',
-      } as any);
-    });
+    sendGeneralPhotos(result.assets.map((asset, i) => ({
+      uri: asset.uri,
+      name: asset.fileName || `photo-${i}.jpg`,
+      type: asset.mimeType || 'image/jpeg',
+    })));
+  };
 
-    setStagePickerOpen(false);
-    sendMessage(form);
+  const handlePickPhotoFromCamera = async () => {
+    if (!(await requestCameraPermission())) return;
+
+    const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.7 });
+    if (result.canceled || !result.assets?.length) return;
+
+    const asset = result.assets[0];
+    sendGeneralPhotos([{ uri: asset.uri, name: asset.fileName || `photo-${Date.now()}.jpg`, type: asset.mimeType || 'image/jpeg' }]);
+  };
+
+  const handlePickPhoto = () => {
+    Alert.alert('Kirim Foto', 'Pilih sumber foto', [
+      { text: 'Galeri', onPress: handlePickPhotoFromGallery },
+      { text: 'Kamera', onPress: handlePickPhotoFromCamera },
+      { text: 'Batal', style: 'cancel' },
+    ]);
   };
 
   const handlePickStage = (stage: string) => {
