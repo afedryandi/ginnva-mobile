@@ -420,6 +420,12 @@ export default function CustomerBookingChatScreen() {
       >
         <FlatList
           ref={listRef}
+          // Sama bug dengan layar chat staff — tanpa style={flex:1} list
+          // menyusut mengikuti kontennya sendiri, kolom input jadi
+          // "naik" nempel di bawah pesan terakhir alih-alih di bawah
+          // layar begitu pesannya sedikit. Ditemukan & diperbaiki
+          // 2026-08-28.
+          style={styles.flex}
           data={[...messages].reverse()}
           keyExtractor={(item) => String(item.id)}
           inverted

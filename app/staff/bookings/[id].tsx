@@ -841,6 +841,13 @@ export default function StaffBookingChatScreen() {
       >
         <FlatList
           ref={listRef}
+          // SEBELUMNYA tidak ada style={flex:1} di sini — list menyusut
+          // mengikuti tinggi kontennya sendiri (kayak ScrollView tanpa
+          // flex), bukan mengisi sisa ruang di KeyboardAvoidingView.
+          // Akibatnya kolom input "naik" nempel tepat di bawah pesan
+          // terakhir, bukan di bawah layar, begitu pesannya sedikit.
+          // Ditemukan & diperbaiki 2026-08-28.
+          style={styles.flex}
           data={[...messages].reverse()}
           keyExtractor={(item) => String(item.id)}
           inverted
