@@ -1319,9 +1319,14 @@ function createStyles(colors: typeof darkColors) {
 
   messageList: { padding: spacing.md, gap: spacing.sm },
 
+  // alignItems per sisi WAJIB diisi eksplisit — default React Native
+  // 'stretch' bikin semua child (bubble, label nama, jam) menyesuaikan
+  // lebar sibling TERLEBAR (label nama pengirim, mis. "Admin Toko Test
+  // Toko"), jadi bubble teks pendek (mis. "Test") ikut melebar kosong.
+  // Ditemukan & diperbaiki 2026-08-28.
   bubbleWrap: { maxWidth: '78%', gap: 2 },
-  bubbleWrapLeft: { alignSelf: 'flex-start' },
-  bubbleWrapRight: { alignSelf: 'flex-end' },
+  bubbleWrapLeft: { alignSelf: 'flex-start', alignItems: 'flex-start' },
+  bubbleWrapRight: { alignSelf: 'flex-end', alignItems: 'flex-end' },
   bubble: { borderRadius: radius.lg, padding: spacing.sm, overflow: 'hidden' },
   bubbleAdmin: { backgroundColor: colors.accent, borderBottomRightRadius: 4 },
   bubbleCustomer: { backgroundColor: colors.surface, borderBottomLeftRadius: 4 },
