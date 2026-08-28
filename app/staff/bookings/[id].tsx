@@ -872,7 +872,12 @@ export default function StaffBookingChatScreen() {
           renderItem={({ item }) => <MessageBubble message={item} onPhotoPress={setViewerImage} styles={styles} />}
         />
 
-        <View style={[styles.inputBar, { paddingBottom: insets.bottom > 0 ? insets.bottom : spacing.sm }]}>
+        {/* +spacing.sm ekstra di kedua kondisi — SEBELUMNYA di HP dengan
+            navigasi 3-tombol (insets.bottom = 0), kolom input cuma
+            dikasih jarak spacing.sm dari tepi layar, jadi kelihatan
+            terlalu mepet ke navigation bar Android. Ditemukan &
+            diperbaiki 2026-08-28. */}
+        <View style={[styles.inputBar, { paddingBottom: (insets.bottom > 0 ? insets.bottom : spacing.sm) + spacing.sm }]}>
           {canManageProgress && (
             <Pressable style={styles.attachBtn} onPress={() => handlePickPhoto()} disabled={sending}>
               <Ionicons name="camera-outline" size={22} color={colors.accent} />

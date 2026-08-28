@@ -452,7 +452,8 @@ export default function CustomerBookingChatScreen() {
           )}
         />
 
-        <View style={[styles.inputBar, { paddingBottom: insets.bottom > 0 ? insets.bottom : spacing.sm }]}>
+        {/* +spacing.sm ekstra — sama alasan dengan layar chat staff. */}
+        <View style={[styles.inputBar, { paddingBottom: (insets.bottom > 0 ? insets.bottom : spacing.sm) + spacing.sm }]}>
           <TextInput
             style={styles.input}
             placeholder="Ketik pesan ke toko..."
