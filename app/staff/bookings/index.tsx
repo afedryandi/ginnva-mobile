@@ -209,7 +209,7 @@ export default function StaffBookingListScreen() {
             onPress={() => router.push(`/staff/bookings/${item.id}` as never)}
           >
             <View style={styles.cardHeader}>
-              <Text style={styles.bookingNumber}>{item.booking_number}</Text>
+              <Text style={styles.bookingNumber} numberOfLines={1}>{item.booking_number}</Text>
               <View style={styles.badgeGroup}>
                 <View style={[styles.statusBadge, { backgroundColor: colors[statusMeta.bg] }]}>
                   <Text style={[styles.statusBadgeText, { color: colors[statusMeta.color] }]}>
@@ -278,9 +278,16 @@ function createStyles(colors: typeof darkColors) {
     backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.md,
     gap: 6, borderWidth: 1, borderColor: colors.border,
   },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  bookingNumber: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
-  badgeGroup: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  // SEBELUMNYA cardHeader nowrap tanpa shrink apapun — booking_number +
+  // 2 badge (status + tahap) meluber keluar batas kartu begitu total
+  // lebarnya tidak muat 1 baris (mis. tahap "Instalasi Kaca Film" yang
+  // panjang). flexWrap membiarkan badgeGroup turun ke baris baru kalau
+  // perlu; bookingNumber dikasih flexShrink+numberOfLines supaya
+  // truncate dulu sebelum badge yang dikorbankan. Ditemukan & diperbaiki
+  // 2026-08-28.
+  cardHeader: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 6 },
+  bookingNumber: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary, flexShrink: 1 },
+  badgeGroup: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
   statusBadge: { paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.pill },
   statusBadgeText: { fontSize: fontSize.xs, fontWeight: '700' },
   stageBadge: { backgroundColor: colors.accentSoft, paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.pill },

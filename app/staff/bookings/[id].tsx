@@ -1074,16 +1074,21 @@ export default function StaffBookingChatScreen() {
               Lampirkan foto progress untuk tahap ini (opsional) — bisa ambil dari galeri atau motret langsung.
             </Text>
 
+            {/* flex:0 WAJIB di-override — completeBtn punya flex:1 yang
+                didesain untuk container ROW (completeActions), dipakai di
+                sini dalam container COLUMN tanpa tinggi pasti bikin Yoga
+                collapse tinggi tombolnya jadi 0 (tombol hilang sama
+                sekali). Ditemukan & diperbaiki 2026-08-28. */}
             <View style={{ gap: spacing.sm, marginTop: spacing.sm }}>
-              <Pressable style={[styles.completeBtn, styles.completeBtnConfirm, { flexDirection: 'row' }]} onPress={addStagePhotosFromGallery}>
+              <Pressable style={[styles.completeBtn, styles.completeBtnConfirm, { flex: 0, flexDirection: 'row' }]} onPress={addStagePhotosFromGallery}>
                 <Ionicons name="images-outline" size={18} color="#ffffff" />
                 <Text style={styles.completeBtnConfirmText}>  Pilih dari Galeri</Text>
               </Pressable>
-              <Pressable style={[styles.completeBtn, styles.completeBtnConfirm, { flexDirection: 'row' }]} onPress={addStagePhotoFromCamera}>
+              <Pressable style={[styles.completeBtn, styles.completeBtnConfirm, { flex: 0, flexDirection: 'row' }]} onPress={addStagePhotoFromCamera}>
                 <Ionicons name="camera-outline" size={18} color="#ffffff" />
                 <Text style={styles.completeBtnConfirmText}>  Ambil Foto</Text>
               </Pressable>
-              <Pressable style={[styles.completeBtn, styles.completeBtnCancel]} onPress={skipStagePhotos}>
+              <Pressable style={[styles.completeBtn, styles.completeBtnCancel, { flex: 0 }]} onPress={skipStagePhotos}>
                 <Text style={styles.completeBtnCancelText}>Lewati, Tidak Ada Foto</Text>
               </Pressable>
             </View>
