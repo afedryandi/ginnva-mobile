@@ -836,14 +836,13 @@ export default function StaffBookingChatScreen() {
 
       <KeyboardAvoidingView
         style={styles.flex}
-        // Android (lewat Expo) SUDAH otomatis resize layar saat keyboard
-        // buka/tutup (default softwareKeyboardLayoutMode "resize" =
-        // adjustResize) — behavior="height" di RN ikut coba resize lagi
-        // di atasnya, dua sistem bentrok, pemulihan tinggi jadi tidak
-        // pas begitu keyboard ditutup (kolom input geser posisi).
-        // undefined di Android = biarkan OS yang urus sendirian. Lihat
-        // audit modul Booking, ditemukan & diperbaiki 2026-08-28.
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        // REVERT — asumsi Android sudah adjustResize otomatis TERNYATA
+        // salah (menghapus behavior="height" bikin keyboard nutupin
+        // kolom input sepenuhnya, jauh lebih parah). Balik ke "height",
+        // sisa bug pergeseran posisi setelah keyboard ditutup dibiarkan
+        // dulu — itu jauh lebih ringan daripada input yang tidak
+        // kelihatan sama sekali. 2026-08-28.
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
       >
         <FlatList
