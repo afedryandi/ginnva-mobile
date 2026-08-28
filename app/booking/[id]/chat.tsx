@@ -34,15 +34,21 @@ const REVIEW_COMMENT_MAX_LENGTH = 2000;
 
 // Sama persis dengan StoreReview::TAGS di backend — kalau berubah di
 // sana, samakan juga di sini.
-const REVIEW_TAGS: { key: string; label: string }[] = [
-  { key: 'pelayanan_ramah', label: 'Pelayanan Ramah' },
-  { key: 'hasil_rapi', label: 'Hasil Rapi & Memuaskan' },
-  { key: 'harga_worth_it', label: 'Harga Sepadan (Worth It)' },
-  { key: 'proses_cepat', label: 'Proses Cepat' },
-  { key: 'pelayanan_kurang', label: 'Pelayanan Kurang Ramah' },
-  { key: 'hasil_kurang_rapi', label: 'Hasil Kurang Rapi' },
-  { key: 'harga_kurang_sesuai', label: 'Harga Kurang Sesuai' },
-  { key: 'proses_lambat', label: 'Proses Lambat' },
+// SEBELUMNYA tidak ada 'polarity' — semua 8 tag (4 positif + 4 negatif)
+// tampil bercampur apa pun sentimen yang dipilih ("Puas" tetap
+// menampilkan opsi "Pelayanan Kurang Ramah", dst), membingungkan.
+// Sekarang difilter di render: sentimen positif cuma tampilkan tag
+// positif, negatif cuma tag negatif, netral tampilkan semua (tidak
+// condong ke salah satu). Ditemukan & diperbaiki 2026-08-28.
+const REVIEW_TAGS: { key: string; label: string; polarity: 'positive' | 'negative' }[] = [
+  { key: 'pelayanan_ramah', label: 'Pelayanan Ramah', polarity: 'positive' },
+  { key: 'hasil_rapi', label: 'Hasil Rapi & Memuaskan', polarity: 'positive' },
+  { key: 'harga_worth_it', label: 'Harga Sepadan (Worth It)', polarity: 'positive' },
+  { key: 'proses_cepat', label: 'Proses Cepat', polarity: 'positive' },
+  { key: 'pelayanan_kurang', label: 'Pelayanan Kurang Ramah', polarity: 'negative' },
+  { key: 'hasil_kurang_rapi', label: 'Hasil Kurang Rapi', polarity: 'negative' },
+  { key: 'harga_kurang_sesuai', label: 'Harga Kurang Sesuai', polarity: 'negative' },
+  { key: 'proses_lambat', label: 'Proses Lambat', polarity: 'negative' },
 ];
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -504,7 +510,11 @@ export default function CustomerBookingChatScreen() {
         onRequestClose={() => setReviewModalOpen(false)}
       >
         <View style={styles.reviewModalBackdrop}>
-          <View style={styles.reviewModalCard}>
+          {/* SEBELUMNYA padding bawah cuma spacing.lg tetap, tidak
+              mempertimbangkan navigation bar Android 3-tombol — tombol
+              "Kirim Ulasan" ketutup nav bar di device begitu. Ditemukan
+              & diperbaiki 2026-08-28. */}
+          <View style={[styles.reviewModalCard, { paddingBottom: spacing.lg + (insets.bottom > 0 ? insets.bottom : spacing.md) }]}>
             <View style={styles.reviewModalHeader}>
               <Text style={styles.reviewModalTitle}>Bagaimana pengalamanmu?</Text>
               <Pressable onPress={() => setReviewModalOpen(false)}>
@@ -519,7 +529,15 @@ export default function CustomerBookingChatScreen() {
                   <Pressable
                     key={key}
                     style={[styles.reviewSentimentBtn, active && styles.reviewSentimentBtnActive]}
-                    onPress={() => setReviewSentiment(key)}
+                    onPress={() => {
+                      setReviewSentiment(key);
+                      // Reset tag yang sudah dipilih — kalau tidak, tag
+                      // dari polaritas sebelumnya (mis. "Proses Lambat"
+                      // waktu masih pilih "Kurang Puas") tetap tersimpan
+                      // di state & ikut terkirim diam-diam walau sudah
+                      // tidak terlihat lagi setelah ganti ke "Puas".
+                      setReviewTags([]);
+                    }}
                   >
                     <Ionicons name={opt.icon} size={26} color={active ? '#ffffff' : colors.textPrimary} />
                     <Text style={[styles.reviewSentimentLabel, active && styles.reviewSentimentLabelActive]}>
@@ -534,7 +552,7 @@ export default function CustomerBookingChatScreen() {
               <>
                 <Text style={styles.reviewSectionLabel}>Apa yang paling terasa? (opsional)</Text>
                 <View style={styles.reviewTagsWrap}>
-                  {REVIEW_TAGS.map((tag) => {
+                  {REVIEW_TAGS.filter((tag) => reviewSentiment === 'neutral' || tag.polarity === reviewSentiment).map((tag) => {
                     const active = reviewTags.includes(tag.key);
                     return (
                       <Pressable
