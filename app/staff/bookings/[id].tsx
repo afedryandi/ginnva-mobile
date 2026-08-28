@@ -708,7 +708,19 @@ export default function StaffBookingChatScreen() {
   const renderStagePickerRows = (trackStages: StageItem[], columnValue: string | null) => {
     const isMarkedInTrack = markedStage !== null && trackStages.some((s) => s.key === markedStage);
     const effectiveStage = isMarkedInTrack ? markedStage : columnValue;
-    const effectiveIdx = trackStages.findIndex((s) => s.key === effectiveStage);
+    let effectiveIdx = trackStages.findIndex((s) => s.key === effectiveStage);
+    // BUG: begitu progress sudah masuk tahap bersama (QC/Selesai, SHARED_
+    // STAGES), currentStage tidak lagi cocok dengan KACA_FILM_STAGES atau
+    // PPF_STAGES manapun (mis. 'qc' bukan bagian dari track Kaca Film),
+    // findIndex balik -1 — sebelumnya itu diartikan "belum ada yang
+    // ditandai" (semua tombol "Tandai" jadi kebuka lagi), padahal
+    // seharusnya "track ini sudah selesai semua" (semua tombol tetap
+    // terkunci). PPF tidak kena karena dia punya kolom secondaryStage
+    // terpisah yang tetap menyimpan progress track-nya sendiri. Ditemukan
+    // & diperbaiki 2026-08-28.
+    if (effectiveIdx === -1) {
+      effectiveIdx = trackStages.length - 1;
+    }
 
     return trackStages.map((s, idx) => {
       const isCompletedRow = s.key === 'completed';
