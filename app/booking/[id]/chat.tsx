@@ -862,9 +862,14 @@ function createStyles(colors: typeof darkColors) {
 
   messageList: { padding: spacing.md, gap: spacing.md },
 
+  // alignItems per sisi WAJIB diisi eksplisit — default RN 'stretch'
+  // bikin child (bubble, senderLabel, jam) menyesuaikan lebar sibling
+  // TERLEBAR (nama pengirim), sama bug yang sudah diperbaiki di layar
+  // chat staff (app/staff/bookings/[id].tsx). Ditemukan & diperbaiki
+  // 2026-08-28.
   bubbleWrap: { maxWidth: '78%', gap: 3 },
-  bubbleWrapLeft: { alignSelf: 'flex-start' },
-  bubbleWrapRight: { alignSelf: 'flex-end' },
+  bubbleWrapLeft: { alignSelf: 'flex-start', alignItems: 'flex-start' },
+  bubbleWrapRight: { alignSelf: 'flex-end', alignItems: 'flex-end' },
   senderLabel: { fontSize: 10, fontWeight: '700', color: colors.textMuted, marginLeft: 6 },
   bubble: {
     borderRadius: radius.lg, padding: spacing.sm, overflow: 'hidden',
