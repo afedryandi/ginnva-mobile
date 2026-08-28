@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TextInput, Pressable, StyleSheet, ScrollView,
-  KeyboardAvoidingView, Platform, Image, ActivityIndicator, Alert, Modal, Linking,
+  Platform, Image, ActivityIndicator, Alert, Modal, Linking, Keyboard,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -143,6 +143,27 @@ export default function StaffBookingChatScreen() {
   const [cancelling, setCancelling] = useState(false);
   const listRef = useRef<FlatList>(null);
   const insets = useSafeAreaInsets();
+
+  // KeyboardAvoidingView bawaan RN TERNYATA tidak reliable di Android
+  // untuk layar ini — behavior="height" bisa macet di tinggi lama
+  // setelah keyboard sempat muncul/hilang akibat interaksi lain (mis.
+  // update tahap), meninggalkan ruang kosong di bawah kolom input;
+  // behavior={undefined} malah bikin keyboard nutupin kolom input
+  // sepenuhnya. Pola ini SUDAH TERBUKTI jalan di components/ui/
+  // PickerModal.tsx (fix 2026-08-27) — lacak tinggi keyboard manual,
+  // dorong kolom input naik sejumlah itu sendiri, tidak bergantung
+  // behavior bawaan sama sekali. Ditemukan & diperbaiki 2026-08-28.
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates.height));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [assignLoading, setAssignLoading] = useState(false);
@@ -834,17 +855,7 @@ export default function StaffBookingChatScreen() {
         </View>
       )}
 
-      <KeyboardAvoidingView
-        style={styles.flex}
-        // REVERT — asumsi Android sudah adjustResize otomatis TERNYATA
-        // salah (menghapus behavior="height" bikin keyboard nutupin
-        // kolom input sepenuhnya, jauh lebih parah). Balik ke "height",
-        // sisa bug pergeseran posisi setelah keyboard ditutup dibiarkan
-        // dulu — itu jauh lebih ringan daripada input yang tidak
-        // kelihatan sama sekali. 2026-08-28.
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
-      >
+      <View style={[styles.flex, { marginBottom: keyboardHeight }]}>
         <FlatList
           ref={listRef}
           // SEBELUMNYA tidak ada style={flex:1} di sini — list menyusut
@@ -879,7 +890,7 @@ export default function StaffBookingChatScreen() {
             {sending ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="send" size={18} color="#ffffff" />}
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </View>
 
       {/* Lightbox — tap foto untuk lihat ukuran penuh */}
       <Modal visible={!!viewerImage} transparent animationType="fade" onRequestClose={() => setViewerImage(null)}>

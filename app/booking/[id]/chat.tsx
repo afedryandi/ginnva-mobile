@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TextInput, Pressable, StyleSheet,
-  KeyboardAvoidingView, Platform, Image, ActivityIndicator, Modal, Linking, useWindowDimensions, Alert,
+  Platform, Image, ActivityIndicator, Modal, Linking, useWindowDimensions, Alert, Keyboard,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -109,6 +109,22 @@ export default function CustomerBookingChatScreen() {
   const [sending, setSending] = useState(false);
   const listRef = useRef<FlatList>(null);
   const insets = useSafeAreaInsets();
+
+  // KeyboardAvoidingView bawaan RN tidak reliable di Android untuk
+  // layar ini — sama bug dengan app/staff/bookings/[id].tsx, lihat
+  // catatan di sana. Pola manual ini sudah terbukti jalan di
+  // components/ui/PickerModal.tsx. Ditemukan & diperbaiki 2026-08-28.
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates.height));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
   const [viewerImage, setViewerImage] = useState<string | null>(null);
   // Beberapa foto tahap diambil staff dalam posisi HP portrait padahal
   // objeknya landscape (mis. bodi mobil) — tombol flip ini biarkan customer
@@ -413,12 +429,7 @@ export default function CustomerBookingChatScreen() {
         </View>
       )}
 
-      <KeyboardAvoidingView
-        style={styles.flex}
-        // REVERT — sama dengan layar chat staff, lihat catatan di sana.
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
-      >
+      <View style={[styles.flex, { marginBottom: keyboardHeight }]}>
         <FlatList
           ref={listRef}
           // Sama bug dengan layar chat staff — tanpa style={flex:1} list
@@ -454,7 +465,7 @@ export default function CustomerBookingChatScreen() {
             {sending ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="send" size={18} color="#ffffff" />}
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </View>
 
       {/* Lightbox — tap foto untuk lihat ukuran penuh */}
       <Modal visible={!!viewerImage} transparent animationType="fade" onRequestClose={() => setViewerImage(null)}>
