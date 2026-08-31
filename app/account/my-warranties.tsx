@@ -151,7 +151,16 @@ export default function MyWarrantiesScreen() {
               >
                 <View style={styles.card}>
                   <View style={styles.cardHeader}>
-                    <Text style={styles.code}>{item.warranty_code}</Text>
+                    {/* SEBELUMNYA render item.warranty_code langsung —
+                        kalau masih null (garansi belum diisi Detail
+                        Instalasi oleh staff, kode di-generate otomatis
+                        begitu kode gulungan dipilih), <Text> render
+                        string kosong, kartu tampil ada ruang kosong di
+                        pojok kiri atas tanpa penjelasan. Ditemukan lewat
+                        testing manual 2026-08-31. */}
+                    <Text style={item.warranty_code ? styles.code : styles.codePending}>
+                      {item.warranty_code || 'Menunggu diproses'}
+                    </Text>
                     <View style={styles.cardHeaderRight}>
                       <View style={[styles.badge, { backgroundColor: meta.bg }]}>
                         <Text style={[styles.badgeText, { color: meta.color }]}>
@@ -262,6 +271,12 @@ function createStyles(colors: typeof darkColors) {
     fontSize: fontSize.sm,
     fontWeight: '800',
     color: colors.textPrimary,
+  },
+  codePending: {
+    fontSize: fontSize.sm,
+    fontWeight: '600',
+    color: colors.textMuted,
+    fontStyle: 'italic',
   },
   badge: {
     paddingHorizontal: spacing.sm,

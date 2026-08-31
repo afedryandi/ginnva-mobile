@@ -187,7 +187,15 @@ export default function WarrantyDetailScreen() {
           {/* Nomor garansi */}
           <View style={styles.codeBox}>
             <Text style={styles.codeLabel}>Nomor E-Warranty</Text>
-            <Text style={styles.code}>{warranty.warranty_code}</Text>
+            {/* SEBELUMNYA render warranty.warranty_code langsung — kalau
+                masih null (garansi belum diisi Detail Instalasi oleh
+                staff, lihat WarrantyResource: kode di-generate otomatis
+                begitu kode gulungan dipilih), <Text> cuma render string
+                kosong, jadi kotak nomor tampil blank tanpa penjelasan
+                sama sekali. Ditemukan lewat testing manual 2026-08-31. */}
+            <Text style={warranty.warranty_code ? styles.code : styles.codePending}>
+              {warranty.warranty_code || 'Menunggu diproses staff toko'}
+            </Text>
           </View>
 
           {/* Detail rows */}
@@ -437,6 +445,7 @@ function createStyles(colors: typeof darkColors) {
   },
   codeLabel: { fontSize: fontSize.xs, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
   code: { fontSize: 22, fontWeight: '800', color: colors.accent, letterSpacing: 2, marginTop: 4 },
+  codePending: { fontSize: fontSize.sm, fontWeight: '600', color: colors.textMuted, marginTop: 4 },
   table: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
