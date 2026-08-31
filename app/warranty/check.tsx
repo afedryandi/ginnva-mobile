@@ -51,6 +51,11 @@ interface WarrantyData {
   review_status: string;
   remaining_days: number;
   has_owner: boolean;
+  // true kalau match lewat nomor telepon — data (termasuk warranty_code)
+  // di-mask sebagian oleh backend, TIDAK bisa dipakai untuk unduh
+  // sertifikat. Lihat audit modul Garansi 2026-08-27 &
+  // WarrantyController::check().
+  masked: boolean;
 }
 
 function getStatusMeta(colors: typeof darkColors): Record<
@@ -93,6 +98,269 @@ function formatDate(dateStr: string) {
 }
 
 type InputMode = 'manual' | 'scan';
+type Styles = ReturnType<typeof createStyles>;
+type StatusMetaMap = Record<string, { label: string; color: string; bg: string; icon: keyof typeof Ionicons.glyphMap }>;
+
+// 1 mobil bisa punya LEBIH DARI 1 garansi (mis. PPF + Window Film
+// terdaftar terpisah, plat/VIN/nomor HP-nya identik) —
+// WarrantyController::check() SEKARANG selalu return array (bisa >1
+// baris), bukan lagi 1 object tunggal. Sebelumnya cek pakai plat/VIN/HP
+// cuma menampilkan garansi PERTAMA yang ketemu di DB, garansi satunya
+// tidak pernah terlihat sama sekali dari pencarian itu. Komponen ini
+// merender 1 kartu hasil, dipakai berkali-kali (satu per garansi yang
+// ditemukan) — state unduh/klaim jadi per-kartu, bukan digabung.
+// Ditemukan & diperbaiki 2026-08-31.
+function WarrantyResultCard({
+  warranty,
+  onUpdate,
+  isLoggedIn,
+  colors,
+  styles,
+  statusMeta,
+}: {
+  warranty: WarrantyData;
+  onUpdate: (updated: WarrantyData) => void;
+  isLoggedIn: boolean;
+  colors: typeof darkColors;
+  styles: Styles;
+  statusMeta: StatusMetaMap[string];
+}) {
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [claiming, setClaiming] = useState(false);
+  const [claimSuccess, setClaimSuccess] = useState(false);
+  const [claimError, setClaimError] = useState<string | null>(null);
+
+  const successScale = useRef(new Animated.Value(0.6)).current;
+  const successOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(successScale, { toValue: 1, useNativeDriver: true, speed: 14, bounciness: 10 }),
+      Animated.timing(successOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+    ]).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleClaim = async () => {
+    setClaiming(true);
+    setClaimError(null);
+    try {
+      await apiFetch('/api/warranty/claim', {
+        method: 'POST',
+        body: JSON.stringify({ warranty_code: warranty.warranty_code }),
+      });
+      hapticSuccess();
+      setClaimSuccess(true);
+      onUpdate({ ...warranty, has_owner: true });
+    } catch (err) {
+      hapticError();
+      setClaimError(err instanceof ApiError ? err.message : 'Gagal menghubungkan garansi. Coba lagi.');
+    } finally {
+      setClaiming(false);
+    }
+  };
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    setDownloadError(null);
+
+    try {
+      const token = await getToken();
+      const fileUri = `${FileSystem.cacheDirectory}E-Warranty-Ginnva-${warranty.warranty_code}.pdf`;
+
+      const downloadRes = await FileSystem.downloadAsync(
+        `${API_BASE_URL}/api/warranty/download/${warranty.warranty_code}`,
+        fileUri,
+        token ? { headers: { Authorization: `Bearer ${token}` } } : undefined
+      );
+
+      if (downloadRes.status !== 200) {
+        throw new Error('not_approved');
+      }
+
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(downloadRes.uri, {
+          mimeType: 'application/pdf',
+          dialogTitle: `Sertifikat Garansi ${warranty.warranty_code}`,
+        });
+      } else {
+        setDownloadError(`File tersimpan di perangkat: ${downloadRes.uri}`);
+      }
+    } catch (e) {
+      console.error('Gagal unduh sertifikat garansi:', e);
+      setDownloadError(
+        'Gagal mengunduh sertifikat. Pastikan garansi sudah disetujui admin dan koneksi internet stabil.'
+      );
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const productLabel = warranty.product_category === 'ppf'
+    ? 'PPF'
+    : warranty.product_category === 'window_film'
+      ? 'Window Film'
+      : null;
+
+  return (
+    <Animated.View
+      style={{
+        opacity: successOpacity,
+        transform: [{ scale: successScale }],
+      }}
+    >
+      <View style={styles.resultCard}>
+        <View style={styles.resultHeader}>
+          <View>
+            <Text style={styles.resultCaption}>
+              NOMOR SERTIFIKAT{productLabel ? ` — ${productLabel}` : ''}
+            </Text>
+            <Text style={styles.resultCode}>{warranty.warranty_code}</Text>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: statusMeta.bg }]}>
+            <Ionicons name={statusMeta.icon} size={14} color={statusMeta.color} />
+            <Text style={[styles.statusText, { color: statusMeta.color }]}>
+              {statusMeta.label}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.divider} />
+
+        <View style={styles.fieldRow}>
+          <Text style={styles.fieldLabel}>Nama Pemilik</Text>
+          <Text style={styles.fieldValue}>{warranty.customer_name}</Text>
+        </View>
+        <View style={styles.fieldRow}>
+          <Text style={styles.fieldLabel}>Produk Terpasang</Text>
+          <Text style={[styles.fieldValue, { color: colors.accent }]}>
+            {warranty.product_series}
+          </Text>
+        </View>
+        <View style={styles.fieldRow}>
+          <Text style={styles.fieldLabel}>Kendaraan</Text>
+          <Text style={styles.fieldValue}>
+            {warranty.car_type} ({warranty.car_plate})
+          </Text>
+        </View>
+        {warranty.vin ? (
+          <View style={styles.fieldRow}>
+            <Text style={styles.fieldLabel}>VIN (No. Rangka)</Text>
+            <Text style={styles.fieldValue}>{warranty.vin}</Text>
+          </View>
+        ) : null}
+
+        <View style={styles.fieldRow}>
+          <Text style={styles.fieldLabel}>Dealer Pelaksana</Text>
+          <Text style={styles.fieldValue}>{warranty.dealer_name}</Text>
+        </View>
+        <View style={styles.fieldRowSplit}>
+          <View style={styles.fieldHalf}>
+            <Text style={styles.fieldLabel}>Tgl. Pemasangan</Text>
+            <Text style={styles.fieldValue}>{formatDate(warranty.installation_date)}</Text>
+          </View>
+          <View style={styles.fieldHalf}>
+            <Text style={styles.fieldLabel}>Masa Berlaku Hingga</Text>
+            <Text style={[styles.fieldValue, { color: colors.danger }]}>
+              {formatDate(warranty.expiry_date)}
+            </Text>
+          </View>
+        </View>
+
+        {warranty.status === 'active' && warranty.remaining_days > 0 && (
+          <View style={styles.remainingBox}>
+            <Ionicons name="calendar-outline" size={16} color={colors.accent} />
+            <Text style={styles.remainingText}>
+              Sisa {warranty.remaining_days} hari masa garansi
+            </Text>
+          </View>
+        )}
+
+        {/* Tombol hubungkan ke akun — muncul kalau login & warranty belum ada pemilik */}
+        {isLoggedIn && !warranty.has_owner && !claimSuccess && !warranty.masked && (
+          <Pressable
+            style={[styles.claimButton, claiming && styles.downloadButtonDisabled]}
+            onPress={handleClaim}
+            disabled={claiming}
+          >
+            {claiming ? (
+              <ActivityIndicator color="#ffffff" />
+            ) : (
+              <>
+                <Ionicons name="link-outline" size={18} color="#ffffff" />
+                <Text style={styles.downloadButtonText}>Hubungkan ke Akun Saya</Text>
+              </>
+            )}
+          </Pressable>
+        )}
+        {claimError && <Text style={styles.downloadErrorText}>{claimError}</Text>}
+        {claimSuccess && (
+          <View style={styles.claimSuccessBox}>
+            <Ionicons name="checkmark-circle" size={16} color={colors.success} />
+            <Text style={styles.claimSuccessText}>Garansi berhasil dihubungkan ke akun Anda!</Text>
+          </View>
+        )}
+
+        {warranty.status === 'pending_review' && (
+          <Text style={styles.noteText}>
+            Pendaftaran garansi Anda sedang diverifikasi oleh tim admin. Sertifikat
+            resmi akan tersedia untuk diunduh setelah disetujui.
+          </Text>
+        )}
+
+        {warranty.status === 'rejected' && (
+          <Text style={styles.noteText}>
+            Pendaftaran garansi ini ditolak oleh admin. Silakan hubungi dealer
+            tempat pemasangan untuk informasi lebih lanjut.
+          </Text>
+        )}
+
+        {warranty.status === 'expired' && (
+          <Text style={styles.noteText}>
+            Masa garansi produk ini sudah berakhir. Hubungi dealer tempat
+            pemasangan untuk informasi perpanjangan atau layanan lanjutan.
+          </Text>
+        )}
+
+        {warranty.review_status === 'approved' && !warranty.masked && (
+          <Pressable
+            style={[styles.downloadButton, downloading && styles.downloadButtonDisabled]}
+            onPress={handleDownload}
+            disabled={downloading}
+          >
+            {downloading ? (
+              <ActivityIndicator color="#ffffff" />
+            ) : (
+              <>
+                <Ionicons name="download-outline" size={18} color="#ffffff" />
+                <Text style={styles.downloadButtonText}>Unduh Garansi</Text>
+              </>
+            )}
+          </Pressable>
+        )}
+
+        {/* Hasil dari pencarian via nomor telepon disamarkan
+            sebagian (bukan bug — lihat WarrantyController::check())
+            — kode garansi & sebagian data disembunyikan, tidak bisa
+            dipakai unduh sertifikat langsung dari sini. */}
+        {warranty.masked && (
+          <Text style={styles.noteText}>
+            Hasil pencarian lewat nomor telepon disamarkan sebagian.
+            Untuk melihat data lengkap & mengunduh sertifikat, cari
+            dengan nomor E-Warranty/plat nomor/VIN yang tertera di
+            kendaraan/sertifikat, atau login ke akun Anda (garansi
+            yang sudah dihubungkan otomatis muncul lengkap di
+            "Garansi Saya").
+          </Text>
+        )}
+
+        {downloadError && <Text style={styles.downloadErrorText}>{downloadError}</Text>}
+      </View>
+    </Animated.View>
+  );
+}
 
 export default function WarrantyCheckScreen() {
   const { theme, colors } = useAppTheme();
@@ -108,24 +376,15 @@ export default function WarrantyCheckScreen() {
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<WarrantyData | null>(null);
+  // SEBELUMNYA state tunggal WarrantyData | null -- 1 mobil bisa punya
+  // >1 garansi (PPF + Window Film terpisah), jadi sekarang array.
+  const [results, setResults] = useState<WarrantyData[] | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
-
-  const [downloading, setDownloading] = useState(false);
-  const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [claiming, setClaiming] = useState(false);
-  const [claimSuccess, setClaimSuccess] = useState(false);
-  const [claimError, setClaimError] = useState<string | null>(null);
   const { isLoggedIn } = useAuth();
 
   const [permission, requestPermission] = useCameraPermissions();
   const [scanLocked, setScanLocked] = useState(false);
   const [cameraError, setCameraError] = useState(false);
-
-  // Animasi sukses ringan — ikon status muncul dengan pop scale, bukan
-  // library animasi tambahan (Lottie dst), supaya tetap ringan.
-  const successScale = useRef(new Animated.Value(0.6)).current;
-  const successOpacity = useRef(new Animated.Value(0)).current;
 
   const runSearch = (rawCode: string) => {
     const trimmed = rawCode.trim();
@@ -133,34 +392,16 @@ export default function WarrantyCheckScreen() {
 
     setLoading(true);
     setError(null);
-    setResult(null);
+    setResults(null);
     setHasSearched(true);
-    setDownloadError(null);
-    setClaimError(null);
-    setClaimSuccess(false);
 
-    apiFetch<{ success: boolean; data: WarrantyData }>(
+    apiFetch<{ success: boolean; data: WarrantyData[] }>(
       `/api/warranty/check?code=${encodeURIComponent(trimmed)}`,
       { skipAuth: true }
     )
       .then((res) => {
         hapticSuccess();
-        setResult(res.data);
-        successScale.setValue(0.6);
-        successOpacity.setValue(0);
-        Animated.parallel([
-          Animated.spring(successScale, {
-            toValue: 1,
-            useNativeDriver: true,
-            speed: 14,
-            bounciness: 10,
-          }),
-          Animated.timing(successOpacity, {
-            toValue: 1,
-            duration: 220,
-            useNativeDriver: true,
-          }),
-        ]).start();
+        setResults(res.data);
       })
       .catch((err) => {
         hapticError();
@@ -174,6 +415,10 @@ export default function WarrantyCheckScreen() {
   };
 
   const handleSearch = () => runSearch(code);
+
+  const updateResult = (updated: WarrantyData) => {
+    setResults((prev) => prev?.map((w) => (w.id === updated.id ? updated : w)) ?? prev);
+  };
 
   // QR/barcode di stiker pemasangan berisi teks polos warranty_code yang
   // sama dengan yang bisa diketik manual — jadi hasil scan langsung dipakai
@@ -217,80 +462,6 @@ export default function WarrantyCheckScreen() {
     setCameraError(false);
     setMode('scan');
   };
-
-  const handleClaim = async () => {
-    if (!result) return;
-    setClaiming(true);
-    setClaimError(null);
-    try {
-      await apiFetch('/api/warranty/claim', {
-        method: 'POST',
-        body: JSON.stringify({ warranty_code: result.warranty_code }),
-      });
-      hapticSuccess();
-      setClaimSuccess(true);
-      // Update local state supaya tombol hilang
-      setResult((prev) => prev ? { ...prev, has_owner: true } : prev);
-    } catch (err) {
-      hapticError();
-      setClaimError(
-        err instanceof ApiError ? err.message : 'Gagal menghubungkan garansi. Coba lagi.'
-      );
-    } finally {
-      setClaiming(false);
-    }
-  };
-
-  const handleDownload = async () => {
-    if (!result) return;
-    setDownloading(true);
-    setDownloadError(null);
-
-    try {
-      const token = await getToken();
-      const fileUri = `${FileSystem.cacheDirectory}E-Warranty-Ginnva-${result.warranty_code}.pdf`;
-
-      const downloadRes = await FileSystem.downloadAsync(
-        `${API_BASE_URL}/api/warranty/download/${result.warranty_code}`,
-        fileUri,
-        token ? { headers: { Authorization: `Bearer ${token}` } } : undefined
-      );
-
-      if (downloadRes.status !== 200) {
-        throw new Error('not_approved');
-      }
-
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(downloadRes.uri, {
-          mimeType: 'application/pdf',
-          dialogTitle: `Sertifikat Garansi ${result.warranty_code}`,
-        });
-      } else {
-        setDownloadError(`File tersimpan di perangkat: ${downloadRes.uri}`);
-      }
-    } catch (e) {
-      console.error('Gagal unduh sertifikat garansi:', e);
-      setDownloadError(
-        'Gagal mengunduh sertifikat. Pastikan garansi sudah disetujui admin dan koneksi internet stabil.'
-      );
-    } finally {
-      setDownloading(false);
-    }
-  };
-
-  // Fallback status TIDAK boleh diarahkan ke "active" (hijau/checkmark) —
-  // kalau backend mengirim status yang tidak dikenal, itu justru kasus
-  // yang perlu terlihat mencurigakan/netral, bukan tampil seolah garansi
-  // valid dan aktif.
-  const statusMeta = result
-    ? STATUS_META[result.status] ?? {
-        label: result.status,
-        color: colors.textSecondary,
-        bg: colors.border,
-        icon: 'help-circle' as const,
-      }
-    : null;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -424,144 +595,35 @@ export default function WarrantyCheckScreen() {
             </View>
           )}
 
-          {hasSearched && !loading && !error && result && statusMeta && (
-            <Animated.View
-              style={{
-                opacity: successOpacity,
-                transform: [{ scale: successScale }],
-              }}
-            >
-              <View style={styles.resultCard}>
-                <View style={styles.resultHeader}>
-                  <View>
-                    <Text style={styles.resultCaption}>NOMOR SERTIFIKAT</Text>
-                    <Text style={styles.resultCode}>{result.warranty_code}</Text>
-                  </View>
-                  <View style={[styles.statusBadge, { backgroundColor: statusMeta.bg }]}>
-                    <Ionicons name={statusMeta.icon} size={14} color={statusMeta.color} />
-                    <Text style={[styles.statusText, { color: statusMeta.color }]}>
-                      {statusMeta.label}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={styles.divider} />
-
-                <View style={styles.fieldRow}>
-                  <Text style={styles.fieldLabel}>Nama Pemilik</Text>
-                  <Text style={styles.fieldValue}>{result.customer_name}</Text>
-                </View>
-                <View style={styles.fieldRow}>
-                  <Text style={styles.fieldLabel}>Produk Terpasang</Text>
-                  <Text style={[styles.fieldValue, { color: colors.accent }]}>
-                    {result.product_series}
-                  </Text>
-                </View>
-                <View style={styles.fieldRow}>
-                  <Text style={styles.fieldLabel}>Kendaraan</Text>
-                  <Text style={styles.fieldValue}>
-                    {result.car_type} ({result.car_plate})
-                  </Text>
-                </View>
-                {result.vin ? (
-                  <View style={styles.fieldRow}>
-                    <Text style={styles.fieldLabel}>VIN (No. Rangka)</Text>
-                    <Text style={styles.fieldValue}>{result.vin}</Text>
-                  </View>
-                ) : null}
-
-                <View style={styles.fieldRow}>
-                  <Text style={styles.fieldLabel}>Dealer Pelaksana</Text>
-                  <Text style={styles.fieldValue}>{result.dealer_name}</Text>
-                </View>
-                <View style={styles.fieldRowSplit}>
-                  <View style={styles.fieldHalf}>
-                    <Text style={styles.fieldLabel}>Tgl. Pemasangan</Text>
-                    <Text style={styles.fieldValue}>{formatDate(result.installation_date)}</Text>
-                  </View>
-                  <View style={styles.fieldHalf}>
-                    <Text style={styles.fieldLabel}>Masa Berlaku Hingga</Text>
-                    <Text style={[styles.fieldValue, { color: colors.danger }]}>
-                      {formatDate(result.expiry_date)}
-                    </Text>
-                  </View>
-                </View>
-
-                {result.status === 'active' && result.remaining_days > 0 && (
-                  <View style={styles.remainingBox}>
-                    <Ionicons name="calendar-outline" size={16} color={colors.accent} />
-                    <Text style={styles.remainingText}>
-                      Sisa {result.remaining_days} hari masa garansi
-                    </Text>
-                  </View>
-                )}
-
-                {/* Tombol hubungkan ke akun — muncul kalau login & warranty belum ada pemilik */}
-                {isLoggedIn && !result.has_owner && !claimSuccess && (
-                  <Pressable
-                    style={[styles.claimButton, claiming && styles.downloadButtonDisabled]}
-                    onPress={handleClaim}
-                    disabled={claiming}
-                  >
-                    {claiming ? (
-                      <ActivityIndicator color="#ffffff" />
-                    ) : (
-                      <>
-                        <Ionicons name="link-outline" size={18} color="#ffffff" />
-                        <Text style={styles.downloadButtonText}>Hubungkan ke Akun Saya</Text>
-                      </>
-                    )}
-                  </Pressable>
-                )}
-                {claimError && <Text style={styles.downloadErrorText}>{claimError}</Text>}
-                {claimSuccess && (
-                  <View style={styles.claimSuccessBox}>
-                    <Ionicons name="checkmark-circle" size={16} color={colors.success} />
-                    <Text style={styles.claimSuccessText}>Garansi berhasil dihubungkan ke akun Anda!</Text>
-                  </View>
-                )}
-
-                {result.status === 'pending_review' && (
-                  <Text style={styles.noteText}>
-                    Pendaftaran garansi Anda sedang diverifikasi oleh tim admin. Sertifikat
-                    resmi akan tersedia untuk diunduh setelah disetujui.
-                  </Text>
-                )}
-
-                {result.status === 'rejected' && (
-                  <Text style={styles.noteText}>
-                    Pendaftaran garansi ini ditolak oleh admin. Silakan hubungi dealer
-                    tempat pemasangan untuk informasi lebih lanjut.
-                  </Text>
-                )}
-
-                {result.status === 'expired' && (
-                  <Text style={styles.noteText}>
-                    Masa garansi produk ini sudah berakhir. Hubungi dealer tempat
-                    pemasangan untuk informasi perpanjangan atau layanan lanjutan.
-                  </Text>
-                )}
-
-                {result.review_status === 'approved' && (
-                  <Pressable
-                    style={[styles.downloadButton, downloading && styles.downloadButtonDisabled]}
-                    onPress={handleDownload}
-                    disabled={downloading}
-                  >
-                    {downloading ? (
-                      <ActivityIndicator color="#ffffff" />
-                    ) : (
-                      <>
-                        <Ionicons name="download-outline" size={18} color="#ffffff" />
-                        <Text style={styles.downloadButtonText}>Unduh Garansi</Text>
-                      </>
-                    )}
-                  </Pressable>
-                )}
-
-                {downloadError && <Text style={styles.downloadErrorText}>{downloadError}</Text>}
-              </View>
-            </Animated.View>
+          {/* Bisa lebih dari 1 hasil (mis. 1 mobil terdaftar PPF &
+              Window Film terpisah) — render 1 kartu per garansi. */}
+          {hasSearched && !loading && !error && results && results.length > 0 && (
+            <View style={{ gap: spacing.md }}>
+              {results.length > 1 && (
+                <Text style={styles.multiResultNote}>
+                  Ditemukan {results.length} garansi terdaftar untuk kendaraan ini.
+                </Text>
+              )}
+              {results.map((warranty) => {
+                const statusMeta = STATUS_META[warranty.status] ?? {
+                  label: warranty.status,
+                  color: colors.textSecondary,
+                  bg: colors.border,
+                  icon: 'help-circle' as const,
+                };
+                return (
+                  <WarrantyResultCard
+                    key={warranty.id}
+                    warranty={warranty}
+                    onUpdate={updateResult}
+                    isLoggedIn={isLoggedIn}
+                    colors={colors}
+                    styles={styles}
+                    statusMeta={statusMeta}
+                  />
+                );
+              })}
+            </View>
           )}
 
           {!hasSearched && (
@@ -725,6 +787,11 @@ function createStyles(colors: typeof darkColors, scanFrameSize: number) {
     flex: 1,
     fontSize: fontSize.sm,
     color: colors.danger,
+  },
+  multiResultNote: {
+    fontSize: fontSize.xs,
+    fontWeight: '700',
+    color: colors.textSecondary,
   },
   resultCard: {
     gap: 0,
