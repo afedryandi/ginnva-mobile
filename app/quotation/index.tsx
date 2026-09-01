@@ -39,6 +39,20 @@ interface ProductOption {
   id: number;
   name: string;
   product_type: string;
+  position: 'front' | 'side_rear' | null;
+}
+
+// SEBELUMNYA render p.name mentah -- kalau admin kasih Nama Produk sama
+// persis untuk Kaca Depan & Kaca Samping/Belakang (2 baris terpisah
+// selalu, tidak ada larangan nama sama), keduanya tampil identik,
+// customer tidak bisa bedakan. Sama pola dengan web (QuoteForm.tsx).
+// Ditemukan lewat testing manual 2026-09-01.
+function productOptionLabel(p: ProductOption): string {
+  if (p.product_type !== 'window_film' || !p.position) return p.name;
+
+  const positionLabel = p.position === 'front' ? 'Kaca Depan' : 'Kaca Samping & Belakang';
+  const alreadyLabeled = /depan|samping|belakang/i.test(p.name);
+  return alreadyLabeled ? p.name : `${p.name} (${positionLabel})`;
 }
 
 interface StoreOption {
@@ -362,7 +376,7 @@ export default function QuotationScreen() {
   };
 
   const handleShareWhatsApp = () => {
-    const productNames = selectedProducts.map((p) => `- ${p.name}`).join('\n');
+    const productNames = selectedProducts.map((p) => `- ${productOptionLabel(p)}`).join('\n');
     const vehicleLabel = [selectedBrand, selectedModel, selectedVariant].filter(Boolean).join(' ');
     const text =
       `Permintaan Penawaran Ginnva\n` +
@@ -652,7 +666,7 @@ export default function QuotationScreen() {
                           size={20}
                           color={selected ? colors.accent : colors.textMuted}
                         />
-                        <Text style={styles.productRowText}>{p.name}</Text>
+                        <Text style={styles.productRowText}>{productOptionLabel(p)}</Text>
                       </Pressable>
                     );
                   })}
@@ -782,7 +796,7 @@ export default function QuotationScreen() {
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Produk</Text>
                   <Text style={styles.summaryValue}>
-                    {selectedProducts.map((p) => p.name).join(', ') || '-'}
+                    {selectedProducts.map((p) => productOptionLabel(p)).join(', ') || '-'}
                   </Text>
                 </View>
                 <View style={styles.summaryRow}>
