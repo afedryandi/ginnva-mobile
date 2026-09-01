@@ -49,6 +49,12 @@ export default function InventoryScanScreen() {
   const [items, setItems] = useState<InventoryListItem[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  // Diisi backend cuma kalau hasil kosong DAN kata kunci itu persis kode
+  // gulungan yang sudah terdaftar tapi belum dikaitkan ke barang fisik
+  // apa pun — SEBELUMNYA staff cuma lihat "Tidak ada barang ditemukan."
+  // tanpa penjelasan, tidak tahu apakah salah ketik atau memang belum
+  // dikaitkan. Ditemukan lewat testing manual 2026-09-01.
+  const [searchHint, setSearchHint] = useState<string | null>(null);
   // SEBELUMNYA FlatList hasil pencarian tidak bisa ditarik-refresh sama
   // sekali — beda dari Bahan Baku/Barang Habis Pakai yang polanya identik.
   const [refreshing, setRefreshing] = useState(false);
@@ -62,8 +68,13 @@ export default function InventoryScanScreen() {
 
   const fetchItems = useCallback((query: string) => {
     setSearchError(null);
-    return staffApiFetch<{ data: InventoryListItem[] }>(`/api/staff/inventory?search=${encodeURIComponent(query)}`)
-      .then((res) => setItems(res.data))
+    return staffApiFetch<{ data: InventoryListItem[]; hint: string | null }>(
+      `/api/staff/inventory?search=${encodeURIComponent(query)}`
+    )
+      .then((res) => {
+        setItems(res.data);
+        setSearchHint(res.hint ?? null);
+      })
       .catch((err) => {
         setSearchError(err instanceof ApiError ? err.message : 'Gagal memuat daftar barang.');
       });
@@ -132,7 +143,9 @@ export default function InventoryScanScreen() {
             </View>
           ) : items.length === 0 ? (
             <View style={styles.centerState}>
-              <Text style={styles.centerStateText}>Tidak ada barang ditemukan.</Text>
+              <Text style={styles.centerStateText}>
+                {searchHint ?? 'Tidak ada barang ditemukan.'}
+              </Text>
             </View>
           ) : (
             <FlatList
