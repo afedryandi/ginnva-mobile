@@ -424,6 +424,17 @@ export default function StaffAttendanceScreen() {
               <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
             </Pressable>
 
+            {/* Riwayat SP milik sendiri — read-only, cuma bisa diterbitkan/
+                diedit admin lewat Filament. Ditaruh di sini (bukan icon
+                header sendiri seperti Absensi/Slip Gaji) karena kebanyakan
+                staff tidak pernah punya SP sama sekali, jadi cukup jadi
+                link sekunder yang tidak mengganggu. */}
+            <Pressable style={styles.warningLink} onPress={() => router.push('/staff/attendance/warning-letters' as never)}>
+              <Ionicons name="alert-circle-outline" size={18} color={colors.textMuted} />
+              <Text style={styles.warningLinkText}>Riwayat Surat Peringatan</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+            </Pressable>
+
             <View style={styles.monthNavRow}>
               <Pressable onPress={() => goToMonth(-1)} hitSlop={8} disabled={historyLoading}>
                 <Ionicons name="chevron-back" size={18} color={colors.textPrimary} />
@@ -555,6 +566,12 @@ function createStyles(colors: typeof darkColors) {
       paddingHorizontal: spacing.md, paddingVertical: spacing.sm + 2, marginBottom: spacing.lg,
     },
     leaveLinkText: { flex: 1, fontSize: fontSize.sm, fontWeight: '600', color: colors.accent },
+    warningLink: {
+      flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
+      backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
+      paddingHorizontal: spacing.md, paddingVertical: spacing.sm + 2, marginBottom: spacing.lg,
+    },
+    warningLinkText: { flex: 1, fontSize: fontSize.sm, fontWeight: '600', color: colors.textSecondary },
     monthNavRow: {
       flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm,
     },
