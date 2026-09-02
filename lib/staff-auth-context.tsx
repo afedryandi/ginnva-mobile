@@ -19,6 +19,7 @@ interface StaffUser {
   has_asset_access: boolean;
   has_consumable_access: boolean;
   has_material_memo_access: boolean;
+  has_purchase_request_access: boolean;
 }
 
 interface StaffAuthContextValue {

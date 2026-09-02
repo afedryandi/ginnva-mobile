@@ -96,6 +96,14 @@ export default function InventoryHomeScreen() {
       onPress: () => router.push('/staff/memos' as never),
       visible: staff?.has_material_memo_access,
     },
+    {
+      key: 'purchase-requests',
+      icon: 'cart-outline' as const,
+      title: 'Permohonan Pembelian',
+      description: 'Ajukan permintaan restock/aset baru & pantau statusnya',
+      onPress: () => router.push('/staff/purchase-requests' as never),
+      visible: staff?.has_purchase_request_access,
+    },
   ].filter((item) => item.visible);
 
   return (
