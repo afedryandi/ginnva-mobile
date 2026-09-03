@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Pressable,
   Linking,
+  Alert,
   useWindowDimensions,
   AppState,
   NativeSyntheticEvent,
@@ -351,7 +352,13 @@ export default function HomeScreen() {
     autoScrollTimer.current = setInterval(() => {
       setActiveSlide((prev) => {
         const next = (prev + 1) % heroSlides.length;
-        carouselRef.current?.scrollTo({ x: next * screenWidth, animated: true });
+        // Loncat balik dari slide TERAKHIR ke PERTAMA harus instan (tanpa
+        // animasi) — ScrollView.scrollTo menganimasikan secara linear
+        // berdasarkan offset X, jadi animated:true di titik wrap-around ini
+        // akan terlihat scroll MUNDUR melewati semua slide di antaranya,
+        // bukan transisi mulus. Ditemukan saat audit modul Banner/Carousel.
+        const isWrappingToStart = next === 0 && prev !== 0;
+        carouselRef.current?.scrollTo({ x: next * screenWidth, animated: !isWrappingToStart });
         return next;
       });
     }, 4000);
@@ -365,8 +372,24 @@ export default function HomeScreen() {
     setActiveSlide(index);
   };
 
-  const handleCarouselTap = (item: HeroSlide) => {
-    if (item.kind === 'image' && item.link_url) Linking.openURL(item.link_url);
+  const handleCarouselTap = async (item: HeroSlide) => {
+    if (item.kind !== 'image' || !item.link_url) return;
+
+    // SEBELUMNYA tidak ada penanganan error sama sekali — kalau link_url
+    // gagal dibuka (format tidak valid, tidak ada app yang bisa handle,
+    // dsb), promise rejection dari Linking.openURL() dibiarkan tidak
+    // tertangani: customer tidak dapat feedback apa pun, cuma banner yang
+    // seolah tidak merespons. Ditemukan saat audit modul Banner/Carousel.
+    try {
+      const canOpen = await Linking.canOpenURL(item.link_url);
+      if (!canOpen) {
+        Alert.alert('Tidak Bisa Membuka Link', 'Link pada banner ini tidak valid atau tidak didukung.');
+        return;
+      }
+      await Linking.openURL(item.link_url);
+    } catch {
+      Alert.alert('Gagal Membuka Link', 'Terjadi kesalahan saat membuka link banner ini.');
+    }
   };
 
   useEffect(() => {
