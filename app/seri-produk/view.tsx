@@ -41,7 +41,12 @@ export default function SeriProdukViewScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    // 'bottom' cuma ditambahkan kalau ada tombol "Lihat Selengkapnya" —
+    // sebelumnya SELALU tidak ada, jadi tombolnya ketiban navigation bar
+    // Android (gesture nav/tombol fisik) karena area aman bawah tidak
+    // dihitung sama sekali. Tanpa tombol, area gambar biar tetap penuh
+    // sampai bawah layar (tidak perlu inset kosong).
+    <SafeAreaView style={styles.container} edges={link_url ? ['top', 'left', 'right', 'bottom'] : ['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.sideButton}>
