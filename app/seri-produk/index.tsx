@@ -54,6 +54,11 @@ export default function SeriProdukListScreen() {
         image: item.content_image ?? item.image ?? '',
         title: item.title ?? '',
         subtitle: item.subtitle ?? '',
+        // SEBELUMNYA tidak dikirim sama sekali — field "Link" di Filament
+        // (FeaturedProductResource) menjanjikan tombol "Lihat Selengkapnya"
+        // yang sebenarnya tidak pernah dibangun di mobile, jadi link_url
+        // yang diisi admin tidak pernah berefek apa pun. Lihat seri-produk/view.tsx.
+        link_url: item.link_url ?? '',
       },
     } as never);
   };

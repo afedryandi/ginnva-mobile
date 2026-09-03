@@ -683,7 +683,13 @@ export default function HomeScreen() {
               {featuredProducts.map((item) => {
                 const openFull = () => router.push({
                   pathname: '/seri-produk/view',
-                  params: { image: item.content_image ?? item.image ?? '', title: item.title ?? '', subtitle: item.subtitle ?? '' },
+                  params: {
+                    image: item.content_image ?? item.image ?? '',
+                    title: item.title ?? '',
+                    subtitle: item.subtitle ?? '',
+                    // Sama seperti seri-produk/index.tsx — lihat catatan di sana.
+                    link_url: item.link_url ?? '',
+                  },
                 } as never);
                 return (
                   <Pressable key={item.id} style={styles.featuredProductCard} onPress={openFull}>
