@@ -74,7 +74,15 @@ export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
-      await staffApiFetch('/api/staff/auth/logout', { method: 'POST' });
+      // push_token dikirim supaya server unlink device_tokens device ini
+      // dari akun yang logout — sama alasan dengan link-token saat login
+      // di atas, cegah notifikasi bertarget nyasar di HP bersama/demo
+      // unit toko begitu staff/partner logout.
+      const pushToken = await getCurrentPushToken().catch(() => null);
+      await staffApiFetch('/api/staff/auth/logout', {
+        method: 'POST',
+        body: JSON.stringify({ push_token: pushToken }),
+      });
     } catch {
       // Tetap hapus token lokal meski request logout ke server gagal.
     }
