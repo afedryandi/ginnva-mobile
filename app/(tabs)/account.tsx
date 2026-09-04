@@ -59,6 +59,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { key: 'warranties', label: 'Garansi Saya', icon: 'shield-checkmark-outline', route: '/account/my-warranties', requiresAuth: true },
       { key: 'bookings', label: 'Booking Saya', icon: 'calendar-outline', route: '/account/my-bookings', requiresAuth: true },
       { key: 'vouchers', label: 'Voucher Saya', icon: 'ticket-outline', route: '/account/vouchers', requiresAuth: true },
+      { key: 'reward-redemptions', label: 'Riwayat Tukar Reward', icon: 'gift-outline', route: '/account/reward-redemptions', requiresAuth: true },
       { key: 'notifications', label: 'Notifikasi', icon: 'notifications-outline', route: '/account/notifications', requiresAuth: true },
     ],
   },
