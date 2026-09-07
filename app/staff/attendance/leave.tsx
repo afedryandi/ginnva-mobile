@@ -334,7 +334,13 @@ export default function StaffLeaveRequestScreen() {
       <Modal visible={modalVisible} animationType="slide" transparent onRequestClose={() => setModalVisible(false)}>
         <KeyboardAvoidingView
           style={styles.modalOverlay}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          // Modal RN membuat window/Dialog Android TERPISAH dari Activity
+          // utama — windowSoftInputMode:resize di app.json TIDAK berlaku
+          // untuk window itu, jadi Android JUGA butuh behavior eksplisit
+          // di sini (sebelumnya undefined di Android, itu sebabnya kolom
+          // Alasan masih ketutupi keyboard meski sudah ada
+          // KeyboardAvoidingView untuk iOS).
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
