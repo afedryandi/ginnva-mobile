@@ -29,7 +29,7 @@ function formatRoleLabel(role?: string): string | null {
 // implisit halaman pertama) — lihat app/auth/login.tsx yang sekarang
 // SELALU mengarahkan ke '/staff' terlepas dari kombinasi akses staff itu.
 export default function StaffHomeScreen() {
-  const { theme, colors } = useAppTheme();
+  const { theme, colors, toggleTheme } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { staff, logout } = useStaffAuth();
 
@@ -123,7 +123,14 @@ export default function StaffHomeScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
-        <View style={styles.sideButton} />
+        {/* Mode Gelap SEBELUMNYA cuma bisa diatur dari "Akun Saya" di app
+            customer — akun staff sama sekali tidak punya tombolnya,
+            padahal ThemeProvider global (app/_layout.tsx) sudah otomatis
+            berlaku ke semua layar staff juga (semua sudah pakai
+            useAppTheme()). Ditambahkan di sini 2026-09-07. */}
+        <Pressable onPress={toggleTheme} style={styles.sideButton} accessibilityLabel="Ganti mode tampilan">
+          <Ionicons name={theme === 'dark' ? 'moon' : 'sunny-outline'} size={22} color={colors.accent} />
+        </Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>Ginnva Staff</Text>
         <Pressable onPress={handleLogout} style={styles.sideButton} accessibilityLabel="Keluar">
           <Ionicons name="log-out-outline" size={22} color={colors.accent} />
