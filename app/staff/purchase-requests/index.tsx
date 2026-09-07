@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Modal, TextInput, Alert } from 'react-native';
+import { View, Text, Pressable, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Modal, TextInput, Alert, ScrollView, Keyboard, Platform } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -65,7 +65,31 @@ function formatQty(qty: number, unit: string | null): string {
 export default function StaffPurchaseRequestsScreen() {
   const { theme, colors } = useAppTheme();
   const insets = useSafeAreaInsets();
-  const styles = useMemo(() => createStyles(colors, insets.bottom), [colors, insets.bottom]);
+
+  // Modal ini SEBELUMNYA sama sekali tidak punya penanganan keyboard
+  // (tidak ada KeyboardAvoidingView atau apa pun) DAN tidak dibungkus
+  // ScrollView — form (jenis, cari barang, jumlah, alasan, tombol Kirim)
+  // bisa ketutup keyboard total & overflow melewati maxHeight:'88%' tanpa
+  // cara discroll sama sekali. Pola yang sudah terbukti jalan di modal
+  // lain (leave.tsx, memos/[id].tsx) dipakai lagi di sini: lacak tinggi
+  // keyboard manual, dorong modalSheet naik via marginBottom, isi
+  // dibungkus ScrollView. Ditemukan lewat audit modul Permohonan
+  // Pembelian 2026-09-07.
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates.height));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+  const styles = useMemo(
+    () => createStyles(colors, keyboardHeight > 0 ? 0 : insets.bottom),
+    [colors, insets.bottom, keyboardHeight]
+  );
 
   const [requests, setRequests] = useState<PurchaseRequestRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -244,7 +268,7 @@ export default function StaffPurchaseRequestsScreen() {
 
       <Modal visible={modalVisible} animationType="slide" transparent onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
+          <View style={[styles.modalSheet, { marginBottom: keyboardHeight }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Ajukan Permohonan Pembelian</Text>
               <Pressable onPress={() => setModalVisible(false)} hitSlop={12}>
@@ -252,6 +276,7 @@ export default function StaffPurchaseRequestsScreen() {
               </Pressable>
             </View>
 
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <Text style={styles.fieldLabel}>Jenis Barang</Text>
             <View style={styles.typeRow}>
               {(Object.keys(ITEM_TYPE_LABEL) as ItemType[]).map((t) => (
@@ -327,6 +352,7 @@ export default function StaffPurchaseRequestsScreen() {
             />
 
             <Button label="Kirim Permohonan" onPress={handleSubmit} loading={submitting} style={styles.submitButton} />
+            </ScrollView>
           </View>
         </View>
       </Modal>
