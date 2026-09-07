@@ -85,7 +85,6 @@ export default function RootLayout() {
           <Stack.Screen name="staff/index" options={{ animation: 'none' }} />
           <Stack.Screen name="staff/bookings/index" />
           <Stack.Screen name="staff/bookings/[id]" />
-          <Stack.Screen name="staff/bookings/[id]" />
           <Stack.Screen name="partner/dashboard" options={{ animation: 'none' }} />
           <Stack.Screen name="partner/points" />
           <Stack.Screen name="partner/redemptions" />
