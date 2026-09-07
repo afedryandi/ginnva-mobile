@@ -504,8 +504,10 @@ export default function StaffBookingChatScreen() {
   const handlePickStage = (stage: string) => {
     // Tahap "Selesai" = booking benar-benar selesai & customer sudah bayar
     // di toko — SELALU lewat modal complete, TIDAK lewat pop-up foto tahap
-    // biasa (endpoint /complete yang urus kode referral/voucher, bukan
-    // pesan tahap biasa).
+    // biasa. /complete di backend MURNI penanda status (tidak urus nominal
+    // transaksi/kode referral/voucher sama sekali) — itu diisi terpisah
+    // lewat aksi "Proses Referral" di Filament, lihat teks modal complete
+    // di bawah & BookingController::complete() untuk detailnya.
     if (stage === 'completed') {
       if (currentStage === 'completed') return; // sudah selesai, tidak bisa diulang
       setStagePickerOpen(false);
