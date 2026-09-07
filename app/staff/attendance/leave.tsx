@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Modal, TextInput, Alert, Image, Linking, Platform } from 'react-native';
+import { View, Text, Pressable, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Modal, TextInput, Alert, Image, Linking, Platform, KeyboardAvoidingView, ScrollView } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -332,7 +332,10 @@ export default function StaffLeaveRequestScreen() {
       )}
 
       <Modal visible={modalVisible} animationType="slide" transparent onRequestClose={() => setModalVisible(false)}>
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Ajukan Izin/Cuti</Text>
@@ -341,6 +344,7 @@ export default function StaffLeaveRequestScreen() {
               </Pressable>
             </View>
 
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             <Text style={styles.fieldLabel}>Jenis</Text>
             <View style={styles.typeRow}>
               {(Object.keys(TYPE_LABEL) as LeaveRequestRecord['type'][]).map((t) => (
@@ -414,8 +418,9 @@ export default function StaffLeaveRequestScreen() {
             )}
 
             <Button label="Kirim Pengajuan" onPress={handleSubmit} loading={submitting} style={styles.submitButton} />
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
@@ -472,6 +477,11 @@ function createStyles(colors: typeof darkColors, insetsBottom: number) {
       // purchase-requests/index.tsx (Modal RN tidak otomatis dapat inset
       // bawah, tombol submit ketutup navigation bar Android).
       padding: spacing.lg, paddingBottom: spacing.xl + insetsBottom,
+      // maxHeight — supaya ScrollView isi form (Jenis..tombol Kirim)
+      // punya batas untuk bisa discroll, bukan sekadar tumbuh mengikuti
+      // konten. Tanpa ini keyboard di TextInput "Alasan" bisa menutupi
+      // tombol Kirim tanpa cara menjangkaunya (khususnya iOS).
+      maxHeight: '88%',
     },
     modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.md },
     modalTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary },
