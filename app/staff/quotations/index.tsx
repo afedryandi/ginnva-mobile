@@ -40,33 +40,56 @@ function formatDate(dateString: string): string {
   return new Date(dateString).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+interface QuotationListMeta {
+  current_page: number;
+  last_page: number;
+  total: number;
+}
+
 export default function StaffQuotationListScreen() {
   const { theme, colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [quotations, setQuotations] = useState<StaffQuotation[]>([]);
+  const [meta, setMeta] = useState<QuotationListMeta | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
-  const fetchQuotations = useCallback((filter: StatusFilter) => {
-    const query = filter === 'all' ? '' : `?status=${filter}`;
+  // Backend paginate(20) — SEBELUMNYA app cuma pernah request halaman 1
+  // (tidak pernah kirim ?page=), jadi lead ke-21 dst di status filter itu
+  // TIDAK PERNAH terlihat sama sekali di mobile, cuma di Filament.
+  // Ditemukan lewat audit modul Quotation 2026-09-07.
+  const fetchQuotations = useCallback((filter: StatusFilter, page: number) => {
+    const params = new URLSearchParams({ page: String(page) });
+    if (filter !== 'all') params.set('status', filter);
     setError(null);
-    return staffApiFetch<{ data: StaffQuotation[] }>(`/api/staff/quotations${query}`)
-      .then((res) => setQuotations(res.data))
+    return staffApiFetch<{ data: StaffQuotation[]; meta: QuotationListMeta }>(`/api/staff/quotations?${params.toString()}`)
+      .then((res) => {
+        setQuotations((prev) => (page === 1 ? res.data : [...prev, ...res.data]));
+        setMeta(res.meta);
+      })
       .catch(() => setError('Gagal memuat daftar lead. Periksa koneksi internet Anda.'));
   }, []);
 
   useEffect(() => {
     setLoading(true);
-    fetchQuotations(statusFilter).finally(() => setLoading(false));
+    fetchQuotations(statusFilter, 1).finally(() => setLoading(false));
   }, [fetchQuotations, statusFilter]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchQuotations(statusFilter);
+    await fetchQuotations(statusFilter, 1);
     setRefreshing(false);
   }, [fetchQuotations, statusFilter]);
+
+  const onLoadMore = useCallback(async () => {
+    if (loadingMore || !meta || meta.current_page >= meta.last_page) return;
+    setLoadingMore(true);
+    await fetchQuotations(statusFilter, meta.current_page + 1);
+    setLoadingMore(false);
+  }, [fetchQuotations, statusFilter, meta, loadingMore]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -107,6 +130,13 @@ export default function StaffQuotationListScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} colors={[colors.accent]} />
           }
           contentContainerStyle={styles.listContent}
+          onEndReached={onLoadMore}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={
+            loadingMore ? (
+              <ActivityIndicator style={styles.footerLoader} color={colors.accent} />
+            ) : null
+          }
           ListHeaderComponent={
             error ? (
               <View style={styles.errorBox}>
@@ -173,6 +203,7 @@ function createStyles(colors: typeof darkColors) {
     listContent: { padding: spacing.md, paddingBottom: spacing.xxl, flexGrow: 1 },
     errorBox: { backgroundColor: colors.dangerBg, borderRadius: radius.md, padding: spacing.sm, marginBottom: spacing.md },
     errorText: { color: colors.danger, fontSize: fontSize.sm },
+    footerLoader: { marginVertical: spacing.md },
     card: {
       backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border,
       padding: spacing.md, marginBottom: spacing.sm,
