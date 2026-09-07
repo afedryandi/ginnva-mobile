@@ -83,16 +83,13 @@ export default function LoginScreen() {
       .then(async (res) => {
         await staffLogin(res.token, res.user);
         // Partner (mitra referral) login lewat endpoint yang sama dengan
-        // staff, tapi diarahkan ke dashboard partner. Staff yang cuma
-        // punya akses inventaris (tidak ada akses booking sama sekali —
-        // mis. akun khusus staff gudang) diarahkan langsung ke menu
-        // Inventaris, bukan Booking Toko yang tidak relevan buat mereka.
-        let destination = '/staff/bookings';
-        if (res.user.role === 'partner') {
-          destination = '/partner/dashboard';
-        } else if (!res.user.has_booking_access && res.user.has_inventory_access) {
-          destination = '/staff/inventory';
-        }
+        // staff, tapi diarahkan ke dashboard partner. Staff APA PUN
+        // kombinasi aksesnya (booking, inventaris, atau keduanya) sekarang
+        // SELALU diarahkan ke halaman awal staff terpusat — grid menu di
+        // sana sendiri yang menyaring kotak mana yang tampil sesuai
+        // has_*_access, bukan lagi dipilihkan lewat 2 destinasi berbeda
+        // seperti sebelumnya (diminta user 2026-09-07).
+        const destination = res.user.role === 'partner' ? '/partner/dashboard' : '/staff';
         router.replace(destination as never);
       })
       .catch((err) => {

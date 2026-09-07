@@ -78,7 +78,13 @@ export default function RootLayout() {
           <Stack.Screen name="products/[category]" />
           <Stack.Screen name="seri-produk/index" />
           <Stack.Screen name="seri-produk/view" />
-          <Stack.Screen name="staff/bookings/index" options={{ animation: 'none' }} />
+          {/* 'staff/index' sekarang halaman awal staff (grid menu di
+              tengah, lihat app/staff/index.tsx) — animation:'none' pindah
+              ke sini dari staff/bookings/index karena landing page-nya
+              sudah bukan Booking Toko lagi. */}
+          <Stack.Screen name="staff/index" options={{ animation: 'none' }} />
+          <Stack.Screen name="staff/bookings/index" />
+          <Stack.Screen name="staff/bookings/[id]" />
           <Stack.Screen name="staff/bookings/[id]" />
           <Stack.Screen name="partner/dashboard" options={{ animation: 'none' }} />
           <Stack.Screen name="partner/points" />
