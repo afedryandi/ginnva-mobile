@@ -707,7 +707,25 @@ export default function StaffBookingChatScreen() {
     });
   };
 
-  const renderStagePickerRows = (trackStages: StageItem[], columnValue: string | null) => {
+  // Booking 2 produk harus SELESAI KEDUA track (Kaca Film & PPF) dulu
+  // sebelum boleh "Quality Check" — SEBELUMNYA tidak dicek sama sekali:
+  // "Tahap Akhir" (qc/completed) selalu dirender dengan columnValue =
+  // currentStage (kolom track Kaca Film SAJA, lihat renderStagePickerRows
+  // di bawah + Booking::stageColumnFor() yang menaruh qc/completed balik
+  // ke current_stage). Akibatnya begitu track Kaca Film sampai tahap
+  // terakhirnya, tombol "Tandai" Quality Check langsung TERBUKA walau
+  // track PPF (secondary_stage) belum mulai/masih di tengah — booking
+  // bisa ditandai Selesai (memicu notifikasi customer, poin referral,
+  // & Jurnal Pendapatan) padahal PPF-nya belum benar-benar dikerjakan.
+  // Backend (StaffBookingMessageController::store()) juga TIDAK
+  // memvalidasi urutan/kelengkapan tahap sama sekali, jadi ini bukan
+  // cuma soal UI — dikunci di sini. Ditemukan saat audit chat & foto
+  // tahap booking 2026-09-07.
+  const kacaFilmTrackDone = !productKacaFilm || kacaFilmColumnValue === KACA_FILM_STAGES[KACA_FILM_STAGES.length - 1].key;
+  const ppfTrackDone = !productPpf || ppfColumnValue === PPF_STAGES[PPF_STAGES.length - 1].key;
+  const readyForQc = kacaFilmTrackDone && ppfTrackDone;
+
+  const renderStagePickerRows = (trackStages: StageItem[], columnValue: string | null, qcGateOk: boolean = true) => {
     const isMarkedInTrack = markedStage !== null && trackStages.some((s) => s.key === markedStage);
     const effectiveStage = isMarkedInTrack ? markedStage : columnValue;
     let effectiveIdx = trackStages.findIndex((s) => s.key === effectiveStage);
@@ -732,9 +750,12 @@ export default function StaffBookingChatScreen() {
       // begitu ditandai (memicu poin referral/voucher/notifikasi "selesai"
       // ke customer lewat /complete), jadi tidak boleh sama permisifnya
       // dengan tahap internal lain yang memang boleh ditandai maju bebas.
+      const isQcRow = s.key === 'qc';
       const tandaiDisabled = isCompletedRow
         ? currentStage !== 'qc'
-        : idx <= effectiveIdx;
+        : isQcRow
+          ? (idx <= effectiveIdx) || !qcGateOk
+          : idx <= effectiveIdx;
       // Ikon kamera per baris DIHAPUS — dirombak jadi alur pop-up setelah
       // "Tandai" ditekan (lihat handlePickStage & modal photoPromptOpen/
       // photoPreviewOpen). Ditemukan cocok lewat permintaan redesain user
@@ -994,7 +1015,12 @@ export default function StaffBookingChatScreen() {
           {(productKacaFilm || productPpf) && (
             <Text style={styles.stagePickerGroupLabel}>Tahap Akhir</Text>
           )}
-          {renderStagePickerRows(SHARED_STAGES, currentStage)}
+          {bothProducts && !readyForQc && (
+            <Text style={styles.stagePickerHint}>
+              Quality Check baru bisa ditandai setelah track Kaca Film & PPF sama-sama sampai tahap terakhirnya.
+            </Text>
+          )}
+          {renderStagePickerRows(SHARED_STAGES, currentStage, readyForQc)}
         </View>
       )}
 
