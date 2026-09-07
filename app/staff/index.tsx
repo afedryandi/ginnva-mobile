@@ -106,7 +106,7 @@ export default function StaffHomeScreen() {
     {
       key: 'memos',
       icon: 'clipboard-outline' as const,
-      title: 'Memo Pengambilan/\nPengembalian',
+      title: 'Memo Barang',
       onPress: () => router.push('/staff/memos' as never),
       visible: staff?.has_material_memo_access,
     },
@@ -142,7 +142,7 @@ export default function StaffHomeScreen() {
               <View style={styles.boxIconWrap}>
                 <Ionicons name={item.icon} size={26} color={colors.accent} />
               </View>
-              <Text style={styles.boxTitle}>{item.title}</Text>
+              <Text style={styles.boxTitle} numberOfLines={2}>{item.title}</Text>
             </Pressable>
           ))}
         </View>
@@ -172,20 +172,23 @@ function createStyles(colors: typeof darkColors) {
     scrollContent: {
       flexGrow: 1,
       padding: spacing.lg,
-      justifyContent: 'center',
+      paddingTop: spacing.md,
     },
-    // Grid ditengahkan di layar (justifyContent center pada scrollContent
-    // + baris grid center) — 3 kolom, kotak persegi (aspectRatio 1),
-    // sesuai permintaan "dipindahkan ke tengah layar" & "dibikin kotak".
+    // Grid nempel ke atas (bukan lagi justifyContent:'center' vertikal —
+    // dulu bikin banyak ruang kosong di atas begitu menu cuma sedikit
+    // baris) — 3 kolom, kotak dibiarkan tumbuh tingginya sesuai isi
+    // (BUKAN aspectRatio:1 kaku, yang bikin ikon+judul 2 baris meluber
+    // keluar kotak untuk menu berjudul panjang) — diperbaiki 2026-09-07.
     grid: {
       flexDirection: 'row',
       flexWrap: 'wrap',
       justifyContent: 'center',
+      alignItems: 'flex-start',
       gap: spacing.md,
     },
     box: {
       width: '28%',
-      aspectRatio: 1,
+      minHeight: 96,
       alignItems: 'center',
       justifyContent: 'center',
       gap: spacing.xs,
@@ -194,6 +197,7 @@ function createStyles(colors: typeof darkColors) {
       borderWidth: 1,
       borderColor: colors.border,
       paddingHorizontal: spacing.xs,
+      paddingVertical: spacing.sm,
     },
     boxIconWrap: {
       width: 48,
@@ -202,6 +206,7 @@ function createStyles(colors: typeof darkColors) {
       backgroundColor: colors.accentSoft,
       alignItems: 'center',
       justifyContent: 'center',
+      flexShrink: 0,
     },
     boxTitle: {
       fontSize: fontSize.xs,
