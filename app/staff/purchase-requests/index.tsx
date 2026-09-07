@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Modal, TextInput, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
@@ -64,7 +64,8 @@ function formatQty(qty: number, unit: string | null): string {
  */
 export default function StaffPurchaseRequestsScreen() {
   const { theme, colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
+  const styles = useMemo(() => createStyles(colors, insets.bottom), [colors, insets.bottom]);
 
   const [requests, setRequests] = useState<PurchaseRequestRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -333,7 +334,7 @@ export default function StaffPurchaseRequestsScreen() {
   );
 }
 
-function createStyles(colors: typeof darkColors) {
+function createStyles(colors: typeof darkColors, insetsBottom: number) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
     centerState: { flex: 1, alignItems: 'center', justifyContent: 'center' },
@@ -367,7 +368,10 @@ function createStyles(colors: typeof darkColors) {
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
     modalSheet: {
       backgroundColor: colors.bg, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg,
-      padding: spacing.lg, paddingBottom: spacing.xl, maxHeight: '88%',
+      // paddingBottom + insetsBottom — tombol "Kirim Permohonan" SEBELUMNYA
+      // ketutup navigation bar Android (gesture bar/tombol 3) karena Modal
+      // RN tidak otomatis dapat inset bawah seperti SafeAreaView biasa.
+      padding: spacing.lg, paddingBottom: spacing.xl + insetsBottom, maxHeight: '88%',
     },
     modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.md },
     modalTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary },
