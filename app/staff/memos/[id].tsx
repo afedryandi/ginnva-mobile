@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   Modal,
-  KeyboardAvoidingView,
+  Keyboard,
   Platform,
   Alert,
 } from 'react-native';
@@ -93,6 +93,29 @@ export default function MemoDetailScreen() {
   // tidak ikut dijauhkan dari navigasi gesture Android secara otomatis.
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors, insets.bottom), [colors, insets.bottom]);
+
+  // KeyboardAvoidingView bawaan RN (behavior={Platform.OS==='ios'?'padding'
+  // :undefined}) TIDAK reliable untuk Modal di Android — SAMA PERSIS bug
+  // yang sudah ditemukan & diperbaiki di app/staff/bookings/[id].tsx (fix
+  // 2026-08-28) dan app/staff/attendance/leave.tsx (fix 2026-09-07):
+  // Modal RN membuat window Android TERPISAH dari Activity utama, jadi
+  // undefined di Android berarti keyboard menutupi field tanpa kompensasi
+  // apa pun. Pola yang SUDAH TERBUKTI jalan di keduanya dipakai lagi di
+  // sini untuk keempat modal (Tambah Barang/Pengembalian/Koreksi/Edit
+  // Info): lacak tinggi keyboard manual, dorong modalCard naik sejumlah
+  // itu sendiri via marginBottom, tidak bergantung KeyboardAvoidingView
+  // sama sekali.
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates.height));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const [memo, setMemo] = useState<MemoDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -787,8 +810,8 @@ export default function MemoDetailScreen() {
 
       {/* Modal: tambah barang */}
       <Modal visible={addVisible} animationType="slide" transparent onRequestClose={closeAddModal}>
-        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={[styles.modalCard, styles.addModalCard]}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, styles.addModalCard, { marginBottom: keyboardHeight }]}>
             <View style={styles.dragHandle} />
             <View style={styles.modalHeader}>
               <View style={{ flex: 1 }}>
@@ -1013,13 +1036,13 @@ export default function MemoDetailScreen() {
               </View>
             )}
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
 
       {/* Modal: catat pengembalian */}
       <Modal visible={returnTarget !== null} animationType="fade" transparent onRequestClose={() => setReturnTarget(null)}>
-        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.modalCard}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { marginBottom: keyboardHeight }]}>
             <View style={styles.dragHandle} />
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Catat Pengembalian</Text>
@@ -1040,13 +1063,13 @@ export default function MemoDetailScreen() {
             {returnError && <Text style={styles.errorText}>{returnError}</Text>}
             <Button label="Simpan" onPress={handleReturn} loading={returnSubmitting} />
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
 
       {/* Modal: edit jumlah (koreksi salah input) */}
       <Modal visible={editTarget !== null} animationType="fade" transparent onRequestClose={() => setEditTarget(null)}>
-        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.modalCard}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { marginBottom: keyboardHeight }]}>
             <View style={styles.dragHandle} />
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Koreksi Jumlah</Text>
@@ -1071,13 +1094,13 @@ export default function MemoDetailScreen() {
             {editError && <Text style={styles.errorText}>{editError}</Text>}
             <Button label="Simpan Koreksi" onPress={handleEditSubmit} loading={editSubmitting} />
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
 
       {/* Modal: edit info memo */}
       <Modal visible={editInfoVisible} animationType="fade" transparent onRequestClose={() => setEditInfoVisible(false)}>
-        <KeyboardAvoidingView style={styles.modalBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.modalCard}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { marginBottom: keyboardHeight }]}>
             <View style={styles.dragHandle} />
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Edit Info Memo</Text>
@@ -1110,7 +1133,7 @@ export default function MemoDetailScreen() {
             {editInfoError && <Text style={styles.errorText}>{editInfoError}</Text>}
             <Button label="Simpan" onPress={submitEditInfo} loading={editInfoSubmitting} />
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
     </SafeAreaView>
   );
