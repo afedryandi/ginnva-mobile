@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Modal, TextInput, Alert, Image, Linking, Platform, KeyboardAvoidingView, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Modal, TextInput, Alert, Image, Linking, Platform, ScrollView, Keyboard } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -63,7 +63,37 @@ function isBeforeDay(a: Date, b: Date): boolean {
 export default function StaffLeaveRequestScreen() {
   const { theme, colors } = useAppTheme();
   const insets = useSafeAreaInsets();
-  const styles = useMemo(() => createStyles(colors, insets.bottom), [colors, insets.bottom]);
+
+  // KeyboardAvoidingView bawaan RN TERBUKTI tidak reliable untuk sheet ini
+  // (behavior="height" macet di tinggi lama setelah keyboard ditutup,
+  // behavior="padding" masih nyisakan jarak kosong ke tombol Kirim) —
+  // SAMA PERSIS gejala yang sudah pernah ditemukan & diperbaiki di kolom
+  // chat booking (app/staff/bookings/[id].tsx, fix 2026-08-28) dan
+  // components/ui/PickerModal.tsx. Pola yang SUDAH TERBUKTI jalan di
+  // keduanya dipakai lagi di sini: lacak tinggi keyboard manual lewat
+  // Keyboard event, dorong sheet naik sejumlah itu sendiri via
+  // marginBottom, tidak bergantung behavior bawaan KeyboardAvoidingView
+  // sama sekali.
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates.height));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+  // Padding aman bawah (nav bar Android) cuma relevan saat keyboard
+  // TERTUTUP — begitu keyboard muncul, marginBottom={keyboardHeight} di
+  // bawah sudah mengangkat sheet di atas keyboard, jadi menambahkan
+  // insetsBottom lagi di atas itu cuma bikin jarak kosong yang tidak
+  // perlu antara tombol Kirim & keyboard.
+  const styles = useMemo(
+    () => createStyles(colors, keyboardHeight > 0 ? 0 : insets.bottom),
+    [colors, insets.bottom, keyboardHeight]
+  );
 
   const [requests, setRequests] = useState<LeaveRequestRecord[]>([]);
   const [cutiQuota, setCutiQuota] = useState(0);
@@ -332,17 +362,8 @@ export default function StaffLeaveRequestScreen() {
       )}
 
       <Modal visible={modalVisible} animationType="slide" transparent onRequestClose={() => setModalVisible(false)}>
-        <KeyboardAvoidingView
-          style={styles.modalOverlay}
-          // Modal RN membuat window/Dialog Android TERPISAH dari Activity
-          // utama — windowSoftInputMode:resize di app.json TIDAK berlaku
-          // untuk window itu, jadi Android JUGA butuh behavior eksplisit
-          // di sini (sebelumnya undefined di Android, itu sebabnya kolom
-          // Alasan masih ketutupi keyboard meski sudah ada
-          // KeyboardAvoidingView untuk iOS).
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <View style={styles.modalSheet}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalSheet, { marginBottom: keyboardHeight }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Ajukan Izin/Cuti</Text>
               <Pressable onPress={() => setModalVisible(false)} hitSlop={12}>
@@ -426,7 +447,7 @@ export default function StaffLeaveRequestScreen() {
             <Button label="Kirim Pengajuan" onPress={handleSubmit} loading={submitting} style={styles.submitButton} />
             </ScrollView>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
     </SafeAreaView>
   );
