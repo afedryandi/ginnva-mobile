@@ -12,6 +12,7 @@ import {
   Keyboard,
   Platform,
   Alert,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
@@ -92,6 +93,7 @@ export default function MemoDetailScreen() {
   // 'bottom') — jadi tombol "Tambah Barang" (posisi absolute di bawah)
   // tidak ikut dijauhkan dari navigasi gesture Android secara otomatis.
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const styles = useMemo(() => createStyles(colors, insets.bottom), [colors, insets.bottom]);
 
   // KeyboardAvoidingView bawaan RN (behavior={Platform.OS==='ios'?'padding'
@@ -211,6 +213,36 @@ export default function MemoDetailScreen() {
   const openAddModal = () => {
     resetAddModal();
     setAddVisible(true);
+  };
+
+  // SEBELUMNYA tidak ada tombol kembali sama sekali di step "cari &
+  // centang/pilih barang" (setelah jenis dipilih) — cuma step qty (multi)
+  // & step isi meter (PPF/WF) yang punya tombol "Kembali" sendiri di
+  // bawah, jadi begitu jenis sudah dipilih satu-satunya jalan mundur
+  // adalah tutup modal lewat X (dan mulai dari nol lagi). Handler ini
+  // menyatukan "kembali 1 langkah" untuk SEMUA step jadi 1 tombol di
+  // header, termasuk balik ke pemilihan jenis dari step cari. Ditemukan
+  // dari laporan pengguna 2026-09-07.
+  const handleAddModalBack = () => {
+    hapticLight();
+    if (addType !== 'inventory_item' && multiQtyStep) {
+      setMultiQtyStep(false);
+      return;
+    }
+    if (addType === 'inventory_item' && selected) {
+      setSelected(null);
+      return;
+    }
+    setAddType(null);
+    setSearch('');
+    setSearchResults([]);
+    setSelected(null);
+    setSelectedMulti([]);
+    setMultiQtyStep(false);
+    setMultiQty({});
+    setQtyInput('');
+    setConditionNotes('');
+    setAddError(null);
   };
 
   // Dipanggil dari tombol X / tombol back HP Android — kalau user sudah
@@ -811,9 +843,25 @@ export default function MemoDetailScreen() {
       {/* Modal: tambah barang */}
       <Modal visible={addVisible} animationType="slide" transparent onRequestClose={closeAddModal}>
         <View style={styles.modalBackdrop}>
-          <View style={[styles.modalCard, styles.addModalCard, { marginBottom: keyboardHeight }]}>
+          {/* addModalCard punya height:'85%' TETAP (fixed) — marginBottom
+              saja mendorong seluruh kartu (termasuk kolom Cari di bagian
+              ATAS) naik ke luar layar, bukan mengecilkan tingginya.
+              maxHeight dikurangi sejumlah keyboardHeight supaya kartu
+              MENGECIL dulu (bukan cuma bergeser), kolom Cari & isi
+              lainnya tetap kebaca. Ditemukan lewat laporan screenshot
+              audit Memo Barang 2026-09-07. */}
+          <View style={[
+            styles.modalCard,
+            styles.addModalCard,
+            { maxHeight: windowHeight * 0.85 - keyboardHeight, marginBottom: keyboardHeight },
+          ]}>
             <View style={styles.dragHandle} />
             <View style={styles.modalHeader}>
+              {addType && (
+                <Pressable onPress={handleAddModalBack} hitSlop={8} style={styles.modalBackBtn} disabled={addSubmitting}>
+                  <Ionicons name="chevron-back" size={20} color={colors.textPrimary} />
+                </Pressable>
+              )}
               <View style={{ flex: 1 }}>
                 <Text style={styles.modalTitle}>Tambah Barang</Text>
                 <Text style={styles.modalStep}>
@@ -1279,7 +1327,15 @@ function createStyles(colors: typeof darkColors, insetsBottom: number) {
       alignSelf: 'center',
       marginBottom: spacing.xs,
     },
-    modalHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+    modalHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.xs },
+    modalBackBtn: {
+      width: 30,
+      height: 30,
+      borderRadius: radius.pill,
+      backgroundColor: colors.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
     modalCloseBtn: {
       width: 30,
       height: 30,
