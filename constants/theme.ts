@@ -30,16 +30,22 @@ export const colors = {
  * screen, memakai token ini.
  */
 export const darkColors = {
-  bg: '#0b0b16',            // dasar — hampir hitam dengan rona ungu/navy
-  bgGradientTop: '#1a1332', // ungu tua, dipakai di gradient hero/carousel
-  bgGradientBottom: '#0b0b16',
-  surface: '#161226',       // panel/card di atas bg (sedikit lebih terang)
-  surfaceElevated: '#1f1a35',
+  // Diganti ke nuansa abu-abu netral gaya Discord (diminta pengguna
+  // 2026-09-07, setelah percobaan navy/ungu sebelumnya) — 3 tingkat abu
+  // gelap yang sama persis dengan palet resmi Discord Dark Theme
+  // (server list #1e1f22 -> sidebar #2b2d31 -> chat/content #313338),
+  // aksen merah brand Ginnva TETAP dipertahankan (bukan ganti ke blurple
+  // Discord). Sebelumnya #0b0b16 (hampir hitam) lalu #1c1830 (navy/ungu).
+  bg: '#1e1f22',             // dasar — tingkat abu tergelap
+  bgGradientTop: '#2b2d31',
+  bgGradientBottom: '#1e1f22',
+  surface: '#2b2d31',        // panel/card di atas bg (tingkat abu tengah)
+  surfaceElevated: '#313338', // tingkat abu paling terang dari 3 ini
   border: 'rgba(255,255,255,0.08)',
   borderStrong: 'rgba(255,255,255,0.14)',
-  textPrimary: '#ffffff',
-  textSecondary: 'rgba(255,255,255,0.65)',
-  textMuted: 'rgba(255,255,255,0.4)',
+  textPrimary: '#f2f3f5',
+  textSecondary: '#b5bac1',
+  textMuted: '#80848e',
   accent: '#ed1651',
   accentSoft: 'rgba(237,22,81,0.16)',
   gold: '#ff6b81',          // aksen sekunder — merah muda elegan (brand red), BUKAN kuning/gold
