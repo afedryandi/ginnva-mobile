@@ -71,16 +71,6 @@ const CLAIM_STATUS_LABEL: Record<WarrantyClaimSummary['status'], string> = {
   reject: 'Ditolak',
 };
 
-// SEBELUMNYA claim.category dirender mentah ("product_warranty") --
-// Filament (ClaimsRelationManager) sudah punya label yang benar untuk
-// nilai enum yang sama, mobile app belum menerapkannya sama sekali.
-// Ditemukan lewat testing manual 2026-08-31.
-const CLAIM_CATEGORY_LABEL: Record<string, string> = {
-  worry_free_wrap: 'Worry Free Wrap',
-  product_warranty: 'Product Warranty',
-  other: 'Lainnya',
-};
-
 function formatDate(raw: string | null | undefined): string {
   if (!raw) return '-';
   // Ambil bagian tanggal saja (YYYY-MM-DD) lalu convert ke dd/mm/yyyy
@@ -353,9 +343,7 @@ export default function WarrantyDetailScreen() {
                       </Text>
                     </View>
                   </View>
-                  <Text style={styles.claimCategory}>
-                    {CLAIM_CATEGORY_LABEL[claim.category] ?? claim.category}
-                  </Text>
+                  <Text style={styles.claimCategory}>{claim.category}</Text>
                   {claim.description ? <Text style={styles.claimDescription}>{claim.description}</Text> : null}
                   {claim.status === 'reject' && claim.rejection_reason ? (
                     <Text style={[styles.claimDescription, { color: colors.danger }]}>

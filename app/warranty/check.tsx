@@ -212,19 +212,14 @@ function WarrantyResultCard({
       }}
     >
       <View style={styles.resultCard}>
-        {/* SEBELUMNYA badge status sejajar di kanan judul (flexDirection
-            row) — begitu label produk (PPF/Window Film) ditambahkan ke
-            caption kiri, ruang kanan jadi sempit dan teks badge yang
-            panjang ("Menunggu Review Admin") kepotong/wrap berantakan.
-            Badge dipindah ke baris sendiri di bawah, sama pola dengan
-            perbaikan badge tahap booking. Ditemukan lewat testing
-            manual 2026-08-31. */}
         <View style={styles.resultHeader}>
-          <Text style={styles.resultCaption}>
-            NOMOR SERTIFIKAT{productLabel ? ` — ${productLabel}` : ''}
-          </Text>
-          <Text style={styles.resultCode}>{warranty.warranty_code}</Text>
-          <View style={[styles.statusBadge, styles.statusBadgeRow, { backgroundColor: statusMeta.bg }]}>
+          <View>
+            <Text style={styles.resultCaption}>
+              NOMOR SERTIFIKAT{productLabel ? ` — ${productLabel}` : ''}
+            </Text>
+            <Text style={styles.resultCode}>{warranty.warranty_code}</Text>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: statusMeta.bg }]}>
             <Ionicons name={statusMeta.icon} size={14} color={statusMeta.color} />
             <Text style={[styles.statusText, { color: statusMeta.color }]}>
               {statusMeta.label}
@@ -807,7 +802,9 @@ function createStyles(colors: typeof darkColors, scanFrameSize: number) {
     borderColor: colors.border,
   },
   resultHeader: {
-    gap: 4,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
   },
   resultCaption: {
     fontSize: fontSize.xs,
@@ -828,13 +825,6 @@ function createStyles(colors: typeof darkColors, scanFrameSize: number) {
     paddingHorizontal: spacing.sm,
     paddingVertical: 6,
     borderRadius: radius.pill,
-  },
-  // Baris sendiri di bawah nomor sertifikat (bukan lagi sejajar di
-  // kanan judul) — self-start supaya pill-nya cuma selebar teksnya,
-  // tidak memanjang penuh mengikuti lebar kartu.
-  statusBadgeRow: {
-    alignSelf: 'flex-start',
-    marginTop: 6,
   },
   statusText: {
     fontSize: fontSize.xs,
