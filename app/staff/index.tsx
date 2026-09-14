@@ -83,6 +83,13 @@ export default function StaffHomeScreen() {
       visible: staff?.has_ppf_wf_access,
     },
     {
+      key: 'roll-scraps',
+      icon: 'cut-outline' as const,
+      title: 'Sisa Roll',
+      onPress: () => router.push('/staff/inventory/scraps' as never),
+      visible: staff?.has_ppf_wf_access,
+    },
+    {
       key: 'assets',
       icon: 'construct-outline' as const,
       title: 'Aset Tetap',
