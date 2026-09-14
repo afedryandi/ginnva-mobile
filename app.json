@@ -72,6 +72,12 @@
       ],
       "expo-video",
       [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Ginnva memerlukan akses lokasi untuk mencatat absensi masuk/keluar dari lokasi toko."
+        }
+      ],
+      [
         "expo-media-library",
         {
           "photosPermission": "Ginnva memerlukan akses galeri untuk menyimpan foto mobil Anda ke perangkat.",

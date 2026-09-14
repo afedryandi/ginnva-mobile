@@ -10,6 +10,7 @@ interface StaffUser {
   store_id: number | null;
   // Dipakai buat putuskan halaman awal setelah login (lihat app/auth/login.tsx)
   has_booking_access: boolean;
+  has_quotation_access: boolean;
   has_inventory_access: boolean;
   // Granular per-submenu — dipakai buat filter menu Inventaris
   // (lihat app/staff/inventory/index.tsx & app/staff/bookings/index.tsx)
@@ -18,6 +19,7 @@ interface StaffUser {
   has_asset_access: boolean;
   has_consumable_access: boolean;
   has_material_memo_access: boolean;
+  has_purchase_request_access: boolean;
 }
 
 interface StaffAuthContextValue {
@@ -72,7 +74,15 @@ export function StaffAuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
-      await staffApiFetch('/api/staff/auth/logout', { method: 'POST' });
+      // push_token dikirim supaya server unlink device_tokens device ini
+      // dari akun yang logout — sama alasan dengan link-token saat login
+      // di atas, cegah notifikasi bertarget nyasar di HP bersama/demo
+      // unit toko begitu staff/partner logout.
+      const pushToken = await getCurrentPushToken().catch(() => null);
+      await staffApiFetch('/api/staff/auth/logout', {
+        method: 'POST',
+        body: JSON.stringify({ push_token: pushToken }),
+      });
     } catch {
       // Tetap hapus token lokal meski request logout ke server gagal.
     }

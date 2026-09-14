@@ -12,8 +12,9 @@ import { hapticSuccess, hapticError } from '@/lib/haptics';
 
 interface Movement {
   id: number;
-  type: 'in' | 'out' | 'adjustment';
+  type: 'in' | 'out' | 'adjustment' | 'correction';
   quantity: string;
+  unit_cost: string | null;
   note: string | null;
   user: { id: number; name: string } | null;
   created_at: string;
@@ -37,6 +38,11 @@ interface MaterialData {
   reorder_point: string | null;
   movements: Movement[];
   batches: Batch[];
+}
+
+interface ShowResponse {
+  data: MaterialData;
+  movements_has_more: boolean;
 }
 
 type MovementForm = { type: 'in' | 'out'; quantity: string; note: string; receivedDate: string; expiryDate: string } | null;
@@ -88,6 +94,7 @@ function isNearExpiry(dateString: string): boolean {
 function movementLabel(type: Movement['type']): string {
   if (type === 'in') return 'Masuk';
   if (type === 'out') return 'Keluar';
+  if (type === 'correction') return 'Koreksi';
   return 'Penyesuaian';
 }
 
@@ -111,14 +118,40 @@ export default function MaterialDetailScreen() {
   const [adjustError, setAdjustError] = useState<string | null>(null);
   const [adjustSubmitting, setAdjustSubmitting] = useState(false);
 
+  // "Muat Riwayat Lainnya" — sama pola dengan consumables/[id].tsx dan
+  // inventory/[code].tsx. SEBELUMNYA satu-satunya dari 3 modul movement
+  // yang belum punya paginasi riwayat di mobile.
+  const [extraMovements, setExtraMovements] = useState<Movement[]>([]);
+  const [hasMoreMovements, setHasMoreMovements] = useState(false);
+  const [loadingMoreMovements, setLoadingMoreMovements] = useState(false);
+
   const fetchMaterial = useCallback(() => {
     setError(null);
-    return staffApiFetch<{ data: MaterialData }>(`/api/staff/materials/${id}`)
-      .then((res) => setMaterial(res.data))
+    return staffApiFetch<ShowResponse>(`/api/staff/materials/${id}`)
+      .then((res) => {
+        setMaterial(res.data);
+        setExtraMovements([]);
+        setHasMoreMovements(res.movements_has_more);
+      })
       .catch((err) => {
         setError(err instanceof ApiError ? err.message : 'Bahan baku tidak ditemukan atau koneksi bermasalah.');
       });
   }, [id]);
+
+  const loadMoreMovements = useCallback(() => {
+    if (!material) return;
+
+    setLoadingMoreMovements(true);
+    staffApiFetch<{ data: Movement[]; has_more: boolean }>(
+      `/api/staff/materials/${id}/movements?offset=${material.movements.length + extraMovements.length}`
+    )
+      .then((res) => {
+        setExtraMovements((prev) => [...prev, ...res.data]);
+        setHasMoreMovements(res.has_more);
+      })
+      .catch(() => hapticError())
+      .finally(() => setLoadingMoreMovements(false));
+  }, [id, material, extraMovements.length]);
 
   useEffect(() => {
     setLoading(true);
@@ -463,24 +496,43 @@ export default function MaterialDetailScreen() {
           {material.movements.length === 0 ? (
             <Text style={styles.emptyHistoryText}>Belum ada riwayat keluar/masuk untuk bahan ini.</Text>
           ) : (
-            material.movements.map((m) => (
-              <View key={m.id} style={styles.historyRow}>
-                <Ionicons
-                  name={m.type === 'in' ? 'arrow-down-circle' : m.type === 'out' ? 'arrow-up-circle' : 'swap-vertical'}
-                  size={20}
-                  color={m.type === 'in' ? colors.success : m.type === 'out' ? colors.danger : colors.warning}
-                />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.historyText}>
-                    {movementLabel(m.type)} {parseFloat(m.quantity) > 0 && m.type === 'adjustment' ? '+' : ''}
-                    {parseFloat(m.quantity).toLocaleString('id-ID')} {material.unit}
-                    {m.user ? ` — ${m.user.name}` : ''}
-                  </Text>
-                  {m.note && <Text style={styles.historyNote}>{m.note}</Text>}
-                  <Text style={styles.historyDate}>{formatDateTime(m.created_at)}</Text>
+            <>
+              {[...material.movements, ...extraMovements].map((m) => (
+                <View key={m.id} style={styles.historyRow}>
+                  <Ionicons
+                    name={m.type === 'in' ? 'arrow-down-circle' : m.type === 'out' ? 'arrow-up-circle' : m.type === 'correction' ? 'arrow-undo-circle' : 'swap-vertical'}
+                    size={20}
+                    color={m.type === 'in' ? colors.success : m.type === 'out' ? colors.danger : m.type === 'correction' ? colors.textMuted : colors.warning}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.historyText}>
+                      {movementLabel(m.type)} {parseFloat(m.quantity) > 0 && m.type === 'adjustment' ? '+' : ''}
+                      {parseFloat(m.quantity).toLocaleString('id-ID')} {material.unit}
+                      {m.user ? ` — ${m.user.name}` : ''}
+                    </Text>
+                    {m.unit_cost && (
+                      <Text style={styles.historyNote}>Rp {parseFloat(m.unit_cost).toLocaleString('id-ID')} / {material.unit}</Text>
+                    )}
+                    {m.note && <Text style={styles.historyNote}>{m.note}</Text>}
+                    <Text style={styles.historyDate}>{formatDateTime(m.created_at)}</Text>
+                  </View>
                 </View>
-              </View>
-            ))
+              ))}
+
+              {hasMoreMovements && (
+                <Pressable
+                  style={styles.loadMoreButton}
+                  onPress={loadMoreMovements}
+                  disabled={loadingMoreMovements}
+                >
+                  {loadingMoreMovements ? (
+                    <ActivityIndicator size="small" color={colors.accent} />
+                  ) : (
+                    <Text style={styles.loadMoreText}>Muat Riwayat Lainnya</Text>
+                  )}
+                </Pressable>
+              )}
+            </>
           )}
         </ScrollView>
       )}
@@ -572,6 +624,8 @@ function createStyles(colors: typeof darkColors) {
     expiryDanger: { backgroundColor: colors.dangerBg },
     expiryText: { fontSize: fontSize.xs, fontWeight: '700' },
     emptyHistoryText: { fontSize: fontSize.sm, color: colors.textMuted },
+    loadMoreButton: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.sm, marginTop: spacing.xs },
+    loadMoreText: { fontSize: fontSize.sm, fontWeight: '600', color: colors.accent },
     historyRow: {
       flexDirection: 'row',
       gap: spacing.sm,

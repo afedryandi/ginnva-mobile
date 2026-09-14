@@ -1,11 +1,10 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, FlatList, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
-import { darkColors, fontSize, spacing, radius, shadow } from '@/constants/theme';
+import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
 
@@ -26,12 +25,7 @@ function formatDate(iso: string): string {
 
 export default function MemoListScreen() {
   const { theme, colors } = useAppTheme();
-  // SafeAreaView di sini SENGAJA edges={['top','left','right']} (tanpa
-  // 'bottom') — jadi elemen posisi absolute di bawah (FAB ini) tidak ikut
-  // dijauhkan dari navigasi gesture Android secara otomatis, harus
-  // ditambah insets.bottom manual.
-  const insets = useSafeAreaInsets();
-  const styles = useMemo(() => createStyles(colors, insets.bottom), [colors, insets.bottom]);
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [memos, setMemos] = useState<MemoListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -94,24 +88,21 @@ export default function MemoListScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <StatusBar style="light" />
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
 
-      {/* Hero header — gradient (sama nuansa aksen brand dengan Beranda),
-          bukan header polos bar tipis seperti sebelumnya. */}
-      <LinearGradient colors={[colors.accent, '#c4123f']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
-        <View style={styles.heroTopRow}>
-          <Pressable onPress={() => router.back()} style={styles.heroIconBtn} hitSlop={8}>
-            <Ionicons name="chevron-back" size={22} color="#ffffff" />
-          </Pressable>
-          <Pressable onPress={onRefresh} style={styles.heroIconBtn} disabled={refreshing} hitSlop={8}>
-            {refreshing ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="refresh" size={20} color="#ffffff" />}
-          </Pressable>
-        </View>
-        <Text style={styles.heroTitle}>Memo Pengambilan/Pengembalian</Text>
-        <Text style={styles.heroSubtitle}>
-          {loading ? 'Memuat…' : `${memos.length}${hasMore ? '+' : ''} memo tercatat`}
-        </Text>
-      </LinearGradient>
+      {/* Header flat — SEBELUMNYA gradient hero + FAB melayang, satu-
+          satunya modul inventaris bergaya "generasi baru" berbeda dari
+          4 modul lain (Produk PPF/WF, Bahan Baku, Barang Habis Pakai,
+          Aset) yang semuanya flat, padahal diakses dari hub yang sama. */}
+      <View style={styles.header}>
+        <Pressable onPress={() => router.back()} style={styles.sideButton}>
+          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+        </Pressable>
+        <Text style={styles.headerTitle} numberOfLines={1}>Memo Pengambilan/Pengembalian</Text>
+        <Pressable onPress={goToCreate} style={styles.sideButton}>
+          <Ionicons name="add" size={24} color={colors.accent} />
+        </Pressable>
+      </View>
 
       {loading ? (
         <View style={styles.centerState}>
@@ -185,44 +176,25 @@ export default function MemoListScreen() {
           )}
         />
       )}
-
-      <Pressable
-        style={({ pressed }) => [
-          styles.fab,
-          { bottom: spacing.lg + insets.bottom },
-          pressed && styles.fabPressed,
-        ]}
-        onPress={goToCreate}
-      >
-        <Ionicons name="add" size={20} color="#ffffff" />
-        <Text style={styles.fabText}>Buat Memo</Text>
-      </Pressable>
     </SafeAreaView>
   );
 }
 
-function createStyles(colors: typeof darkColors, insetsBottom: number) {
+function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
-
-    hero: {
-      paddingHorizontal: spacing.md,
-      paddingTop: spacing.sm,
-      paddingBottom: spacing.lg,
-      borderBottomLeftRadius: radius.lg,
-      borderBottomRightRadius: radius.lg,
-    },
-    heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    heroIconBtn: {
-      width: 36,
-      height: 36,
-      borderRadius: radius.pill,
-      backgroundColor: 'rgba(255,255,255,0.18)',
+    header: {
+      flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      backgroundColor: colors.bg,
     },
-    heroTitle: { fontSize: fontSize.xl, fontWeight: '800', color: '#ffffff', marginTop: spacing.md },
-    heroSubtitle: { fontSize: fontSize.sm, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
+    sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+    headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
 
     centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.xl },
     centerStateText: { fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center', lineHeight: 20 },
@@ -258,15 +230,16 @@ function createStyles(colors: typeof darkColors, insetsBottom: number) {
     },
     retryBtnText: { color: colors.textPrimary, fontWeight: '600', fontSize: fontSize.sm },
 
-    listContent: { padding: spacing.md, paddingTop: spacing.md, paddingBottom: 100 + insetsBottom, gap: spacing.sm },
+    listContent: { padding: spacing.md, gap: spacing.sm },
     card: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: spacing.sm,
       backgroundColor: colors.surface,
-      borderRadius: radius.lg,
+      borderRadius: radius.md,
       padding: spacing.sm,
-      ...shadow.sm,
+      borderWidth: 1,
+      borderColor: colors.border,
     },
     cardPressed: { opacity: 0.85 },
     cardIconWrap: {
@@ -297,21 +270,5 @@ function createStyles(colors: typeof darkColors, insetsBottom: number) {
       marginTop: spacing.xs,
     },
     loadMoreBtnText: { color: colors.accent, fontWeight: '700', fontSize: fontSize.sm },
-
-    fab: {
-      position: 'absolute',
-      right: spacing.md,
-      bottom: spacing.lg,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      paddingHorizontal: spacing.lg,
-      height: 52,
-      borderRadius: radius.pill,
-      backgroundColor: colors.accent,
-      ...shadow.card,
-    },
-    fabPressed: { opacity: 0.9 },
-    fabText: { color: '#ffffff', fontWeight: '700', fontSize: fontSize.sm },
   });
 }

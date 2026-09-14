@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TextInput, Pressable, StyleSheet, ScrollView,
-  KeyboardAvoidingView, Platform, Image, ActivityIndicator, Alert, Modal, Linking,
+  Platform, Image, ActivityIndicator, Alert, Modal, Linking, Keyboard,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -30,7 +30,19 @@ interface BookingMessage {
 interface StaffOption {
   id: number;
   name: string;
+  // Cuma terisi untuk installer yang punya baris di roster Teknisi (lihat
+  // TechnicianResource) — direksi (watchers) tidak punya level. Backend
+  // sudah menyembunyikan installer 'pending_review'/'inactive' dari
+  // daftar ini sama sekali, jadi apa yang tampil di sini selalu boleh
+  // ditugaskan. Lihat audit modul Teknisi 2026-08-27.
+  level?: 'intermediate' | 'advanced' | 'mentor' | null;
 }
+
+const TECHNICIAN_LEVEL_LABEL: Record<string, string> = {
+  intermediate: 'Intermediate',
+  advanced: 'Advanced',
+  mentor: 'Mentor',
+};
 
 interface BookingDetail {
   installers: StaffOption[];
@@ -103,6 +115,20 @@ export default function StaffBookingChatScreen() {
   // foto (tanpa bikin pesan tahap dobel).
   const [markedStage, setMarkedStage] = useState<string | null>(null);
   const [viewerImage, setViewerImage] = useState<string | null>(null);
+
+  // Alur foto susulan tahap DIROMBAK — SEBELUMNYA ikon kamera terpisah per
+  // baris tahap (klik = langsung buka galeri, langsung kirim tanpa
+  // preview). Sekarang: begitu "Tandai" ditekan → pop-up tanya mau upload
+  // foto atau tidak → pilih sumber (Galeri/Kamera) → foto masuk ke
+  // "keranjang" pendingStagePhotos yang bisa ditambah berkali-kali dari
+  // sumber mana pun → staff cek preview & buang yang tidak perlu → baru
+  // eksplisit tekan "Kirim" untuk benar-benar kirim ke chat. Diminta user
+  // 2026-08-28.
+  const [photoPromptOpen, setPhotoPromptOpen] = useState(false);
+  const [photoPreviewOpen, setPhotoPreviewOpen] = useState(false);
+  const [photoPromptStage, setPhotoPromptStage] = useState<string | null>(null);
+  const [pendingStagePhotos, setPendingStagePhotos] = useState<{ uri: string; name: string; type: string }[]>([]);
+  const [sendingStagePhotos, setSendingStagePhotos] = useState(false);
   const [completeModalOpen, setCompleteModalOpen] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [sendingReminder, setSendingReminder] = useState(false);
@@ -131,6 +157,27 @@ export default function StaffBookingChatScreen() {
   const [cancelling, setCancelling] = useState(false);
   const listRef = useRef<FlatList>(null);
   const insets = useSafeAreaInsets();
+
+  // KeyboardAvoidingView bawaan RN TERNYATA tidak reliable di Android
+  // untuk layar ini — behavior="height" bisa macet di tinggi lama
+  // setelah keyboard sempat muncul/hilang akibat interaksi lain (mis.
+  // update tahap), meninggalkan ruang kosong di bawah kolom input;
+  // behavior={undefined} malah bikin keyboard nutupin kolom input
+  // sepenuhnya. Pola ini SUDAH TERBUKTI jalan di components/ui/
+  // PickerModal.tsx (fix 2026-08-27) — lacak tinggi keyboard manual,
+  // dorong kolom input naik sejumlah itu sendiri, tidak bergantung
+  // behavior bawaan sama sekali. Ditemukan & diperbaiki 2026-08-28.
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates.height));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [assignLoading, setAssignLoading] = useState(false);
@@ -400,35 +447,26 @@ export default function StaffBookingChatScreen() {
     if (!ok) setInput(trimmed);
   };
 
-  const handlePickPhoto = async (stageForPhoto?: string) => {
-    // Minta izin galeri secara eksplisit HANYA di iOS. Di Android,
-    // launchImageLibraryAsync() di bawah otomatis pakai Photo Picker
-    // bawaan sistem (Android 13+) yang TIDAK butuh izin apa pun —
-    // memanggil requestMediaLibraryPermissionsAsync() di Android malah
-    // memaksa app minta izin lawas READ_MEDIA_IMAGES/READ_MEDIA_VIDEO
-    // yang justru dilarang kebijakan Google Play kalau Photo Picker
-    // sudah cukup untuk fungsi ini (lihat catatan Play Console).
-    if (Platform.OS === 'ios') {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        if (!permission.canAskAgain) {
-          Alert.alert(
-            'Izin Ditolak Permanen',
-            'Aktifkan izin akses galeri lewat Pengaturan untuk mengirim foto.',
-            [
-              { text: 'Batal', style: 'cancel' },
-              { text: 'Buka Pengaturan', onPress: () => Linking.openSettings() },
-            ]
-          );
-        } else {
-          Alert.alert('Izin Diperlukan', 'Aktifkan izin akses galeri untuk mengirim foto.');
-        }
-        return;
-      }
-    }
+  // Tombol kamera bebas ("Ketik pesan" → ikon kamera di bawah, foto BUKAN
+  // susulan tahap tertentu) — SEBELUMNYA langsung buka galeri tanpa
+  // pilihan. Sekarang tanya sumbernya dulu, sama seperti alur foto
+  // tahap. Diminta user 2026-08-28.
+  const sendGeneralPhotos = async (assets: { uri: string; name: string; type: string }[]) => {
+    if (!assets.length) return;
 
-    // allowsMultipleSelection — 1 tahap boleh disertai beberapa foto
-    // sekaligus (mis. beberapa sudut mobil), tidak perlu kirim satu-satu.
+    const form = new FormData();
+    form.append('type', 'photo');
+    assets.forEach((asset) => {
+      form.append('photos[]', asset as any);
+    });
+
+    setStagePickerOpen(false);
+    sendMessage(form);
+  };
+
+  const handlePickPhotoFromGallery = async () => {
+    if (!(await requestGalleryPermission())) return;
+
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       quality: 0.7,
@@ -438,44 +476,42 @@ export default function StaffBookingChatScreen() {
 
     if (result.canceled || !result.assets?.length) return;
 
-    const form = new FormData();
-    form.append('type', 'photo');
-    if (stageForPhoto) form.append('stage', stageForPhoto);
-    result.assets.forEach((asset, i) => {
-      form.append('photos[]', {
-        uri: asset.uri,
-        name: asset.fileName || `photo-${i}.jpg`,
-        type: asset.mimeType || 'image/jpeg',
-      } as any);
-    });
-
-    if (!stageForPhoto) {
-      setStagePickerOpen(false);
-    }
-    // Picker sengaja TIDAK ditutup untuk foto susulan tahap, biar staff
-    // langsung lihat ikon kameranya terkunci lalu lanjut ke tahap berikutnya.
-    sendMessage(form);
+    sendGeneralPhotos(result.assets.map((asset, i) => ({
+      uri: asset.uri,
+      name: asset.fileName || `photo-${i}.jpg`,
+      type: asset.mimeType || 'image/jpeg',
+    })));
   };
 
-  const handlePickStage = (stage: string, withPhoto: boolean) => {
+  const handlePickPhotoFromCamera = async () => {
+    if (!(await requestCameraPermission())) return;
+
+    const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.7 });
+    if (result.canceled || !result.assets?.length) return;
+
+    const asset = result.assets[0];
+    sendGeneralPhotos([{ uri: asset.uri, name: asset.fileName || `photo-${Date.now()}.jpg`, type: asset.mimeType || 'image/jpeg' }]);
+  };
+
+  const handlePickPhoto = () => {
+    Alert.alert('Kirim Foto', 'Pilih sumber foto', [
+      { text: 'Galeri', onPress: handlePickPhotoFromGallery },
+      { text: 'Kamera', onPress: handlePickPhotoFromCamera },
+      { text: 'Batal', style: 'cancel' },
+    ]);
+  };
+
+  const handlePickStage = (stage: string) => {
     // Tahap "Selesai" = booking benar-benar selesai & customer sudah bayar
-    // di toko — SELALU lewat modal (baik tombol teks maupun kamera),
-    // BUKAN langsung kirim pesan tahap seperti biasa. Kalau tombol kamera
-    // yang dipisah dibiarkan lolos ke handlePickPhoto(), endpoint
-    // /complete tidak pernah kepanggil — kode referral/voucher tidak
-    // pernah diproses sama sekali (poin tidak keluar tanpa error apapun).
+    // di toko — SELALU lewat modal complete, TIDAK lewat pop-up foto tahap
+    // biasa. /complete di backend MURNI penanda status (tidak urus nominal
+    // transaksi/kode referral/voucher sama sekali) — itu diisi terpisah
+    // lewat aksi "Proses Referral" di Filament, lihat teks modal complete
+    // di bawah & BookingController::complete() untuk detailnya.
     if (stage === 'completed') {
       if (currentStage === 'completed') return; // sudah selesai, tidak bisa diulang
       setStagePickerOpen(false);
       setCompleteModalOpen(true);
-      return;
-    }
-
-    if (withPhoto) {
-      // Susulan foto SETELAH tahap ditandai — kirim sebagai foto biasa
-      // (tanpa pill "Tahap: X" dobel di chat). Boleh berkali-kali selama
-      // masih di tahap yang sama (tandai belum pindah ke tahap berikutnya).
-      handlePickPhoto(stage);
       return;
     }
 
@@ -484,6 +520,142 @@ export default function StaffBookingChatScreen() {
     form.append('stage', stage);
     setMarkedStage(stage);
     sendMessage(form);
+
+    // Begitu tahap ditandai, tanya mau susulkan foto atau tidak — bukan
+    // langsung buka galeri seperti sebelumnya.
+    setPhotoPromptStage(stage);
+    setPendingStagePhotos([]);
+    setPhotoPromptOpen(true);
+  };
+
+  const requestGalleryPermission = async (): Promise<boolean> => {
+    // Cuma iOS — Android pakai Photo Picker bawaan sistem (Android 13+)
+    // yang tidak butuh izin apa pun. Lihat catatan Play Console soal
+    // READ_MEDIA_IMAGES/READ_MEDIA_VIDEO.
+    if (Platform.OS !== 'ios') return true;
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (permission.granted) return true;
+
+    if (!permission.canAskAgain) {
+      Alert.alert(
+        'Izin Ditolak Permanen',
+        'Aktifkan izin akses galeri lewat Pengaturan untuk mengirim foto.',
+        [
+          { text: 'Batal', style: 'cancel' },
+          { text: 'Buka Pengaturan', onPress: () => Linking.openSettings() },
+        ]
+      );
+    } else {
+      Alert.alert('Izin Diperlukan', 'Aktifkan izin akses galeri untuk mengirim foto.');
+    }
+    return false;
+  };
+
+  const requestCameraPermission = async (): Promise<boolean> => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (permission.granted) return true;
+
+    if (!permission.canAskAgain) {
+      Alert.alert(
+        'Izin Ditolak Permanen',
+        'Aktifkan izin akses kamera lewat Pengaturan untuk memotret foto tahap.',
+        [
+          { text: 'Batal', style: 'cancel' },
+          { text: 'Buka Pengaturan', onPress: () => Linking.openSettings() },
+        ]
+      );
+    } else {
+      Alert.alert('Izin Diperlukan', 'Aktifkan izin akses kamera untuk memotret foto tahap.');
+    }
+    return false;
+  };
+
+  // Dipanggil dari pop-up "Ingin upload foto tahap?" — hasil dari galeri
+  // MAUPUN kamera masuk ke keranjang pendingStagePhotos yang sama, bisa
+  // ditambah berkali-kali dari sumber campuran sebelum benar-benar
+  // dikirim.
+  const addStagePhotosFromGallery = async () => {
+    if (!(await requestGalleryPermission())) return;
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.7,
+      allowsMultipleSelection: true,
+      selectionLimit: 10,
+    });
+
+    if (result.canceled || !result.assets?.length) return;
+
+    setPendingStagePhotos((prev) => [
+      ...prev,
+      ...result.assets.map((asset, i) => ({
+        uri: asset.uri,
+        name: asset.fileName || `photo-${Date.now()}-${i}.jpg`,
+        type: asset.mimeType || 'image/jpeg',
+      })),
+    ]);
+    setPhotoPromptOpen(false);
+    setPhotoPreviewOpen(true);
+  };
+
+  const addStagePhotoFromCamera = async () => {
+    if (!(await requestCameraPermission())) return;
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.7,
+    });
+
+    if (result.canceled || !result.assets?.length) return;
+
+    const asset = result.assets[0];
+    setPendingStagePhotos((prev) => [
+      ...prev,
+      { uri: asset.uri, name: asset.fileName || `photo-${Date.now()}.jpg`, type: asset.mimeType || 'image/jpeg' },
+    ]);
+    setPhotoPromptOpen(false);
+    setPhotoPreviewOpen(true);
+  };
+
+  const removePendingStagePhoto = (index: number) => {
+    setPendingStagePhotos((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const skipStagePhotos = () => {
+    setPhotoPromptOpen(false);
+    setPhotoPreviewOpen(false);
+    setPhotoPromptStage(null);
+    setPendingStagePhotos([]);
+  };
+
+  const sendStagePhotos = async () => {
+    if (pendingStagePhotos.length === 0 || !photoPromptStage) return;
+
+    // Backend batasi maks 10 foto per pesan (lihat
+    // StaffBookingMessageController::store()) — keranjang di sini bisa
+    // dipupuk dari beberapa kali pilih galeri/kamera, jadi perlu dicek
+    // sebelum kirim, bukan cuma andalkan validasi server.
+    if (pendingStagePhotos.length > 10) {
+      Alert.alert('Terlalu Banyak Foto', 'Maksimal 10 foto per pengiriman. Buang beberapa foto dulu, atau kirim sisanya sebagai pesan susulan.');
+      return;
+    }
+
+    setSendingStagePhotos(true);
+    const form = new FormData();
+    form.append('type', 'photo');
+    form.append('stage', photoPromptStage);
+    pendingStagePhotos.forEach((photo) => {
+      form.append('photos[]', photo as any);
+    });
+
+    const ok = await sendMessage(form);
+    setSendingStagePhotos(false);
+    if (ok) {
+      setPhotoPreviewOpen(false);
+      setPhotoPromptStage(null);
+      setPendingStagePhotos([]);
+    }
   };
 
   // Booking dengan KEDUA produk → Kaca Film & PPF jalan paralel (Kaca Film
@@ -535,10 +707,42 @@ export default function StaffBookingChatScreen() {
     });
   };
 
-  const renderStagePickerRows = (trackStages: StageItem[], columnValue: string | null) => {
+  // Booking 2 produk harus SELESAI KEDUA track (Kaca Film & PPF) dulu
+  // sebelum boleh "Quality Check" — SEBELUMNYA tidak dicek sama sekali:
+  // "Tahap Akhir" (qc/completed) selalu dirender dengan columnValue =
+  // currentStage (kolom track Kaca Film SAJA, lihat renderStagePickerRows
+  // di bawah + Booking::stageColumnFor() yang menaruh qc/completed balik
+  // ke current_stage). Akibatnya begitu track Kaca Film sampai tahap
+  // terakhirnya, tombol "Tandai" Quality Check langsung TERBUKA walau
+  // track PPF (secondary_stage) belum mulai/masih di tengah — booking
+  // bisa ditandai Selesai (memicu notifikasi customer, poin referral,
+  // & Jurnal Pendapatan) padahal PPF-nya belum benar-benar dikerjakan.
+  // Backend (StaffBookingMessageController::store()) juga TIDAK
+  // memvalidasi urutan/kelengkapan tahap sama sekali, jadi ini bukan
+  // cuma soal UI — dikunci di sini. Ditemukan saat audit chat & foto
+  // tahap booking 2026-09-07.
+  const kacaFilmTrackDone = !productKacaFilm || kacaFilmColumnValue === KACA_FILM_STAGES[KACA_FILM_STAGES.length - 1].key;
+  const ppfTrackDone = !productPpf || ppfColumnValue === PPF_STAGES[PPF_STAGES.length - 1].key;
+  const readyForQc = kacaFilmTrackDone && ppfTrackDone;
+
+  const renderStagePickerRows = (trackStages: StageItem[], columnValue: string | null, qcGateOk: boolean = true) => {
     const isMarkedInTrack = markedStage !== null && trackStages.some((s) => s.key === markedStage);
     const effectiveStage = isMarkedInTrack ? markedStage : columnValue;
-    const effectiveIdx = trackStages.findIndex((s) => s.key === effectiveStage);
+    let effectiveIdx = trackStages.findIndex((s) => s.key === effectiveStage);
+    // -1 punya 2 arti berbeda yang HARUS dibedakan:
+    // 1. effectiveStage === null (booking baru, belum ada tahap ditandai
+    //    sama sekali) -> track ini BELUM MULAI, semua "Tandai" harus
+    //    tetap terbuka. Biarkan effectiveIdx = -1 (perilaku asli).
+    // 2. effectiveStage adalah tahap BERSAMA (SHARED_STAGES, mis. 'qc')
+    //    -> progress sudah lewat dari track produk manapun, track ini
+    //    SUDAH SELESAI SEMUA, semua "Tandai" harus tetap terkunci.
+    // SEBELUMNYA kedua kasus disamakan (fix 2026-08-28 pertama cuma
+    // tangani kasus 2, tapi jadi ikut mengunci kasus 1 — booking baru
+    // yang belum mulai sama sekali malah semua tombolnya ikut terkunci).
+    const isSharedStageValue = effectiveStage !== null && SHARED_STAGES.some((s) => s.key === effectiveStage);
+    if (effectiveIdx === -1 && isSharedStageValue) {
+      effectiveIdx = trackStages.length - 1;
+    }
 
     return trackStages.map((s, idx) => {
       const isCompletedRow = s.key === 'completed';
@@ -546,33 +750,26 @@ export default function StaffBookingChatScreen() {
       // begitu ditandai (memicu poin referral/voucher/notifikasi "selesai"
       // ke customer lewat /complete), jadi tidak boleh sama permisifnya
       // dengan tahap internal lain yang memang boleh ditandai maju bebas.
+      const isQcRow = s.key === 'qc';
       const tandaiDisabled = isCompletedRow
         ? currentStage !== 'qc'
-        : idx <= effectiveIdx;
-      const cameraDisabled = isCompletedRow
-        ? currentStage !== 'qc'
-        : idx !== effectiveIdx;
+        : isQcRow
+          ? (idx <= effectiveIdx) || !qcGateOk
+          : idx <= effectiveIdx;
+      // Ikon kamera per baris DIHAPUS — dirombak jadi alur pop-up setelah
+      // "Tandai" ditekan (lihat handlePickStage & modal photoPromptOpen/
+      // photoPreviewOpen). Ditemukan cocok lewat permintaan redesain user
+      // 2026-08-28.
       return (
         <View key={s.key} style={styles.stagePickerRow}>
           <Ionicons name={s.icon} size={16} color={colors.textPrimary} />
           <Text style={styles.stagePickerLabel}>{s.label}</Text>
           <Pressable
             style={[styles.stagePickerBtn, tandaiDisabled && styles.stagePickerBtnDisabled]}
-            onPress={() => handlePickStage(s.key, false)}
+            onPress={() => handlePickStage(s.key)}
             disabled={tandaiDisabled}
           >
             <Text style={styles.stagePickerBtnText}>Tandai</Text>
-          </Pressable>
-          <Pressable
-            style={[
-              styles.stagePickerBtn,
-              styles.stagePickerBtnPhoto,
-              cameraDisabled && styles.stagePickerBtnDisabled,
-            ]}
-            onPress={() => handlePickStage(s.key, true)}
-            disabled={cameraDisabled}
-          >
-            <Ionicons name="camera-outline" size={14} color={cameraDisabled ? colors.textMuted : colors.accent} />
           </Pressable>
         </View>
       );
@@ -818,17 +1015,25 @@ export default function StaffBookingChatScreen() {
           {(productKacaFilm || productPpf) && (
             <Text style={styles.stagePickerGroupLabel}>Tahap Akhir</Text>
           )}
-          {renderStagePickerRows(SHARED_STAGES, currentStage)}
+          {bothProducts && !readyForQc && (
+            <Text style={styles.stagePickerHint}>
+              Quality Check baru bisa ditandai setelah track Kaca Film & PPF sama-sama sampai tahap terakhirnya.
+            </Text>
+          )}
+          {renderStagePickerRows(SHARED_STAGES, currentStage, readyForQc)}
         </View>
       )}
 
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
-      >
+      <View style={[styles.flex, { marginBottom: keyboardHeight }]}>
         <FlatList
           ref={listRef}
+          // SEBELUMNYA tidak ada style={flex:1} di sini — list menyusut
+          // mengikuti tinggi kontennya sendiri (kayak ScrollView tanpa
+          // flex), bukan mengisi sisa ruang di KeyboardAvoidingView.
+          // Akibatnya kolom input "naik" nempel tepat di bawah pesan
+          // terakhir, bukan di bawah layar, begitu pesannya sedikit.
+          // Ditemukan & diperbaiki 2026-08-28.
+          style={styles.flex}
           data={[...messages].reverse()}
           keyExtractor={(item) => String(item.id)}
           inverted
@@ -836,7 +1041,12 @@ export default function StaffBookingChatScreen() {
           renderItem={({ item }) => <MessageBubble message={item} onPhotoPress={setViewerImage} styles={styles} />}
         />
 
-        <View style={[styles.inputBar, { paddingBottom: insets.bottom > 0 ? insets.bottom : spacing.sm }]}>
+        {/* +spacing.sm ekstra di kedua kondisi — SEBELUMNYA di HP dengan
+            navigasi 3-tombol (insets.bottom = 0), kolom input cuma
+            dikasih jarak spacing.sm dari tepi layar, jadi kelihatan
+            terlalu mepet ke navigation bar Android. Ditemukan &
+            diperbaiki 2026-08-28. */}
+        <View style={[styles.inputBar, { paddingBottom: (insets.bottom > 0 ? insets.bottom : spacing.sm) + spacing.sm }]}>
           {canManageProgress && (
             <Pressable style={styles.attachBtn} onPress={() => handlePickPhoto()} disabled={sending}>
               <Ionicons name="camera-outline" size={22} color={colors.accent} />
@@ -854,7 +1064,7 @@ export default function StaffBookingChatScreen() {
             {sending ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="send" size={18} color="#ffffff" />}
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </View>
 
       {/* Lightbox — tap foto untuk lihat ukuran penuh */}
       <Modal visible={!!viewerImage} transparent animationType="fade" onRequestClose={() => setViewerImage(null)}>
@@ -898,6 +1108,93 @@ export default function StaffBookingChatScreen() {
                   <ActivityIndicator size="small" color="#ffffff" />
                 ) : (
                   <Text style={styles.completeBtnConfirmText}>Selesaikan</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Pop-up "Ingin upload foto tahap?" — muncul begitu tahap ditandai.
+          Diminta user 2026-08-28 sebagai pengganti ikon kamera per baris. */}
+      <Modal visible={photoPromptOpen} transparent animationType="fade" onRequestClose={skipStagePhotos}>
+        <View style={styles.completeBackdrop}>
+          <View style={styles.completeSheet}>
+            <Text style={styles.completeTitle}>Ingin Upload Foto Tahap?</Text>
+            <Text style={styles.completeSubtitle}>
+              Lampirkan foto progress untuk tahap ini (opsional) — bisa ambil dari galeri atau motret langsung.
+            </Text>
+
+            {/* flex:0 WAJIB di-override — completeBtn punya flex:1 yang
+                didesain untuk container ROW (completeActions), dipakai di
+                sini dalam container COLUMN tanpa tinggi pasti bikin Yoga
+                collapse tinggi tombolnya jadi 0 (tombol hilang sama
+                sekali). Ditemukan & diperbaiki 2026-08-28. */}
+            <View style={{ gap: spacing.sm, marginTop: spacing.sm }}>
+              <Pressable style={[styles.completeBtn, styles.completeBtnConfirm, { flex: 0, flexDirection: 'row' }]} onPress={addStagePhotosFromGallery}>
+                <Ionicons name="images-outline" size={18} color="#ffffff" />
+                <Text style={styles.completeBtnConfirmText}>  Pilih dari Galeri</Text>
+              </Pressable>
+              <Pressable style={[styles.completeBtn, styles.completeBtnConfirm, { flex: 0, flexDirection: 'row' }]} onPress={addStagePhotoFromCamera}>
+                <Ionicons name="camera-outline" size={18} color="#ffffff" />
+                <Text style={styles.completeBtnConfirmText}>  Ambil Foto</Text>
+              </Pressable>
+              <Pressable style={[styles.completeBtn, styles.completeBtnCancel, { flex: 0 }]} onPress={skipStagePhotos}>
+                <Text style={styles.completeBtnCancelText}>Lewati, Tidak Ada Foto</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Preview foto tahap sebelum dikirim — bisa tambah lebih banyak
+          (loop balik ke pop-up sumber) atau buang satu-satu sebelum
+          benar-benar kirim ke chat. */}
+      <Modal visible={photoPreviewOpen} transparent animationType="fade" onRequestClose={() => setPhotoPreviewOpen(false)}>
+        <View style={styles.completeBackdrop}>
+          <View style={styles.completeSheet}>
+            <Text style={styles.completeTitle}>Foto Tahap ({pendingStagePhotos.length})</Text>
+            <Text style={styles.completeSubtitle}>
+              Cek foto yang akan dikirim — ketuk × untuk buang, atau tambah lagi dari galeri/kamera.
+            </Text>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: spacing.sm }}>
+              <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                {pendingStagePhotos.map((photo, i) => (
+                  <View key={photo.uri + i} style={styles.stagePhotoPreviewItem}>
+                    <Image source={{ uri: photo.uri }} style={styles.stagePhotoPreviewImage} />
+                    <Pressable style={styles.stagePhotoPreviewRemove} onPress={() => removePendingStagePhoto(i)}>
+                      <Ionicons name="close" size={14} color="#ffffff" />
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+
+            <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
+              <Pressable style={[styles.completeBtn, styles.completeBtnCancel, { flex: 1, flexDirection: 'row' }]} onPress={addStagePhotosFromGallery}>
+                <Ionicons name="images-outline" size={16} color={colors.textPrimary} />
+                <Text style={styles.completeBtnCancelText}>  Galeri</Text>
+              </Pressable>
+              <Pressable style={[styles.completeBtn, styles.completeBtnCancel, { flex: 1, flexDirection: 'row' }]} onPress={addStagePhotoFromCamera}>
+                <Ionicons name="camera-outline" size={16} color={colors.textPrimary} />
+                <Text style={styles.completeBtnCancelText}>  Kamera</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.completeActions}>
+              <Pressable style={[styles.completeBtn, styles.completeBtnCancel]} onPress={skipStagePhotos} disabled={sendingStagePhotos}>
+                <Text style={styles.completeBtnCancelText}>Batal</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.completeBtn, styles.completeBtnConfirm]}
+                onPress={sendStagePhotos}
+                disabled={sendingStagePhotos || pendingStagePhotos.length === 0}
+              >
+                {sendingStagePhotos ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={styles.completeBtnConfirmText}>Kirim ({pendingStagePhotos.length})</Text>
                 )}
               </Pressable>
             </View>
@@ -1063,7 +1360,10 @@ export default function StaffBookingChatScreen() {
                           size={18}
                           color={checked ? colors.accent : colors.textMuted}
                         />
-                        <Text style={styles.assignOptionText}>{opt.name}</Text>
+                        <Text style={styles.assignOptionText}>
+                          {opt.name}
+                          {opt.level ? ` (${TECHNICIAN_LEVEL_LABEL[opt.level] ?? opt.level})` : ''}
+                        </Text>
                       </Pressable>
                     );
                   })}
@@ -1158,6 +1458,16 @@ function MessageBubble({
 
   return (
     <View style={[styles.bubbleWrap, isAdmin ? styles.bubbleWrapRight : styles.bubbleWrapLeft]}>
+      {/* SEBELUMNYA sender_name sudah dikirim backend tapi tidak pernah
+          ditampilkan di sini — semua pesan staff (installer, store
+          manager, siapa pun) tampil identik, staff lain yang buka
+          booking yang sama tidak tahu siapa sebenarnya yang menulis
+          pesan itu. Cuma untuk pesan admin — pesan customer selalu dari
+          1 orang yang sama (pemilik booking), tidak perlu label.
+          Ditemukan & diperbaiki 2026-08-28. */}
+      {isAdmin && message.sender_name && (
+        <Text style={styles.senderNameLabel}>{message.sender_name}</Text>
+      )}
       <View style={[styles.bubble, isAdmin ? styles.bubbleAdmin : styles.bubbleCustomer]}>
         {message.photo_urls.length > 0 && (
           <PhotoGrid photoUrls={message.photo_urls} onPhotoPress={onPhotoPress} styles={styles} />
@@ -1289,14 +1599,24 @@ function createStyles(colors: typeof darkColors) {
     backgroundColor: colors.accent,
   },
   stagePickerBtnText: { fontSize: fontSize.xs, fontWeight: '700', color: '#ffffff' },
-  stagePickerBtnPhoto: { backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.accent, paddingHorizontal: 8 },
   stagePickerBtnDisabled: { backgroundColor: colors.border, borderColor: colors.border, opacity: 0.5 },
+  stagePhotoPreviewItem: { width: 90, height: 90, borderRadius: radius.md, overflow: 'hidden' },
+  stagePhotoPreviewImage: { width: '100%', height: '100%' },
+  stagePhotoPreviewRemove: {
+    position: 'absolute', top: 4, right: 4, width: 20, height: 20, borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center',
+  },
 
   messageList: { padding: spacing.md, gap: spacing.sm },
 
+  // alignItems per sisi WAJIB diisi eksplisit — default React Native
+  // 'stretch' bikin semua child (bubble, label nama, jam) menyesuaikan
+  // lebar sibling TERLEBAR (label nama pengirim, mis. "Admin Toko Test
+  // Toko"), jadi bubble teks pendek (mis. "Test") ikut melebar kosong.
+  // Ditemukan & diperbaiki 2026-08-28.
   bubbleWrap: { maxWidth: '78%', gap: 2 },
-  bubbleWrapLeft: { alignSelf: 'flex-start' },
-  bubbleWrapRight: { alignSelf: 'flex-end' },
+  bubbleWrapLeft: { alignSelf: 'flex-start', alignItems: 'flex-start' },
+  bubbleWrapRight: { alignSelf: 'flex-end', alignItems: 'flex-end' },
   bubble: { borderRadius: radius.lg, padding: spacing.sm, overflow: 'hidden' },
   bubbleAdmin: { backgroundColor: colors.accent, borderBottomRightRadius: 4 },
   bubbleCustomer: { backgroundColor: colors.surface, borderBottomLeftRadius: 4 },
@@ -1309,6 +1629,7 @@ function createStyles(colors: typeof darkColors) {
   },
   photoGridItem: { width: 98, height: 98, borderRadius: radius.sm },
   messageTime: { fontSize: 10, color: colors.textMuted, alignSelf: 'flex-end' },
+  senderNameLabel: { fontSize: 10, fontWeight: '700', color: colors.textMuted, alignSelf: 'flex-end', marginBottom: 2, marginRight: 2 },
   stageMessageTime: { fontSize: 10, color: colors.textMuted, alignSelf: 'center' },
 
   stageMessageWrap: { alignSelf: 'center', alignItems: 'center', gap: 4, marginVertical: spacing.xs },

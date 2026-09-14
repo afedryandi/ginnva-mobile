@@ -30,11 +30,46 @@ export default function InventoryHomeScreen() {
   // backend. Lihat AuthController::transform() untuk asal flag ini.
   const menuItems = [
     {
+      key: 'attendance',
+      icon: 'finger-print-outline' as const,
+      title: 'Absensi & Izin',
+      description: 'Absen masuk/keluar dan ajukan izin/cuti',
+      onPress: () => router.push('/staff/attendance' as never),
+      // SENGAJA selalu true (tidak dibatasi hasMenuAccess seperti item
+      // lain di bawah) — absen kewajiban dasar semua staff, lihat catatan
+      // di AttendanceController.
+      visible: true,
+    },
+    {
+      key: 'payroll',
+      icon: 'cash-outline' as const,
+      title: 'Slip Gaji',
+      description: 'Lihat rincian gaji bulanan sendiri',
+      onPress: () => router.push('/staff/payroll' as never),
+      visible: true,
+    },
+    {
+      key: 'quotations',
+      icon: 'document-text-outline' as const,
+      title: 'Lead Quotation',
+      description: 'Kelola lead permintaan penawaran dari customer',
+      onPress: () => router.push('/staff/quotations' as never),
+      visible: staff?.has_quotation_access,
+    },
+    {
       key: 'inventory',
       icon: 'cube-outline' as const,
       title: 'Barang (Produk PPF/WF)',
       description: 'Scan QR untuk lihat detail & catat keluar/masuk',
       onPress: () => router.push('/staff/inventory/scan' as never),
+      visible: staff?.has_ppf_wf_access,
+    },
+    {
+      key: 'roll-scraps',
+      icon: 'cut-outline' as const,
+      title: 'Sisa Roll',
+      description: 'Cek & pakai sisa panjang/potongan roll yang sudah dikumpulkan',
+      onPress: () => router.push('/staff/inventory/scraps' as never),
       visible: staff?.has_ppf_wf_access,
     },
     {
@@ -68,6 +103,14 @@ export default function InventoryHomeScreen() {
       description: 'Catat barang keluar-masuk untuk 1 instalasi sekaligus',
       onPress: () => router.push('/staff/memos' as never),
       visible: staff?.has_material_memo_access,
+    },
+    {
+      key: 'purchase-requests',
+      icon: 'cart-outline' as const,
+      title: 'Permohonan Pembelian',
+      description: 'Ajukan permintaan restock/aset baru & pantau statusnya',
+      onPress: () => router.push('/staff/purchase-requests' as never),
+      visible: staff?.has_purchase_request_access,
     },
   ].filter((item) => item.visible);
 

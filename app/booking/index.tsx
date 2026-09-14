@@ -422,8 +422,17 @@ export default function BookingScreen() {
                     <Text style={[styles.dateChipDate, isSelected && styles.dateChipTextActive, isBlocked && styles.dateChipTextBlocked]}>
                       {d.date}
                     </Text>
+                    {/* Label SEBELUMNYA "Penuh" untuk tanggal di blockedDates —
+                        menyesatkan, karena blockedDates murni tanggal yang
+                        diblokir manual oleh admin toko (lihat
+                        Store::isClosedOn()), BUKAN hasil pengecekan
+                        kapasitas slot instalasi real-time. Kapasitas baru
+                        benar-benar dicek staff saat approve
+                        (Booking::fullDatesInRange()). "Tidak Tersedia"
+                        tidak mengklaim ada pengecekan slot yang sebenarnya
+                        belum terjadi di titik ini. */}
                     {isBlocked && (
-                      <Text style={styles.dateChipBlockedLabel}>{isClosed ? 'Tutup' : 'Penuh'}</Text>
+                      <Text style={styles.dateChipBlockedLabel}>{isClosed ? 'Tutup' : 'Tidak Tersedia'}</Text>
                     )}
                   </Pressable>
                 );

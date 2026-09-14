@@ -13,8 +13,9 @@ import { useStaffAuth } from '@/lib/staff-auth-context';
 
 interface Movement {
   id: number;
-  type: 'in' | 'out';
+  type: 'in' | 'out' | 'correction';
   note: string | null;
+  destination_store: { id: number; name: string } | null;
   user: { id: number; name: string } | null;
   created_at: string;
 }
@@ -52,6 +53,12 @@ interface InventoryItemData {
   notes: string | null;
   movements: Movement[];
   scroll_code: ScrollCodeInfo | null;
+}
+
+interface ShowResponse {
+  data: InventoryItemData;
+  stores: Store[];
+  movements_has_more: boolean;
 }
 
 // 1 kardus/kemasan SELALU 1 unit — tidak ada kuantitas untuk diisi.
@@ -95,17 +102,51 @@ export default function InventoryItemScreen() {
   const [usageError, setUsageError] = useState<string | null>(null);
   const [recordingUsage, setRecordingUsage] = useState(false);
 
+  // "Kumpulkan Sisa" (diminta 2026-09-14) — pindahkan sisa panjang +
+  // estimasi potongan lebar roll ini ke pool "Sisa Roll" toko+produknya,
+  // supaya bisa dipakai lagi tanpa buka roll baru. Lihat
+  // RollScrapPool::collectFrom() di backend.
+  const [collectFormOpen, setCollectFormOpen] = useState(false);
+  const [collectMeters, setCollectMeters] = useState('');
+  const [collectNote, setCollectNote] = useState('');
+  const [collectError, setCollectError] = useState<string | null>(null);
+  const [collecting, setCollecting] = useState(false);
+
+  // "Muat Riwayat Lainnya" — show() cuma kirim 20 baris pertama, baris
+  // tambahan yang dimuat manual ditampung terpisah lalu digabung ke
+  // item.movements saat render, supaya tidak perlu ubah bentuk state utama.
+  const [extraMovements, setExtraMovements] = useState<Movement[]>([]);
+  const [hasMoreMovements, setHasMoreMovements] = useState(false);
+  const [loadingMoreMovements, setLoadingMoreMovements] = useState(false);
+
   const fetchItem = useCallback(() => {
     setError(null);
-    return staffApiFetch<{ data: InventoryItemData; stores: Store[] }>(`/api/staff/inventory/${encodeURIComponent(code)}`)
+    return staffApiFetch<ShowResponse>(`/api/staff/inventory/${encodeURIComponent(code)}`)
       .then((res) => {
         setItem(res.data);
         setStores(res.stores);
+        setExtraMovements([]);
+        setHasMoreMovements(res.movements_has_more);
       })
       .catch((err) => {
         setError(err instanceof ApiError ? err.message : 'Barang tidak ditemukan atau koneksi bermasalah.');
       });
   }, [code]);
+
+  const loadMoreMovements = useCallback(() => {
+    if (!item) return;
+
+    setLoadingMoreMovements(true);
+    staffApiFetch<{ data: Movement[]; has_more: boolean }>(
+      `/api/staff/inventory/${encodeURIComponent(code)}/movements?offset=${item.movements.length + extraMovements.length}`
+    )
+      .then((res) => {
+        setExtraMovements((prev) => [...prev, ...res.data]);
+        setHasMoreMovements(res.has_more);
+      })
+      .catch(() => hapticError())
+      .finally(() => setLoadingMoreMovements(false));
+  }, [code, item, extraMovements.length]);
 
   useEffect(() => {
     setLoading(true);
@@ -118,8 +159,13 @@ export default function InventoryItemScreen() {
     setRefreshing(false);
   }, [fetchItem]);
 
+  // SEBELUMNYA cuma diwajibkan kalau barangnya punya kode gulungan
+  // terkait — barang PPF/WF polos yang di-scan keluar oleh full-access
+  // jadi tidak pernah tercatat tujuannya. Sekarang berlaku untuk SEMUA
+  // "keluar" oleh full-access, konsisten dengan backend (lihat
+  // InventoryController::storeMovement()).
   const needsStorePicker = (type: 'in' | 'out') =>
-    type === 'out' && isFullAccess && !!item?.scroll_code;
+    type === 'out' && isFullAccess;
 
   const openForm = (type: 'in' | 'out') => {
     setForm({ type, note: '', storeId: null });
@@ -130,7 +176,7 @@ export default function InventoryItemScreen() {
     if (!form) return;
 
     if (needsStorePicker(form.type) && !form.storeId) {
-      setFormError('Pilih toko tujuan dulu — barang ini punya kode gulungan yang perlu dialokasikan.');
+      setFormError('Pilih toko tujuan dulu.');
       return;
     }
 
@@ -237,6 +283,35 @@ export default function InventoryItemScreen() {
       .finally(() => setRecordingUsage(false));
   };
 
+  const handleCollectScrap = () => {
+    const meters = parseFloat(collectMeters.replace(',', '.'));
+    if (!meters || meters <= 0) {
+      setCollectError('Isi jumlah meter yang valid (lebih dari 0).');
+      return;
+    }
+
+    setCollecting(true);
+    setCollectError(null);
+
+    staffApiFetch<{ message: string; data: InventoryItemData }>(
+      `/api/staff/inventory/${encodeURIComponent(code)}/collect-scrap`,
+      { method: 'POST', body: JSON.stringify({ meters, note: collectNote.trim() || undefined }) }
+    )
+      .then((res) => {
+        hapticSuccess();
+        setItem(res.data);
+        setCollectFormOpen(false);
+        setCollectMeters('');
+        setCollectNote('');
+        Alert.alert('Berhasil', res.message);
+      })
+      .catch((err) => {
+        hapticError();
+        setCollectError(err instanceof ApiError ? err.message : 'Gagal mengumpulkan sisa. Periksa koneksi internet Anda.');
+      })
+      .finally(() => setCollecting(false));
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
@@ -314,7 +389,7 @@ export default function InventoryItemScreen() {
             )}
           </View>
 
-          {item.scroll_code?.total_length_meters !== null && item.scroll_code?.status !== 'used' && !form && (
+          {item.scroll_code?.total_length_meters !== null && item.scroll_code?.status !== 'used' && !form && !collectFormOpen && (
             usageFormOpen ? (
               <View style={styles.card}>
                 <Text style={styles.formTitle}>Catat Pemakaian</Text>
@@ -360,13 +435,69 @@ export default function InventoryItemScreen() {
             )
           )}
 
-          {item.scroll_code?.status === 'allocated' && !form && !usageFormOpen && (
+          {item.scroll_code && item.scroll_code.total_length_meters === null && item.scroll_code.status !== 'used' && !form && (
+            <Text style={styles.helperTextSmall}>
+              Kode gulungan ini belum punya data Total Panjang, jadi pemakaian meter belum bisa dicatat — minta admin isi lewat menu Kode Gulungan dulu.
+            </Text>
+          )}
+
+          {item.scroll_code?.status === 'allocated' && !form && !usageFormOpen && !collectFormOpen && (
             <Button
               label={markingUsed ? 'Memproses...' : 'Tandai Habis'}
               variant="outline"
               onPress={handleMarkUsed}
               loading={markingUsed}
             />
+          )}
+
+          {item.scroll_code && item.scroll_code.status !== 'used' && !form && !usageFormOpen && (
+            collectFormOpen ? (
+              <View style={styles.card}>
+                <Text style={styles.formTitle}>Kumpulkan Sisa</Text>
+                <Text style={styles.helperTextSmall}>
+                  Gabungkan sisa panjang + estimasi potongan lebar yang masih bisa dipakai (di luar sisa panjang) ke pool "Sisa Roll" — roll ini akan otomatis ditandai habis.
+                </Text>
+
+                <Text style={styles.fieldLabel}>Total Sisa (meter)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="0"
+                  placeholderTextColor={colors.textMuted}
+                  value={collectMeters}
+                  onChangeText={setCollectMeters}
+                  keyboardType="decimal-pad"
+                  autoFocus
+                />
+
+                <Text style={styles.fieldLabel}>Catatan (opsional)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Mis. kondisi sisa, kenapa segini banyaknya"
+                  placeholderTextColor={colors.textMuted}
+                  value={collectNote}
+                  onChangeText={setCollectNote}
+                />
+
+                {collectError && <Text style={styles.errorText}>{collectError}</Text>}
+                <View style={styles.formActions}>
+                  <Pressable
+                    style={styles.cancelButton}
+                    onPress={() => { setCollectFormOpen(false); setCollectMeters(''); setCollectNote(''); setCollectError(null); }}
+                    disabled={collecting}
+                  >
+                    <Text style={styles.cancelButtonText}>Batal</Text>
+                  </Pressable>
+                  <Button
+                    label={collecting ? 'Menyimpan...' : 'Simpan'}
+                    onPress={handleCollectScrap}
+                    loading={collecting}
+                    style={{ flex: 1 }}
+                  />
+                </View>
+              </View>
+            ) : (
+              <Button label="Kumpulkan Sisa" variant="outline" onPress={() => setCollectFormOpen(true)} />
+            )
           )}
 
           {form ? (
@@ -463,23 +594,40 @@ export default function InventoryItemScreen() {
           {item.movements.length === 0 ? (
             <Text style={styles.emptyHistoryText}>Belum ada riwayat keluar/masuk untuk barang ini.</Text>
           ) : (
-            item.movements.map((m) => (
-              <View key={m.id} style={styles.historyRow}>
-                <Ionicons
-                  name={m.type === 'in' ? 'arrow-down-circle' : 'arrow-up-circle'}
-                  size={20}
-                  color={m.type === 'in' ? colors.success : colors.danger}
-                />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.historyText}>
-                    {m.type === 'in' ? 'Masuk' : 'Keluar'}
-                    {m.user ? ` — ${m.user.name}` : ''}
-                  </Text>
-                  {m.note && <Text style={styles.historyNote}>{m.note}</Text>}
-                  <Text style={styles.historyDate}>{formatDateTime(m.created_at)}</Text>
+            <>
+              {[...item.movements, ...extraMovements].map((m) => (
+                <View key={m.id} style={styles.historyRow}>
+                  <Ionicons
+                    name={m.type === 'in' ? 'arrow-down-circle' : m.type === 'out' ? 'arrow-up-circle' : 'arrow-undo-circle'}
+                    size={20}
+                    color={m.type === 'in' ? colors.success : m.type === 'out' ? colors.danger : colors.textMuted}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.historyText}>
+                      {m.type === 'in' ? 'Masuk' : m.type === 'out' ? 'Keluar' : 'Koreksi'}
+                      {m.destination_store ? ` — ke ${m.destination_store.name}` : ''}
+                      {m.user ? ` — ${m.user.name}` : ''}
+                    </Text>
+                    {m.note && <Text style={styles.historyNote}>{m.note}</Text>}
+                    <Text style={styles.historyDate}>{formatDateTime(m.created_at)}</Text>
+                  </View>
                 </View>
-              </View>
-            ))
+              ))}
+
+              {hasMoreMovements && (
+                <Pressable
+                  style={styles.loadMoreButton}
+                  onPress={loadMoreMovements}
+                  disabled={loadingMoreMovements}
+                >
+                  {loadingMoreMovements ? (
+                    <ActivityIndicator size="small" color={colors.accent} />
+                  ) : (
+                    <Text style={styles.loadMoreText}>Muat Riwayat Lainnya</Text>
+                  )}
+                </Pressable>
+              )}
+            </>
           )}
         </ScrollView>
       )}
@@ -590,6 +738,8 @@ function createStyles(colors: typeof darkColors) {
     cancelButtonText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
     historyTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary, marginTop: spacing.sm },
     emptyHistoryText: { fontSize: fontSize.sm, color: colors.textMuted },
+    loadMoreButton: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.sm, marginTop: spacing.xs },
+    loadMoreText: { fontSize: fontSize.sm, fontWeight: '600', color: colors.accent },
     historyRow: {
       flexDirection: 'row',
       gap: spacing.sm,

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Modal,
   View,
@@ -7,8 +7,8 @@ import {
   FlatList,
   Pressable,
   StyleSheet,
-  KeyboardAvoidingView,
   Platform,
+  Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -39,13 +39,34 @@ export function PickerModal({
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [query, setQuery] = useState('');
 
-  const filtered = useMemo(
-    () =>
-      query.trim()
-        ? options.filter((o) => o.toLowerCase().includes(query.toLowerCase()))
-        : options,
-    [query, options]
-  );
+  // SEBELUMNYA query TIDAK di-trim sebelum dibandingkan — kalau ada spasi
+  // nyangkut di akhir ketikan (mis. "Toyota " lewat keyboard suggestion/
+  // autocomplete), "toyota".includes("toyota ") selalu false karena
+  // string yang dicari lebih panjang, jadi hasil selalu kosong padahal
+  // datanya ada. Bug dilaporkan user 2026-08-27.
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? options.filter((o) => o.toLowerCase().includes(q)) : options;
+  }, [query, options]);
+
+  // KeyboardAvoidingView TIDAK reliable di dalam React Native Modal,
+  // khususnya Android — Modal render di layer native terpisah yang tidak
+  // ikut logic auto-resize KeyboardAvoidingView. SEBELUMNYA daftar hasil
+  // pencarian ketutup keyboard begitu keyboard muncul. Solusinya: lacak
+  // tinggi keyboard manual lewat Keyboard API, dorong sheet ke atas
+  // sejumlah itu, bukan mengandalkan KeyboardAvoidingView sama sekali.
+  // Bug dilaporkan user 2026-08-27.
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates.height));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const handleSelect = (value: string) => {
     onSelect(value);
@@ -61,9 +82,15 @@ export function PickerModal({
   return (
     <Modal visible={visible} animationType={Platform.OS === 'ios' ? 'slide' : 'fade'} transparent onRequestClose={handleClose}>
       <Pressable style={styles.overlay} onPress={handleClose} />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={[styles.sheet, { paddingBottom: insets.bottom + spacing.md }]}
+      <View
+        style={[
+          styles.sheet,
+          {
+            paddingBottom: insets.bottom + spacing.md,
+            marginBottom: keyboardHeight,
+            maxHeight: keyboardHeight ? '55%' : '75%',
+          },
+        ]}
       >
         {/* Handle bar */}
         <View style={styles.handle} />
@@ -119,7 +146,7 @@ export function PickerModal({
             );
           }}
         />
-      </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }

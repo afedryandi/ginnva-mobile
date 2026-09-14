@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, Pressable, RefreshControl, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, FlatList, StyleSheet, Pressable, RefreshControl, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -60,6 +60,7 @@ export default function MyBookingsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<number | null>(null);
 
   const load = (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -85,6 +86,43 @@ export default function MyBookingsScreen() {
   useEffect(() => {
     load();
   }, []);
+
+  // Batalkan booking sendiri — SEBELUMNYA tidak ada aksi ini sama sekali,
+  // customer terpaksa hubungi toko manual untuk batal. Dibatasi ke
+  // status 'pending' saja oleh backend (lihat
+  // Customer\BookingController::cancel()), jadi tombol ini pun cuma
+  // ditampilkan untuk booking 'pending'.
+  const handleCancel = (booking: MyBooking) => {
+    Alert.alert(
+      'Batalkan Booking?',
+      `Booking ${booking.booking_number} akan dibatalkan. Tindakan ini tidak bisa dibatalkan.`,
+      [
+        { text: 'Tidak', style: 'cancel' },
+        {
+          text: 'Ya, Batalkan',
+          style: 'destructive',
+          onPress: () => {
+            setCancellingId(booking.id);
+            apiFetch<{ success: boolean; message: string }>(`/api/customer/bookings/${booking.id}/cancel`, {
+              method: 'POST',
+            })
+              .then(() => {
+                hapticSuccess();
+                load();
+              })
+              .catch((err) => {
+                hapticError();
+                Alert.alert(
+                  'Gagal Membatalkan',
+                  err instanceof ApiError ? err.message : 'Terjadi kesalahan. Coba lagi.'
+                );
+              })
+              .finally(() => setCancellingId(null));
+          },
+        },
+      ]
+    );
+  };
 
   const refreshControl = (
     <RefreshControl
@@ -205,6 +243,23 @@ export default function MyBookingsScreen() {
                   >
                     <Ionicons name="chatbubbles-outline" size={16} color={colors.accent} />
                     <Text style={styles.chatBtnText}>Progress & Chat dengan Toko</Text>
+                  </Pressable>
+                )}
+
+                {item.status === 'pending' && (
+                  <Pressable
+                    style={styles.cancelBtn}
+                    disabled={cancellingId === item.id}
+                    onPress={() => handleCancel(item)}
+                  >
+                    {cancellingId === item.id ? (
+                      <ActivityIndicator size="small" color={colors.danger} />
+                    ) : (
+                      <>
+                        <Ionicons name="close-circle-outline" size={16} color={colors.danger} />
+                        <Text style={styles.cancelBtnText}>Batalkan Booking</Text>
+                      </>
+                    )}
                   </Pressable>
                 )}
               </View>
@@ -343,6 +398,20 @@ function createStyles(colors: typeof darkColors) {
     fontSize: fontSize.sm,
     fontWeight: '700',
     color: colors.accent,
+  },
+  cancelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: spacing.xs,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+  },
+  cancelBtnText: {
+    fontSize: fontSize.sm,
+    fontWeight: '700',
+    color: colors.danger,
   },
   });
 }

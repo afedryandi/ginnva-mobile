@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TextInput, Pressable, StyleSheet,
-  KeyboardAvoidingView, Platform, Image, ActivityIndicator, Modal, Linking, useWindowDimensions, Alert,
+  Platform, Image, ActivityIndicator, Modal, Linking, useWindowDimensions, Alert, Keyboard,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -20,17 +20,35 @@ interface StoreInfo {
 
 type Sentiment = 'positive' | 'neutral' | 'negative';
 
+// Dipakai bareng oleh modal review (pilihan sentimen) & kartu ringkasan
+// "Ulasan kamu" setelah submit — sebelumnya array ini cuma inline di
+// dalam modal, sekarang diekstrak supaya bisa dipakai ulang. Lihat audit
+// modul Review Toko 2026-08-27.
+const SENTIMENT_META: Record<Sentiment, { label: string; icon: keyof typeof Ionicons.glyphMap }> = {
+  positive: { label: 'Puas', icon: 'happy-outline' },
+  neutral: { label: 'Biasa Saja', icon: 'remove-circle-outline' },
+  negative: { label: 'Kurang Puas', icon: 'sad-outline' },
+};
+
+const REVIEW_COMMENT_MAX_LENGTH = 2000;
+
 // Sama persis dengan StoreReview::TAGS di backend — kalau berubah di
 // sana, samakan juga di sini.
-const REVIEW_TAGS: { key: string; label: string }[] = [
-  { key: 'pelayanan_ramah', label: 'Pelayanan Ramah' },
-  { key: 'hasil_rapi', label: 'Hasil Rapi & Memuaskan' },
-  { key: 'harga_worth_it', label: 'Harga Sepadan (Worth It)' },
-  { key: 'proses_cepat', label: 'Proses Cepat' },
-  { key: 'pelayanan_kurang', label: 'Pelayanan Kurang Ramah' },
-  { key: 'hasil_kurang_rapi', label: 'Hasil Kurang Rapi' },
-  { key: 'harga_kurang_sesuai', label: 'Harga Kurang Sesuai' },
-  { key: 'proses_lambat', label: 'Proses Lambat' },
+// SEBELUMNYA tidak ada 'polarity' — semua 8 tag (4 positif + 4 negatif)
+// tampil bercampur apa pun sentimen yang dipilih ("Puas" tetap
+// menampilkan opsi "Pelayanan Kurang Ramah", dst), membingungkan.
+// Sekarang difilter di render: sentimen positif cuma tampilkan tag
+// positif, negatif cuma tag negatif, netral tampilkan semua (tidak
+// condong ke salah satu). Ditemukan & diperbaiki 2026-08-28.
+const REVIEW_TAGS: { key: string; label: string; polarity: 'positive' | 'negative' }[] = [
+  { key: 'pelayanan_ramah', label: 'Pelayanan Ramah', polarity: 'positive' },
+  { key: 'hasil_rapi', label: 'Hasil Rapi & Memuaskan', polarity: 'positive' },
+  { key: 'harga_worth_it', label: 'Harga Sepadan (Worth It)', polarity: 'positive' },
+  { key: 'proses_cepat', label: 'Proses Cepat', polarity: 'positive' },
+  { key: 'pelayanan_kurang', label: 'Pelayanan Kurang Ramah', polarity: 'negative' },
+  { key: 'hasil_kurang_rapi', label: 'Hasil Kurang Rapi', polarity: 'negative' },
+  { key: 'harga_kurang_sesuai', label: 'Harga Kurang Sesuai', polarity: 'negative' },
+  { key: 'proses_lambat', label: 'Proses Lambat', polarity: 'negative' },
 ];
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -97,6 +115,22 @@ export default function CustomerBookingChatScreen() {
   const [sending, setSending] = useState(false);
   const listRef = useRef<FlatList>(null);
   const insets = useSafeAreaInsets();
+
+  // KeyboardAvoidingView bawaan RN tidak reliable di Android untuk
+  // layar ini — sama bug dengan app/staff/bookings/[id].tsx, lihat
+  // catatan di sana. Pola manual ini sudah terbukti jalan di
+  // components/ui/PickerModal.tsx. Ditemukan & diperbaiki 2026-08-28.
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates.height));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
   const [viewerImage, setViewerImage] = useState<string | null>(null);
   // Beberapa foto tahap diambil staff dalam posisi HP portrait padahal
   // objeknya landscape (mis. bodi mobil) — tombol flip ini biarkan customer
@@ -121,6 +155,11 @@ export default function CustomerBookingChatScreen() {
   // positif (lihat handleSubmitReview), supaya tidak menyembunyikan
   // keluhan tapi juga tidak aktif dorong publish keluhan ke publik.
   const [hasReview, setHasReview] = useState(false);
+  // Ringkasan ulasan yang sudah dikirim — SEBELUMNYA cuma boolean
+  // hasReview yang dipakai buat sembunyikan banner total, customer tidak
+  // bisa lihat ulang apa yang mereka kirim dari dalam app. Lihat audit
+  // modul Review Toko 2026-08-27.
+  const [review, setReview] = useState<{ sentiment: Sentiment; comment: string | null; created_at: string } | null>(null);
   // Dismiss lokal per-sesi (bukan disimpan ke backend) — supaya customer
   // yang belum siap kasih review tidak terjebak melihat banner yang sama
   // setiap kali buka chat ini, tanpa harus benar-benar submit review cuma
@@ -144,6 +183,7 @@ export default function CustomerBookingChatScreen() {
         messages: BookingMessage[];
         store: StoreInfo | null;
         has_review: boolean;
+        review: { sentiment: Sentiment; comment: string | null; created_at: string } | null;
       };
     }>(`/api/customer/bookings/${bookingId}/messages`)
       .then((res) => {
@@ -154,6 +194,7 @@ export default function CustomerBookingChatScreen() {
         setProductPpf(res.data.product_ppf);
         setStore(res.data.store);
         setHasReview(res.data.has_review);
+        setReview(res.data.review);
       })
       .catch(() => { /* silent, polling akan coba lagi */ });
   }, [bookingId]);
@@ -184,6 +225,7 @@ export default function CustomerBookingChatScreen() {
       .then((res) => {
         setReviewModalOpen(false);
         setHasReview(true);
+        setReview({ sentiment: reviewSentiment, comment: reviewComment.trim() || null, created_at: new Date().toISOString() });
         resetReviewForm();
 
         if (res.data.suggest_google_review && store?.google_place_id) {
@@ -342,6 +384,24 @@ export default function CustomerBookingChatScreen() {
         </Pressable>
       )}
 
+      {/* Ringkasan ulasan yang sudah dikirim — SEBELUMNYA banner cuma
+          disembunyikan total setelah submit, customer tidak bisa lihat
+          ulang apa yang mereka kirim tanpa buka Filament (yang mereka
+          tak punya akses). Lihat audit modul Review Toko 2026-08-27. */}
+      {currentStage === 'completed' && hasReview && review && (
+        <View style={styles.reviewSummaryCard}>
+          <Ionicons name={SENTIMENT_META[review.sentiment].icon} size={20} color={colors.accent} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.reviewSummaryTitle}>
+              Ulasan kamu: {SENTIMENT_META[review.sentiment].label}
+            </Text>
+            {review.comment ? (
+              <Text style={styles.reviewSummaryComment} numberOfLines={2}>{review.comment}</Text>
+            ) : null}
+          </View>
+        </View>
+      )}
+
       {!currentStage && (
         <View style={styles.pendingNotice}>
           <Ionicons name="time-outline" size={16} color={colors.textSecondary} />
@@ -375,13 +435,15 @@ export default function CustomerBookingChatScreen() {
         </View>
       )}
 
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
-      >
+      <View style={[styles.flex, { marginBottom: keyboardHeight }]}>
         <FlatList
           ref={listRef}
+          // Sama bug dengan layar chat staff — tanpa style={flex:1} list
+          // menyusut mengikuti kontennya sendiri, kolom input jadi
+          // "naik" nempel di bawah pesan terakhir alih-alih di bawah
+          // layar begitu pesannya sedikit. Ditemukan & diperbaiki
+          // 2026-08-28.
+          style={styles.flex}
           data={[...messages].reverse()}
           keyExtractor={(item) => String(item.id)}
           inverted
@@ -396,7 +458,8 @@ export default function CustomerBookingChatScreen() {
           )}
         />
 
-        <View style={[styles.inputBar, { paddingBottom: insets.bottom > 0 ? insets.bottom : spacing.sm }]}>
+        {/* +spacing.sm ekstra — sama alasan dengan layar chat staff. */}
+        <View style={[styles.inputBar, { paddingBottom: (insets.bottom > 0 ? insets.bottom : spacing.sm) + spacing.sm }]}>
           <TextInput
             style={styles.input}
             placeholder="Ketik pesan ke toko..."
@@ -409,7 +472,7 @@ export default function CustomerBookingChatScreen() {
             {sending ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="send" size={18} color="#ffffff" />}
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </View>
 
       {/* Lightbox — tap foto untuk lihat ukuran penuh */}
       <Modal visible={!!viewerImage} transparent animationType="fade" onRequestClose={() => setViewerImage(null)}>
@@ -447,7 +510,11 @@ export default function CustomerBookingChatScreen() {
         onRequestClose={() => setReviewModalOpen(false)}
       >
         <View style={styles.reviewModalBackdrop}>
-          <View style={styles.reviewModalCard}>
+          {/* SEBELUMNYA padding bawah cuma spacing.lg tetap, tidak
+              mempertimbangkan navigation bar Android 3-tombol — tombol
+              "Kirim Ulasan" ketutup nav bar di device begitu. Ditemukan
+              & diperbaiki 2026-08-28. */}
+          <View style={[styles.reviewModalCard, { paddingBottom: spacing.lg + (insets.bottom > 0 ? insets.bottom : spacing.md) }]}>
             <View style={styles.reviewModalHeader}>
               <Text style={styles.reviewModalTitle}>Bagaimana pengalamanmu?</Text>
               <Pressable onPress={() => setReviewModalOpen(false)}>
@@ -456,17 +523,21 @@ export default function CustomerBookingChatScreen() {
             </View>
 
             <View style={styles.reviewSentimentRow}>
-              {([
-                { key: 'positive', label: 'Puas', icon: 'happy-outline' },
-                { key: 'neutral', label: 'Biasa Saja', icon: 'remove-circle-outline' },
-                { key: 'negative', label: 'Kurang Puas', icon: 'sad-outline' },
-              ] as { key: Sentiment; label: string; icon: keyof typeof Ionicons.glyphMap }[]).map((opt) => {
-                const active = reviewSentiment === opt.key;
+              {(Object.entries(SENTIMENT_META) as [Sentiment, typeof SENTIMENT_META[Sentiment]][]).map(([key, opt]) => {
+                const active = reviewSentiment === key;
                 return (
                   <Pressable
-                    key={opt.key}
+                    key={key}
                     style={[styles.reviewSentimentBtn, active && styles.reviewSentimentBtnActive]}
-                    onPress={() => setReviewSentiment(opt.key)}
+                    onPress={() => {
+                      setReviewSentiment(key);
+                      // Reset tag yang sudah dipilih — kalau tidak, tag
+                      // dari polaritas sebelumnya (mis. "Proses Lambat"
+                      // waktu masih pilih "Kurang Puas") tetap tersimpan
+                      // di state & ikut terkirim diam-diam walau sudah
+                      // tidak terlihat lagi setelah ganti ke "Puas".
+                      setReviewTags([]);
+                    }}
                   >
                     <Ionicons name={opt.icon} size={26} color={active ? '#ffffff' : colors.textPrimary} />
                     <Text style={[styles.reviewSentimentLabel, active && styles.reviewSentimentLabelActive]}>
@@ -481,7 +552,7 @@ export default function CustomerBookingChatScreen() {
               <>
                 <Text style={styles.reviewSectionLabel}>Apa yang paling terasa? (opsional)</Text>
                 <View style={styles.reviewTagsWrap}>
-                  {REVIEW_TAGS.map((tag) => {
+                  {REVIEW_TAGS.filter((tag) => reviewSentiment === 'neutral' || tag.polarity === reviewSentiment).map((tag) => {
                     const active = reviewTags.includes(tag.key);
                     return (
                       <Pressable
@@ -497,13 +568,24 @@ export default function CustomerBookingChatScreen() {
                   })}
                 </View>
 
-                <Text style={styles.reviewSectionLabel}>Komentar tambahan (opsional)</Text>
+                <View style={styles.reviewSectionLabelRow}>
+                  <Text style={styles.reviewSectionLabel}>Komentar tambahan (opsional)</Text>
+                  {/* Sebelumnya tidak ada validasi panjang di client sama
+                      sekali — baru gagal setelah request ke server kalau
+                      user paste teks sangat panjang. Backend membatasi
+                      max:2000 (lihat StoreReviewController::store()).
+                      Lihat audit modul Review Toko 2026-08-27. */}
+                  <Text style={styles.reviewCharCount}>
+                    {reviewComment.length}/{REVIEW_COMMENT_MAX_LENGTH}
+                  </Text>
+                </View>
                 <TextInput
                   style={styles.reviewCommentInput}
                   placeholder="Ceritakan pengalamanmu lebih lanjut..."
                   placeholderTextColor={colors.textMuted}
                   value={reviewComment}
                   onChangeText={setReviewComment}
+                  maxLength={REVIEW_COMMENT_MAX_LENGTH}
                   multiline
                   numberOfLines={3}
                 />
@@ -651,6 +733,14 @@ function createStyles(colors: typeof darkColors) {
   reviewBannerTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
   reviewBannerSubtitle: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
 
+  reviewSummaryCard: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm,
+    padding: spacing.md, backgroundColor: colors.surface,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  reviewSummaryTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
+  reviewSummaryComment: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
+
   reviewModalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -695,6 +785,16 @@ function createStyles(colors: typeof darkColors) {
     fontWeight: '600',
     color: colors.textPrimary,
     marginBottom: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  reviewSectionLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  reviewCharCount: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
     marginTop: spacing.sm,
   },
   reviewTagsWrap: {
@@ -780,9 +880,14 @@ function createStyles(colors: typeof darkColors) {
 
   messageList: { padding: spacing.md, gap: spacing.md },
 
+  // alignItems per sisi WAJIB diisi eksplisit — default RN 'stretch'
+  // bikin child (bubble, senderLabel, jam) menyesuaikan lebar sibling
+  // TERLEBAR (nama pengirim), sama bug yang sudah diperbaiki di layar
+  // chat staff (app/staff/bookings/[id].tsx). Ditemukan & diperbaiki
+  // 2026-08-28.
   bubbleWrap: { maxWidth: '78%', gap: 3 },
-  bubbleWrapLeft: { alignSelf: 'flex-start' },
-  bubbleWrapRight: { alignSelf: 'flex-end' },
+  bubbleWrapLeft: { alignSelf: 'flex-start', alignItems: 'flex-start' },
+  bubbleWrapRight: { alignSelf: 'flex-end', alignItems: 'flex-end' },
   senderLabel: { fontSize: 10, fontWeight: '700', color: colors.textMuted, marginLeft: 6 },
   bubble: {
     borderRadius: radius.lg, padding: spacing.sm, overflow: 'hidden',

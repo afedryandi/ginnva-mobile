@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, FlatList, StyleSheet, useWindowDimensions, Linking, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, Pressable, FlatList, StyleSheet, useWindowDimensions, Linking, ActivityIndicator, RefreshControl } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -57,6 +57,15 @@ export default function AssetScanScreen() {
   const [assets, setAssets] = useState<AssetListItem[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  // SEBELUMNYA FlatList hasil pencarian tidak bisa ditarik-refresh sama
+  // sekali — beda dari Bahan Baku/Barang Habis Pakai yang polanya identik
+  // (search + FlatList) tapi keduanya sudah punya RefreshControl.
+  const [refreshing, setRefreshing] = useState(false);
+  // SEBELUMNYA tidak ada cara sama sekali untuk lihat "aset apa saja yang
+  // jadi tanggung jawab saya" dari app — staff cuma bisa scan QR atau
+  // cari nama satu-satu. Toggle ini query assigned_to_me=1 di endpoint
+  // yang sama.
+  const [mineOnly, setMineOnly] = useState(false);
 
   React.useEffect(() => {
     if (mode === 'scan' && !permission?.granted) {
@@ -65,9 +74,12 @@ export default function AssetScanScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
-  const fetchAssets = useCallback((query: string) => {
+  const fetchAssets = useCallback((query: string, mine: boolean) => {
     setSearchError(null);
-    return staffApiFetch<{ data: AssetListItem[] }>(`/api/staff/assets?search=${encodeURIComponent(query)}`)
+    const params = new URLSearchParams({ search: query });
+    if (mine) params.set('assigned_to_me', '1');
+
+    return staffApiFetch<{ data: AssetListItem[] }>(`/api/staff/assets?${params.toString()}`)
       .then((res) => setAssets(res.data))
       .catch((err) => {
         setSearchError(err instanceof ApiError ? err.message : 'Gagal memuat daftar aset.');
@@ -77,9 +89,15 @@ export default function AssetScanScreen() {
   useEffect(() => {
     if (mode !== 'search') return;
     setSearchLoading(true);
-    const timeout = setTimeout(() => fetchAssets(search).finally(() => setSearchLoading(false)), 300);
+    const timeout = setTimeout(() => fetchAssets(search, mineOnly).finally(() => setSearchLoading(false)), 300);
     return () => clearTimeout(timeout);
-  }, [mode, search, fetchAssets]);
+  }, [mode, search, mineOnly, fetchAssets]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchAssets(search, mineOnly);
+    setRefreshing(false);
+  }, [fetchAssets, search, mineOnly]);
 
   const handleBarcodeScanned = (scan: BarcodeScanningResult) => {
     if (scanLocked) return;
@@ -120,6 +138,14 @@ export default function AssetScanScreen() {
             />
           </View>
 
+          <Pressable
+            style={[styles.mineChip, mineOnly && styles.mineChipActive]}
+            onPress={() => setMineOnly((prev) => !prev)}
+          >
+            <Ionicons name="person-circle-outline" size={16} color={mineOnly ? '#ffffff' : colors.textSecondary} />
+            <Text style={[styles.mineChipText, mineOnly && { color: '#ffffff' }]}>Aset yang Saya Pegang</Text>
+          </Pressable>
+
           {searchLoading ? (
             <View style={styles.centerState}>
               <ActivityIndicator color={colors.accent} />
@@ -131,13 +157,16 @@ export default function AssetScanScreen() {
             </View>
           ) : assets.length === 0 ? (
             <View style={styles.centerState}>
-              <Text style={styles.centerStateText}>Tidak ada aset ditemukan.</Text>
+              <Text style={styles.centerStateText}>
+                {mineOnly ? 'Tidak ada aset yang jadi tanggung jawab Anda saat ini.' : 'Tidak ada aset ditemukan.'}
+              </Text>
             </View>
           ) : (
             <FlatList
               data={assets}
               keyExtractor={(item) => String(item.id)}
               contentContainerStyle={styles.listContent}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
               renderItem={({ item }) => (
                 <Pressable
                   style={styles.row}
@@ -150,6 +179,11 @@ export default function AssetScanScreen() {
                     </Text>
                   </View>
                   <View style={[styles.statusBadge, item.status === 'aktif' ? styles.statusOk : styles.statusOut]}>
+                    <Ionicons
+                      name={item.status === 'aktif' ? 'checkmark-circle' : 'alert-circle'}
+                      size={13}
+                      color={item.status === 'aktif' ? colors.success : colors.danger}
+                    />
                     <Text style={[styles.statusText, { color: item.status === 'aktif' ? colors.success : colors.danger }]}>
                       {statusLabel(item.status)}
                     </Text>
@@ -238,6 +272,22 @@ function createStyles(colors: typeof darkColors, scanFrameSize: number) {
       backgroundColor: colors.surface,
     },
     searchInput: { flex: 1, fontSize: fontSize.sm, color: colors.textPrimary },
+    mineChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      gap: 6,
+      marginHorizontal: spacing.md,
+      marginTop: spacing.sm,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 6,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    mineChipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+    mineChipText: { fontSize: fontSize.xs, fontWeight: '600', color: colors.textSecondary },
     centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.xl },
     centerStateText: { fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center' },
     listContent: { padding: spacing.md, gap: spacing.xs },
@@ -253,7 +303,7 @@ function createStyles(colors: typeof darkColors, scanFrameSize: number) {
     },
     rowName: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
     rowCategory: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
-    statusBadge: { paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill },
+    statusBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill },
     statusOk: { backgroundColor: colors.successBg },
     statusOut: { backgroundColor: colors.dangerBg },
     statusText: { fontSize: fontSize.xs, fontWeight: '700' },

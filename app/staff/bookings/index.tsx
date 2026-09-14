@@ -126,9 +126,15 @@ export default function StaffBookingListScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
-        {staff?.has_inventory_access ? (
-          <Pressable onPress={() => router.push('/staff/inventory' as never)} style={styles.sideButton}>
-            <Ionicons name="cube-outline" size={22} color={colors.textPrimary} />
+        {/* Menu-menu lain (Absensi, Slip Gaji, Inventaris, dst) SEKARANG
+            ada sebagai kotak di halaman awal staff (app/staff/index.tsx,
+            grid di tengah layar) — bukan lagi ikon-ikon padat di sini,
+            diminta user 2026-09-07 supaya tidak menumpuk di pojok. Header
+            ini cukup tombol kembali ke halaman awal + logout, sama pola
+            dengan subhalaman staff lain (mis. Inventaris). */}
+        {router.canGoBack() ? (
+          <Pressable onPress={() => router.back()} style={styles.sideButton}>
+            <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
           </Pressable>
         ) : (
           <View style={styles.sideButton} />
@@ -192,19 +198,17 @@ export default function StaffBookingListScreen() {
             style={styles.card}
             onPress={() => router.push(`/staff/bookings/${item.id}` as never)}
           >
+            {/* Badge status tetap sejajar nomor booking (kanan atas).
+                Badge tahap DIPISAH ke baris sendiri di bawahnya — SEBELUMNYA
+                digabung 1 grup, jadi begitu keduanya tidak muat 1 baris,
+                badge status ikut turun juga (harusnya cuma badge tahap
+                yang turun). Diminta user 2026-08-28. */}
             <View style={styles.cardHeader}>
-              <Text style={styles.bookingNumber}>{item.booking_number}</Text>
-              <View style={styles.badgeGroup}>
-                <View style={[styles.statusBadge, { backgroundColor: colors[statusMeta.bg] }]}>
-                  <Text style={[styles.statusBadgeText, { color: colors[statusMeta.color] }]}>
-                    {statusMeta.label}
-                  </Text>
-                </View>
-                {item.current_stage && item.status !== 'cancelled' && (
-                  <View style={styles.stageBadge}>
-                    <Text style={styles.stageBadgeText}>{STAGE_LABEL[item.current_stage] ?? item.current_stage}</Text>
-                  </View>
-                )}
+              <Text style={styles.bookingNumber} numberOfLines={1}>{item.booking_number}</Text>
+              <View style={[styles.statusBadge, { backgroundColor: colors[statusMeta.bg] }]}>
+                <Text style={[styles.statusBadgeText, { color: colors[statusMeta.color] }]}>
+                  {statusMeta.label}
+                </Text>
               </View>
             </View>
             <Text style={styles.customerName}>
@@ -220,6 +224,17 @@ export default function StaffBookingListScreen() {
                 {formatDateRange(item.preferred_date, item.end_date, item.duration_days)}
               </Text>
             </View>
+            {/* Dipindah ke bawah tanggal (diminta user 2026-08-28) — dikasih
+                marginTop ekstra & border atas tipis supaya kelihatan
+                sebagai elemen terpisah, tidak berbaur dengan baris info
+                polos di atasnya (yang sama-sama teks abu-abu kecil). */}
+            {item.current_stage && item.status !== 'cancelled' && (
+              <View style={styles.stageBadgeRow}>
+                <View style={styles.stageBadge}>
+                  <Text style={styles.stageBadgeText}>Tahap: {STAGE_LABEL[item.current_stage] ?? item.current_stage}</Text>
+                </View>
+              </View>
+            )}
           </Pressable>
           );
         }}
@@ -261,12 +276,22 @@ function createStyles(colors: typeof darkColors) {
     backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.md,
     gap: 6, borderWidth: 1, borderColor: colors.border,
   },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  bookingNumber: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
-  badgeGroup: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  // Badge tahap dipisah jadi baris sendiri (lihat renderItem) — badge
+  // status tetap sejajar booking_number, dikasih flexShrink0 implisit
+  // (View tanpa flex, ukuran natural) supaya tidak ikut kegencet.
+  // bookingNumber dikasih flexShrink+numberOfLines supaya truncate dulu
+  // kalau kepanjangan. Ditemukan & diperbaiki 2026-08-28.
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 6 },
+  bookingNumber: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary, flexShrink: 1 },
   statusBadge: { paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.pill },
   statusBadgeText: { fontSize: fontSize.xs, fontWeight: '700' },
-  stageBadge: { backgroundColor: colors.accentSoft, paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.pill },
+  stageBadgeRow: {
+    marginTop: 4, paddingTop: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border,
+  },
+  // alignSelf: 'flex-start' WAJIB — tanpa ini, sebagai child langsung
+  // `card` (flex column, default alignItems 'stretch'), badge ini
+  // melebar penuh selebar kartu alih-alih cuma selebar teksnya sendiri.
+  stageBadge: { alignSelf: 'flex-start', backgroundColor: colors.accentSoft, paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.pill },
   stageBadgeText: { fontSize: fontSize.xs, fontWeight: '600', color: colors.accent },
   customerName: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary },
   detailRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },

@@ -6,6 +6,8 @@ import {
   StyleSheet,
   ActivityIndicator,
   Pressable,
+  Linking,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -70,6 +72,25 @@ export default function NewsDetailScreen() {
     load();
   }, [slug]);
 
+  // SEBELUMNYA source_url ("Link Sumber, kalau berita hanya link keluar")
+  // diambil dari API tapi tidak pernah dipakai di layar ini sama sekali —
+  // berita link-only (content kosong) jadi jalan buntu, cuma menampilkan
+  // "Konten artikel tidak tersedia." tanpa cara menuju sumber aslinya.
+  // Ditemukan saat audit modul Marketing > Berita.
+  const handleOpenSource = async () => {
+    if (!news?.source_url) return;
+    try {
+      const canOpen = await Linking.canOpenURL(news.source_url);
+      if (!canOpen) {
+        Alert.alert('Tidak Bisa Membuka Link', 'Link sumber berita ini tidak valid atau tidak didukung.');
+        return;
+      }
+      await Linking.openURL(news.source_url);
+    } catch {
+      Alert.alert('Gagal Membuka Link', 'Terjadi kesalahan saat membuka sumber berita ini.');
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
@@ -123,6 +144,16 @@ export default function NewsDetailScreen() {
               <Text style={styles.excerpt}>{news.excerpt}</Text>
             )}
 
+            {/* Sumber asli — berita link-only (content kosong) mengandalkan
+                ini sepenuhnya, tapi tetap ditampilkan juga untuk berita
+                yang punya konten sendiri (referensi tambahan). */}
+            {news.source_url && (
+              <Pressable style={styles.sourceButton} onPress={handleOpenSource}>
+                <Ionicons name="open-outline" size={16} color="#ffffff" />
+                <Text style={styles.sourceButtonText}>Baca Sumber Asli</Text>
+              </Pressable>
+            )}
+
             {/* Divider */}
             <View style={styles.divider} />
 
@@ -142,9 +173,9 @@ export default function NewsDetailScreen() {
                 }}
                 baseStyle={{ fontSize: 15, lineHeight: 24, color: colors.textPrimary }}
               />
-            ) : (
+            ) : !news.source_url ? (
               <Text style={styles.noContent}>Konten artikel tidak tersedia.</Text>
-            )}
+            ) : null}
           </View>
         </ScrollView>
       ) : null}
@@ -231,6 +262,21 @@ function createStyles(colors: typeof darkColors) {
     height: 1,
     backgroundColor: colors.border,
     marginVertical: spacing.xs,
+  },
+  sourceButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.accent,
+    borderRadius: radius.pill,
+    paddingVertical: spacing.sm + 2,
+    marginTop: spacing.xs,
+  },
+  sourceButtonText: {
+    color: '#ffffff',
+    fontSize: fontSize.sm,
+    fontWeight: '700',
   },
   content: {
     fontSize: fontSize.base,

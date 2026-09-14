@@ -87,7 +87,7 @@ export default function AssistantHubScreen() {
             <Ionicons name="storefront" size={26} color={colors.accent} />
           </View>
           <View style={styles.cardBody}>
-            <Text style={styles.cardTitle}>Chat dengan Toko</Text>
+            <Text style={styles.cardTitle}>Chat Booking Instalasi</Text>
             <Text style={styles.cardSubtitle}>
               Lihat progress instalasi & chat langsung dengan toko tempat booking Anda
             </Text>

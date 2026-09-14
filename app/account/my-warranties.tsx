@@ -151,7 +151,16 @@ export default function MyWarrantiesScreen() {
               >
                 <View style={styles.card}>
                   <View style={styles.cardHeader}>
-                    <Text style={styles.code}>{item.warranty_code}</Text>
+                    {/* SEBELUMNYA render item.warranty_code langsung —
+                        kalau masih null (garansi belum diisi Detail
+                        Instalasi oleh staff, kode di-generate otomatis
+                        begitu kode gulungan dipilih), <Text> render
+                        string kosong, kartu tampil ada ruang kosong di
+                        pojok kiri atas tanpa penjelasan. Ditemukan lewat
+                        testing manual 2026-08-31. */}
+                    <Text style={item.warranty_code ? styles.code : styles.codePending}>
+                      {item.warranty_code || 'Menunggu diproses'}
+                    </Text>
                     <View style={styles.cardHeaderRight}>
                       <View style={[styles.badge, { backgroundColor: meta.bg }]}>
                         <Text style={[styles.badgeText, { color: meta.color }]}>
@@ -166,8 +175,15 @@ export default function MyWarrantiesScreen() {
                     {item.car_type} ({item.car_plate})
                   </Text>
                   {item.status === 'active' && (
-                    <Text style={styles.remainingText}>
-                      Sisa {item.remaining_days} hari masa garansi
+                    // Warning kuning kalau sisa hari <= 30 — SEBELUMNYA
+                    // semua garansi aktif ditampilkan sama (hijau/normal)
+                    // sampai benar-benar expired, tidak ada dorongan
+                    // visual buat customer yang garansinya mau habis.
+                    // Lihat audit modul Garansi 2026-08-27.
+                    <Text style={[styles.remainingText, item.remaining_days <= 30 && { color: colors.warning, fontWeight: '700' }]}>
+                      {item.remaining_days <= 30
+                        ? `⚠️ Sisa ${item.remaining_days} hari masa garansi`
+                        : `Sisa ${item.remaining_days} hari masa garansi`}
                     </Text>
                   )}
                 </View>
@@ -255,6 +271,12 @@ function createStyles(colors: typeof darkColors) {
     fontSize: fontSize.sm,
     fontWeight: '800',
     color: colors.textPrimary,
+  },
+  codePending: {
+    fontSize: fontSize.sm,
+    fontWeight: '600',
+    color: colors.textMuted,
+    fontStyle: 'italic',
   },
   badge: {
     paddingHorizontal: spacing.sm,

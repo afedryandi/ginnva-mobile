@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, FlatList, StyleSheet, useWindowDimensions, Linking, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, Pressable, FlatList, StyleSheet, useWindowDimensions, Linking, ActivityIndicator, RefreshControl } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -49,6 +49,15 @@ export default function InventoryScanScreen() {
   const [items, setItems] = useState<InventoryListItem[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  // Diisi backend cuma kalau hasil kosong DAN kata kunci itu persis kode
+  // gulungan yang sudah terdaftar tapi belum dikaitkan ke barang fisik
+  // apa pun — SEBELUMNYA staff cuma lihat "Tidak ada barang ditemukan."
+  // tanpa penjelasan, tidak tahu apakah salah ketik atau memang belum
+  // dikaitkan. Ditemukan lewat testing manual 2026-09-01.
+  const [searchHint, setSearchHint] = useState<string | null>(null);
+  // SEBELUMNYA FlatList hasil pencarian tidak bisa ditarik-refresh sama
+  // sekali — beda dari Bahan Baku/Barang Habis Pakai yang polanya identik.
+  const [refreshing, setRefreshing] = useState(false);
 
   React.useEffect(() => {
     if (mode === 'scan' && !permission?.granted) {
@@ -59,8 +68,13 @@ export default function InventoryScanScreen() {
 
   const fetchItems = useCallback((query: string) => {
     setSearchError(null);
-    return staffApiFetch<{ data: InventoryListItem[] }>(`/api/staff/inventory?search=${encodeURIComponent(query)}`)
-      .then((res) => setItems(res.data))
+    return staffApiFetch<{ data: InventoryListItem[]; hint: string | null }>(
+      `/api/staff/inventory?search=${encodeURIComponent(query)}`
+    )
+      .then((res) => {
+        setItems(res.data);
+        setSearchHint(res.hint ?? null);
+      })
       .catch((err) => {
         setSearchError(err instanceof ApiError ? err.message : 'Gagal memuat daftar barang.');
       });
@@ -72,6 +86,12 @@ export default function InventoryScanScreen() {
     const timeout = setTimeout(() => fetchItems(search).finally(() => setSearchLoading(false)), 300);
     return () => clearTimeout(timeout);
   }, [mode, search, fetchItems]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchItems(search);
+    setRefreshing(false);
+  }, [fetchItems, search]);
 
   const handleBarcodeScanned = (scan: BarcodeScanningResult) => {
     if (scanLocked) return;
@@ -123,13 +143,16 @@ export default function InventoryScanScreen() {
             </View>
           ) : items.length === 0 ? (
             <View style={styles.centerState}>
-              <Text style={styles.centerStateText}>Tidak ada barang ditemukan.</Text>
+              <Text style={styles.centerStateText}>
+                {searchHint ?? 'Tidak ada barang ditemukan.'}
+              </Text>
             </View>
           ) : (
             <FlatList
               data={items}
               keyExtractor={(item) => String(item.id)}
               contentContainerStyle={styles.listContent}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
               renderItem={({ item }) => (
                 <Pressable
                   style={styles.row}
@@ -144,6 +167,11 @@ export default function InventoryScanScreen() {
                     </Text>
                   </View>
                   <View style={[styles.statusBadge, item.status === 'in_stock' ? styles.statusOk : styles.statusOut]}>
+                    <Ionicons
+                      name={item.status === 'in_stock' ? 'checkmark-circle' : 'arrow-up-circle'}
+                      size={13}
+                      color={item.status === 'in_stock' ? colors.success : colors.danger}
+                    />
                     <Text style={[styles.statusText, { color: item.status === 'in_stock' ? colors.success : colors.danger }]}>
                       {item.status === 'in_stock' ? 'Ada Stok' : 'Sudah Keluar'}
                     </Text>
@@ -247,7 +275,7 @@ function createStyles(colors: typeof darkColors, scanFrameSize: number) {
     },
     rowName: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
     rowCategory: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
-    statusBadge: { paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill },
+    statusBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill },
     statusOk: { backgroundColor: colors.successBg },
     statusOut: { backgroundColor: colors.dangerBg },
     statusText: { fontSize: fontSize.xs, fontWeight: '700' },

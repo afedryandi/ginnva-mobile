@@ -10,6 +10,7 @@ import {
   Animated,
   PanResponder,
   Share,
+  Linking,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -17,10 +18,12 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
+import * as Location from 'expo-location';
 import { Button } from '@/components/ui/Button';
 import { PickerModal } from '@/components/ui/PickerModal';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
+import { toWhatsAppNumber } from '@/lib/phone';
 import { useFadeIn } from '@/lib/useFadeIn';
 import { useAppTheme } from '@/lib/theme-context';
 import { hapticLight, hapticMedium, hapticSuccess, hapticError } from '@/lib/haptics';
@@ -36,12 +39,41 @@ interface ProductOption {
   id: number;
   name: string;
   product_type: string;
+  position: 'front' | 'side_rear' | null;
+}
+
+// SEBELUMNYA render p.name mentah -- kalau admin kasih Nama Produk sama
+// persis untuk Kaca Depan & Kaca Samping/Belakang (2 baris terpisah
+// selalu, tidak ada larangan nama sama), keduanya tampil identik,
+// customer tidak bisa bedakan. Sama pola dengan web (QuoteForm.tsx).
+// Ditemukan lewat testing manual 2026-09-01.
+function productOptionLabel(p: ProductOption): string {
+  if (p.product_type !== 'window_film' || !p.position) return p.name;
+
+  const positionLabel = p.position === 'front' ? 'Kaca Depan' : 'Kaca Samping & Belakang';
+  const alreadyLabeled = /depan|samping|belakang/i.test(p.name);
+  return alreadyLabeled ? p.name : `${p.name} (${positionLabel})`;
 }
 
 interface StoreOption {
   id: number;
   name: string;
   city: string;
+  phone: string | null;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+// Haversine — jarak garis lurus (km), cukup akurat untuk sekadar
+// mengurutkan toko terdekat, tidak perlu jarak tempuh jalan.
+function distanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 const PRODUCT_TYPE_LABEL: Record<string, string> = {
@@ -58,7 +90,10 @@ const NOT_YET_SOLD_TYPES = ['color_change', 'architectural_film'];
 
 type Phase = 'loading' | 'error' | 'wizard' | 'success';
 
-const STEP_TITLES = ['Kendaraan', 'Produk', 'Kontak', 'Ringkasan'];
+// Step 3 SEBELUMNYA cuma dilabeli "Kontak" — tidak menyampaikan bahwa
+// pemilihan Toko Tujuan juga terjadi di step yang sama, padahal itu field
+// pertama yang customer isi di step ini.
+const STEP_TITLES = ['Kendaraan', 'Produk', 'Toko & Kontak', 'Ringkasan'];
 const TOTAL_STEPS = STEP_TITLES.length;
 const SWIPE_THRESHOLD = 60;
 
@@ -72,6 +107,7 @@ export default function QuotationScreen() {
   const [brands, setBrands] = useState<string[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [stores, setStores] = useState<StoreOption[]>([]);
+  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
 
   const [stepIndex, setStepIndex] = useState(0);
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
@@ -104,6 +140,43 @@ export default function QuotationScreen() {
       .then((res) => setStores(res.data))
       .catch(() => {});
   }, []);
+
+  // Lokasi HANYA diminta sekali begitu customer sampai step Toko & Kontak,
+  // bukan langsung saat form dibuka — supaya tidak menyodorkan izin lokasi
+  // sebelum ada konteks kenapa dibutuhkan. Sepenuhnya best-effort: gagal
+  // atau ditolak tetap membiarkan daftar toko tampil (urutan default dari
+  // API), tidak ada alert yang mengganggu alur pengisian form.
+  const locationRequestedRef = useRef(false);
+  useEffect(() => {
+    if (stepIndex !== 2 || locationRequestedRef.current) return;
+    locationRequestedRef.current = true;
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+        const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        setUserLocation({ latitude: position.coords.latitude, longitude: position.coords.longitude });
+      } catch {
+        // Diamkan — daftar toko tetap tampil dengan urutan default.
+      }
+    })();
+  }, [stepIndex]);
+
+  // Toko terdekat naik ke atas kalau lokasi customer berhasil didapat;
+  // kalau tidak, urutan asli dari API dipertahankan (sebelumnya SELALU
+  // urutan asli, tidak pernah diurutkan berdasar jarak sama sekali).
+  const sortedStores = useMemo(() => {
+    if (!userLocation) return stores;
+    return [...stores].sort((a, b) => {
+      const da = a.latitude != null && a.longitude != null
+        ? distanceKm(userLocation.latitude, userLocation.longitude, a.latitude, a.longitude)
+        : Infinity;
+      const db = b.latitude != null && b.longitude != null
+        ? distanceKm(userLocation.latitude, userLocation.longitude, b.latitude, b.longitude)
+        : Infinity;
+      return da - db;
+    });
+  }, [stores, userLocation]);
 
   const loadOptions = () => {
     setPhase('loading');
@@ -205,12 +278,12 @@ export default function QuotationScreen() {
 
   // Label toko diformat "Nama — Kota" supaya bisa dipakai di PickerModal
   // yang berbasis string biasa (sama seperti pola Merek/Tipe/Varian).
-  const storeOptions = stores.map((s) => `${s.name} — ${s.city}`);
-  const selectedStore = stores.find((s) => s.id === selectedStoreId) ?? null;
+  const storeOptions = sortedStores.map((s) => `${s.name} — ${s.city}`);
+  const selectedStore = sortedStores.find((s) => s.id === selectedStoreId) ?? null;
   const selectedStoreLabel = selectedStore ? `${selectedStore.name} — ${selectedStore.city}` : null;
 
   const handleSelectStore = (label: string) => {
-    const store = stores.find((s) => `${s.name} — ${s.city}` === label);
+    const store = sortedStores.find((s) => `${s.name} — ${s.city}` === label);
     setSelectedStoreId(store?.id ?? null);
     hapticLight();
   };
@@ -303,7 +376,7 @@ export default function QuotationScreen() {
   };
 
   const handleShareWhatsApp = () => {
-    const productNames = selectedProducts.map((p) => `- ${p.name}`).join('\n');
+    const productNames = selectedProducts.map((p) => `- ${productOptionLabel(p)}`).join('\n');
     const vehicleLabel = [selectedBrand, selectedModel, selectedVariant].filter(Boolean).join(' ');
     const text =
       `Permintaan Penawaran Ginnva\n` +
@@ -386,10 +459,22 @@ export default function QuotationScreen() {
             onPress={handleShareWhatsApp}
             style={styles.successButton}
           />
+          {/* SEBELUMNYA tombol ini selalu buka daftar toko generik,
+              customer harus cari lagi toko yang baru saja dipilih —
+              padahal sistem sudah tahu persis toko & nomornya. Sekarang
+              langsung buka WhatsApp toko itu kalau nomornya ada; fallback
+              ke daftar toko generik cuma kalau toko itu belum punya nomor
+              telepon tercatat. */}
           <Button
-            label="Hubungi Toko Terdekat"
+            label={selectedStore?.phone ? `Hubungi ${selectedStore.name}` : 'Hubungi Toko Terdekat'}
             variant="outline"
-            onPress={() => router.push('/(tabs)/stores' as never)}
+            onPress={() => {
+              if (selectedStore?.phone) {
+                Linking.openURL(`https://wa.me/${toWhatsAppNumber(selectedStore.phone)}`);
+              } else {
+                router.push('/(tabs)/stores' as never);
+              }
+            }}
             style={styles.successButton}
           />
           <Button
@@ -581,7 +666,7 @@ export default function QuotationScreen() {
                           size={20}
                           color={selected ? colors.accent : colors.textMuted}
                         />
-                        <Text style={styles.productRowText}>{p.name}</Text>
+                        <Text style={styles.productRowText}>{productOptionLabel(p)}</Text>
                       </Pressable>
                     );
                   })}
@@ -711,7 +796,7 @@ export default function QuotationScreen() {
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Produk</Text>
                   <Text style={styles.summaryValue}>
-                    {selectedProducts.map((p) => p.name).join(', ') || '-'}
+                    {selectedProducts.map((p) => productOptionLabel(p)).join(', ') || '-'}
                   </Text>
                 </View>
                 <View style={styles.summaryRow}>

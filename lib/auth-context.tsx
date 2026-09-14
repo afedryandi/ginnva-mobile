@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { apiFetch, getToken, setToken, clearToken } from './api';
+import { getCurrentPushToken } from './notifications';
 
 interface Customer {
   id: number;
@@ -59,7 +60,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
-      await apiFetch('/api/customer/auth/logout', { method: 'POST' });
+      // push_token dikirim supaya server unlink device_tokens device ini
+      // dari akun yang logout — di HP bersama/demo unit toko, mencegah
+      // notifikasi bertarget nyasar ke akun yang sudah keluar. Best-effort:
+      // kalau gagal ambil token (Expo Go/emulator), logout tetap lanjut.
+      const pushToken = await getCurrentPushToken().catch(() => null);
+      await apiFetch('/api/customer/auth/logout', {
+        method: 'POST',
+        body: JSON.stringify({ push_token: pushToken }),
+      });
     } catch {
       // Tetap lanjut hapus token lokal meski request logout ke server
       // gagal (mis. tidak ada koneksi) — yang penting sisi app

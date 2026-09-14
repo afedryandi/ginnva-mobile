@@ -28,6 +28,12 @@ interface StoreItem {
   latitude: number | null;
   longitude: number | null;
   maps_url: string | null;
+  // SEBELUMNYA review internal (sentimen+tag+komentar) yang customer isi
+  // tidak pernah diagregasi/ditampilkan di mana pun — "silo data mati".
+  // null = belum ada review sama sekali (beda dari 0%). Lihat audit
+  // modul Review Toko 2026-08-27.
+  reviews_count: number;
+  positive_rate_percent: number | null;
 }
 
 function openMaps(store: StoreItem) {
@@ -151,8 +157,18 @@ export default function StoresScreen() {
           renderItem={({ item }) => (
             <View style={styles.storeCard}>
               <Text style={styles.storeName}>{item.name}</Text>
-              <View style={styles.cityBadge}>
-                <Text style={styles.cityBadgeText}>{item.city}</Text>
+              <View style={styles.badgeRow}>
+                <View style={styles.cityBadge}>
+                  <Text style={styles.cityBadgeText}>{item.city}</Text>
+                </View>
+                {item.positive_rate_percent !== null && (
+                  <View style={styles.ratingBadge}>
+                    <Ionicons name="thumbs-up" size={12} color={colors.success} />
+                    <Text style={styles.ratingBadgeText}>
+                      {item.positive_rate_percent}% Positif ({item.reviews_count})
+                    </Text>
+                  </View>
+                )}
               </View>
 
               <View style={styles.infoRow}>
@@ -300,17 +316,38 @@ function createStyles(colors: typeof darkColors) {
     fontWeight: '700',
     color: colors.textPrimary,
   },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginBottom: spacing.xs,
+  },
   cityBadge: {
     alignSelf: 'flex-start',
     backgroundColor: colors.accentSoft,
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
     borderRadius: radius.pill,
-    marginBottom: spacing.xs,
   },
   cityBadgeText: {
     fontSize: fontSize.xs,
     color: colors.accent,
+    fontWeight: '600',
+  },
+  ratingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    backgroundColor: colors.successBg,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  ratingBadgeText: {
+    fontSize: fontSize.xs,
+    color: colors.success,
     fontWeight: '600',
   },
   infoRow: {
