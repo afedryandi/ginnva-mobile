@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, FlatList, Pressable, StyleSheet, RefreshControl, Alert } from 'react-native';
+import { View, Text, FlatList, Pressable, StyleSheet, RefreshControl, Alert, ScrollView, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -62,6 +62,14 @@ const STAGE_LABEL: Record<string, string> = {
   completed: 'Serah Terima Unit',
 };
 
+interface CapacityDay {
+  date: string;
+  closed: boolean;
+  used?: number;
+  default_capacity?: number;
+  pending_count?: number;
+}
+
 type StatusFilter = 'all' | 'progress' | 'completed';
 
 const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
@@ -95,6 +103,27 @@ export default function StaffBookingListScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [capacityDays, setCapacityDays] = useState<CapacityDay[] | null>(null);
+  const [capacityLoading, setCapacityLoading] = useState(false);
+
+  // Strip "Kapasitas 14 Hari" (audit modul Booking Instalasi 2026-09-25,
+  // gap "standar enterprise") — SEBELUMNYA staff mobile baru tahu suatu
+  // tanggal penuh SETELAH membuka satu booking pending & menekan
+  // "Konfirmasi" (validasi di titik itu). Sekarang ada overview di awal
+  // supaya staff bisa lihat tanggal mana yang padat sebelum memutuskan
+  // approve booking mana dulu. Cuma untuk staff yang terikat 1 toko
+  // (store_id terisi) — full-access butuh picker toko yang belum ada di
+  // mobile, endpoint-nya tetap mendukung lewat ?store_id= kalau suatu
+  // saat ditambahkan (lihat StaffBookingController::capacityOverview()).
+  useEffect(() => {
+    if (!staff?.store_id) return;
+
+    setCapacityLoading(true);
+    staffApiFetch<{ data: CapacityDay[] }>('/api/staff/bookings/capacity-overview?days=14')
+      .then((res) => setCapacityDays(res.data))
+      .catch(() => setCapacityDays(null))
+      .finally(() => setCapacityLoading(false));
+  }, [staff?.store_id]);
 
   const fetchBookings = useCallback((filter: StatusFilter) => {
     const query = filter === 'all' ? '' : `?status=${filter}`;
@@ -152,6 +181,58 @@ export default function StaffBookingListScreen() {
             .join(' · ')}
         </Text>
       </View>
+
+      {staff?.store_id ? (
+        <View style={styles.capacitySection}>
+          <Text style={styles.capacityTitle}>Kapasitas 14 Hari</Text>
+          {capacityLoading && !capacityDays ? (
+            <ActivityIndicator style={styles.capacityLoader} color={colors.accent} />
+          ) : capacityDays && capacityDays.length > 0 ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.capacityRow}>
+              {capacityDays.map((day) => {
+                if (day.closed) {
+                  return (
+                    <View key={day.date} style={[styles.capacityCard, styles.capacityCardClosed]}>
+                      <Text style={styles.capacityDate}>{formatDate(day.date)}</Text>
+                      <Text style={styles.capacityClosedText}>Libur</Text>
+                    </View>
+                  );
+                }
+
+                const used = day.used ?? 0;
+                const capacity = day.default_capacity ?? 3;
+                const isFull = used >= capacity;
+                const isNearFull = !isFull && used >= capacity - 1;
+
+                return (
+                  <View
+                    key={day.date}
+                    style={[
+                      styles.capacityCard,
+                      isFull && styles.capacityCardFull,
+                      isNearFull && styles.capacityCardWarn,
+                    ]}
+                  >
+                    <Text style={styles.capacityDate}>{formatDate(day.date)}</Text>
+                    <Text
+                      style={[
+                        styles.capacityUsed,
+                        isFull && { color: colors.danger },
+                        isNearFull && { color: colors.warning },
+                      ]}
+                    >
+                      {used}/{capacity}
+                    </Text>
+                    {!!day.pending_count && (
+                      <Text style={styles.capacityPending}>+{day.pending_count} menunggu</Text>
+                    )}
+                  </View>
+                );
+              })}
+            </ScrollView>
+          ) : null}
+        </View>
+      ) : null}
 
       <View style={styles.filterRow}>
         {STATUS_FILTERS.map((f) => (
@@ -260,6 +341,25 @@ function createStyles(colors: typeof darkColors) {
   headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
   subheader: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, backgroundColor: colors.surface },
   subheaderText: { fontSize: fontSize.xs, color: colors.textSecondary },
+  capacitySection: { paddingTop: spacing.sm },
+  capacityTitle: {
+    fontSize: fontSize.xs, fontWeight: '700', color: colors.textMuted,
+    paddingHorizontal: spacing.md, marginBottom: spacing.xs, textTransform: 'uppercase',
+  },
+  capacityLoader: { marginVertical: spacing.sm },
+  capacityRow: { flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.md },
+  capacityCard: {
+    minWidth: 64, alignItems: 'center', gap: 2,
+    backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
+    paddingHorizontal: spacing.sm, paddingVertical: spacing.xs,
+  },
+  capacityCardClosed: { opacity: 0.5 },
+  capacityCardWarn: { borderColor: colors.warning },
+  capacityCardFull: { borderColor: colors.danger },
+  capacityDate: { fontSize: fontSize.xs, color: colors.textSecondary, fontWeight: '600' },
+  capacityClosedText: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: 2 },
+  capacityUsed: { fontSize: fontSize.base, fontWeight: '800', color: colors.textPrimary },
+  capacityPending: { fontSize: 10, color: colors.textMuted },
   filterRow: {
     flexDirection: 'row', gap: spacing.sm,
     paddingHorizontal: spacing.md, paddingVertical: spacing.sm,

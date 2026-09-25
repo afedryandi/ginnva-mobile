@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, FlatList, Pressable, StyleSheet, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, FlatList, Pressable, StyleSheet, RefreshControl, ActivityIndicator, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
@@ -29,12 +29,20 @@ const STATUS_META: Record<StaffQuotation['status'], { label: string; color: keyo
 
 type StatusFilter = 'all' | StaffQuotation['status'];
 
+// SEBELUMNYA 'cancelled' tidak ada di sini sama sekali — beda dari
+// Filament (SelectFilter status) & layar detail mobile sendiri
+// (STATUS_OPTIONS di [id].tsx) yang sama-sama punya 4 status penuh.
+// Staff tidak bisa filter lead yang dibatalkan langsung dari list.
+// Ditemukan & diperbaiki 2026-09-25 (audit modul Quotation).
 const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
   { key: 'all', label: 'Semua' },
   { key: 'new', label: 'New' },
   { key: 'contacted', label: 'Contacted' },
   { key: 'closed', label: 'Closed' },
+  { key: 'cancelled', label: 'Cancelled' },
 ];
+
+const VALID_STATUS_FILTERS: StatusFilter[] = STATUS_FILTERS.map((f) => f.key);
 
 function formatDate(dateString: string): string {
   return new Date(dateString).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -49,13 +57,28 @@ interface QuotationListMeta {
 export default function StaffQuotationListScreen() {
   const { theme, colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { status: statusParam } = useLocalSearchParams<{ status?: string }>();
+
+  // Deep link push notifikasi "Lead Belum Di-follow-up" (lihat
+  // NotifyStaleQuotations::handle()) mengirim rute
+  // '/staff/quotations?status=new' supaya staff yang tap notifikasi
+  // langsung diarahkan ke lead yang masih New — SEBELUMNYA query string
+  // ini sama sekali tidak dibaca di sini, statusFilter selalu mulai dari
+  // 'all' apa pun rute yang dipakai untuk membuka layar ini. Ditemukan &
+  // diperbaiki 2026-09-25 (audit modul Quotation). Nilai dari query TIDAK
+  // dipercaya mentah-mentah — divalidasi dulu terhadap daftar status yang
+  // benar-benar dikenal sebelum dipakai sebagai state awal.
+  const initialStatusFilter: StatusFilter = VALID_STATUS_FILTERS.includes(statusParam as StatusFilter)
+    ? (statusParam as StatusFilter)
+    : 'all';
+
   const [quotations, setQuotations] = useState<StaffQuotation[]>([]);
   const [meta, setMeta] = useState<QuotationListMeta | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(initialStatusFilter);
 
   // Backend paginate(20) — SEBELUMNYA app cuma pernah request halaman 1
   // (tidak pernah kirim ?page=), jadi lead ke-21 dst di status filter itu
@@ -106,7 +129,10 @@ export default function StaffQuotationListScreen() {
         <View style={styles.sideButton} />
       </View>
 
-      <View style={styles.filterRow}>
+      {/* ScrollView horizontal (bukan View biasa) — sejak chip
+          'Cancelled' ditambah jadi 5 total, 5 chip tidak selalu muat di
+          layar sempit tanpa cara untuk geser/lihat sisanya. */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
         {STATUS_FILTERS.map((f) => (
           <Pressable
             key={f.key}
@@ -116,7 +142,7 @@ export default function StaffQuotationListScreen() {
             <Text style={[styles.filterChipText, statusFilter === f.key && styles.filterChipTextActive]}>{f.label}</Text>
           </Pressable>
         ))}
-      </View>
+      </ScrollView>
 
       {loading ? (
         <View style={styles.centerState}>

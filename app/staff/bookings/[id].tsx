@@ -140,10 +140,18 @@ export default function StaffBookingChatScreen() {
   // ngerjain mobil dari hari sebelumnya, atau izin) — 1 baris per tanggal,
   // termasuk baris hari libur (non-editable, cuma penanda) supaya staff
   // tahu kenapa ada lompatan tanggal — bukan 1 angka global. Dimuat dari
-  // GET .../capacity-preview, default per tanggal dari setting toko
-  // tapi tetap bisa diedit staff sebelum submit.
+  // GET .../capacity-preview.
+  //
+  // Redesain 2026-09-25 (diminta user, audit Booking Instalasi) —
+  // SEBELUMNYA field 'capacity' di sini BISA DIEDIT staff & dikirim balik
+  // ke server saat confirm (payload 'capacities') — kapasitas tidak
+  // pernah tersimpan, staff mengetik ulang tiap approve, dan bisa beda-
+  // beda antar staff untuk tanggal yang sama. Sekarang MURNI tampilan
+  // (capacity = angka yang sudah tersimpan/default toko, dibaca dari
+  // Booking::capacityForDate() di backend) — kapasitas diatur terpusat
+  // lewat Kalender Kapasitas di Filament, bukan di sini lagi.
   const [capacityRows, setCapacityRows] = useState<
-    ({ date: string; closed: true } | { date: string; closed: false; used: number; capacity: string })[]
+    ({ date: string; closed: true } | { date: string; closed: false; used: number; capacity: number })[]
   >([]);
   const [loadingCapacity, setLoadingCapacity] = useState(false);
   // Durasi yang dipakai saat capacityRows terakhir dimuat — dibandingkan
@@ -274,7 +282,7 @@ export default function StaffBookingChatScreen() {
       setCapacityRows(res.data.map((row) => (
         row.closed
           ? { date: row.date, closed: true }
-          : { date: row.date, closed: false, used: row.used, capacity: String(row.default_capacity) }
+          : { date: row.date, closed: false, used: row.used, capacity: row.default_capacity }
       )));
       setCapacityLoadedForDuration(durationDays);
     } catch (err) {
@@ -308,10 +316,6 @@ export default function StaffBookingChatScreen() {
     loadCapacityPreview(durationDays);
   };
 
-  const updateCapacityRow = (date: string, value: string) => {
-    setCapacityRows((prev) => prev.map((row) => (row.date === date && !row.closed ? { ...row, capacity: value } : row)));
-  };
-
   const submitConfirmBooking = async () => {
     const durationDays = parseInt(confirmDurationDays, 10);
 
@@ -320,10 +324,11 @@ export default function StaffBookingChatScreen() {
       return;
     }
 
-    // Jaring pengaman — kalau durasi berubah tapi daftar tanggal belum
-    // sempat dimuat ulang (mis. lupa geser fokus, atau koneksi lambat),
-    // JANGAN kirim kapasitas yang belum pernah staff lihat untuk tanggal
-    // yang berubah. Muat ulang dulu, minta staff cek lagi baru submit.
+    // Jaring pengaman — kalau durasi berubah tapi daftar tanggal (dipakai
+    // buat tampilan "penuh/tidak" sebelum submit) belum sempat dimuat
+    // ulang, minta staff cek lagi dulu — server tetap validasi ulang
+    // sendiri di confirm(), ini murni supaya staff tidak submit sambil
+    // melihat data kapasitas yang sudah basi di layar.
     if (durationDays !== capacityLoadedForDuration) {
       Alert.alert(
         'Tanggal belum diperbarui',
@@ -333,23 +338,11 @@ export default function StaffBookingChatScreen() {
       return;
     }
 
-    const workingRows = capacityRows.filter((row): row is { date: string; closed: false; used: number; capacity: string } => !row.closed);
-    if (workingRows.length === 0) {
-      Alert.alert('Data tidak valid', 'Belum ada tanggal kerja termuat.');
-      return;
-    }
-
-    const capacities = workingRows.map((row) => ({ date: row.date, capacity: parseInt(row.capacity, 10) }));
-    if (capacities.some((c) => !c.capacity || c.capacity < 1)) {
-      Alert.alert('Data tidak valid', 'Kapasitas tiap tanggal minimal 1.');
-      return;
-    }
-
     setConfirming(true);
     try {
       await staffApiFetch(`/api/staff/bookings/${bookingId}/confirm`, {
         method: 'POST',
-        body: JSON.stringify({ duration_days: durationDays, capacities }),
+        body: JSON.stringify({ duration_days: durationDays }),
       });
       setBookingStatus('confirmed');
       setConfirmModalOpen(false);
@@ -1210,7 +1203,7 @@ export default function StaffBookingChatScreen() {
           <View style={styles.completeSheet}>
             <Text style={styles.completeTitle}>Konfirmasi Booking</Text>
             <Text style={styles.completeSubtitle}>
-              Kapasitas tim bisa beda tiap tanggal (mis. 1 tim masih ngerjain mobil dari hari sebelumnya) — sesuaikan per baris kalau perlu. Sistem cek slot sebelum booking dikonfirmasi.
+              Sistem cek slot kapasitas instalasi otomatis sebelum booking dikonfirmasi. Kapasitas diatur terpusat lewat Kalender Kapasitas (bukan diisi di sini) — hubungi admin kalau perlu penyesuaian tanggal tertentu.
             </Text>
 
             <View style={styles.confirmFieldRow}>
@@ -1245,16 +1238,15 @@ export default function StaffBookingChatScreen() {
                       </View>
                     ) : (
                       <View key={row.date} style={styles.capacityRow}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.capacityRowDate}>{formatDate(row.date)}</Text>
-                          <Text style={styles.capacityRowUsed}>{row.used} booking confirmed</Text>
-                        </View>
-                        <TextInput
-                          style={styles.capacityRowInput}
-                          keyboardType="number-pad"
-                          value={row.capacity}
-                          onChangeText={(v) => updateCapacityRow(row.date, v)}
-                        />
+                        <Text style={styles.capacityRowDate}>{formatDate(row.date)}</Text>
+                        <Text
+                          style={[
+                            styles.capacityRowUsed,
+                            row.used >= row.capacity && { color: colors.danger, fontWeight: '700' },
+                          ]}
+                        >
+                          {row.used}/{row.capacity} slot{row.used >= row.capacity ? ' — PENUH' : ''}
+                        </Text>
                       </View>
                     )
                   ))}
@@ -1691,15 +1683,11 @@ function createStyles(colors: typeof darkColors) {
   capacityEmptyText: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: spacing.xs },
   capacityScroll: { maxHeight: 220, marginTop: spacing.xs },
   capacityRow: {
-    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm,
     paddingVertical: spacing.xs, borderBottomWidth: 1, borderBottomColor: colors.border,
   },
-  capacityRowDate: { fontSize: fontSize.sm, fontWeight: '600', color: colors.textPrimary },
-  capacityRowUsed: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
-  capacityRowInput: {
-    width: 56, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
-    paddingVertical: 8, textAlign: 'center', fontSize: fontSize.sm, color: colors.textPrimary,
-  },
+  capacityRowDate: { flex: 1, fontSize: fontSize.sm, fontWeight: '600', color: colors.textPrimary },
+  capacityRowUsed: { fontSize: fontSize.xs, color: colors.textMuted },
   capacityRowClosed: {
     paddingVertical: spacing.xs, borderBottomWidth: 1, borderBottomColor: colors.border,
   },

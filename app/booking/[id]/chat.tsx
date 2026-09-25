@@ -53,6 +53,23 @@ const REVIEW_TAGS: { key: string; label: string; polarity: 'positive' | 'negativ
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+type BookingStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled';
+
+// Riwayat status booking (audit modul Booking Instalasi 2026-09-25, gap
+// "standar enterprise") — SEBELUMNYA customer cuma dapat push notif
+// SEKALI saat status berubah (lihat BookingObserver::updated() di
+// backend), tidak ada cara melihat ulang kapan pending→confirmed
+// terjadi kalau notifnya terlewat/dimatikan. Datanya dibaca dari
+// activity_log yang sudah lama tercatat, cuma baru sekarang
+// disurfacekan lewat endpoint messages ini (lihat
+// BookingMessageController::statusHistory() di backend).
+const STATUS_HISTORY_META: Record<BookingStatus, { label: string; icon: React.ComponentProps<typeof Ionicons>['name'] }> = {
+  pending: { label: 'Menunggu Konfirmasi', icon: 'time-outline' },
+  confirmed: { label: 'Dikonfirmasi Toko', icon: 'checkmark-circle-outline' },
+  completed: { label: 'Selesai', icon: 'flag-outline' },
+  cancelled: { label: 'Dibatalkan', icon: 'close-circle-outline' },
+};
+
 interface BookingMessage {
   id: number;
   sender_type: 'customer' | 'admin' | 'system';
@@ -106,6 +123,8 @@ export default function CustomerBookingChatScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [messages, setMessages] = useState<BookingMessage[]>([]);
+  const [statusHistory, setStatusHistory] = useState<{ status: BookingStatus; changed_at: string }[]>([]);
+  const [statusHistoryExpanded, setStatusHistoryExpanded] = useState(false);
   const [currentStage, setCurrentStage] = useState<string | null>(null);
   const [secondaryStage, setSecondaryStage] = useState<string | null>(null);
   const [productKacaFilm, setProductKacaFilm] = useState(false);
@@ -176,6 +195,8 @@ export default function CustomerBookingChatScreen() {
   const fetchMessages = useCallback(() => {
     return apiFetch<{
       data: {
+        status: BookingStatus;
+        status_history: { status: BookingStatus; changed_at: string }[];
         current_stage: string | null;
         secondary_stage: string | null;
         product_kaca_film: boolean;
@@ -188,6 +209,7 @@ export default function CustomerBookingChatScreen() {
     }>(`/api/customer/bookings/${bookingId}/messages`)
       .then((res) => {
         setMessages(res.data.messages);
+        setStatusHistory(res.data.status_history ?? []);
         setCurrentStage(res.data.current_stage);
         setSecondaryStage(res.data.secondary_stage);
         setProductKacaFilm(res.data.product_kaca_film);
@@ -399,6 +421,39 @@ export default function CustomerBookingChatScreen() {
               <Text style={styles.reviewSummaryComment} numberOfLines={2}>{review.comment}</Text>
             ) : null}
           </View>
+        </View>
+      )}
+
+      {statusHistory.length > 0 && (
+        <View style={styles.stageCard}>
+          <Pressable
+            style={styles.stageSummaryRow}
+            onPress={() => setStatusHistoryExpanded((v) => !v)}
+          >
+            <Ionicons name="receipt-outline" size={14} color={colors.accent} />
+            <Text style={styles.stageSummaryText} numberOfLines={1}>
+              Riwayat Status Booking
+            </Text>
+            <Ionicons
+              name={statusHistoryExpanded ? 'chevron-up' : 'chevron-down'}
+              size={16}
+              color={colors.textMuted}
+            />
+          </Pressable>
+          {statusHistoryExpanded && (
+            <View style={styles.stageCardBody}>
+              {statusHistory.map((entry, i) => {
+                const meta = STATUS_HISTORY_META[entry.status];
+                return (
+                  <View key={`${entry.status}-${entry.changed_at}-${i}`} style={styles.statusHistoryRow}>
+                    <Ionicons name={meta.icon} size={16} color={colors.accent} />
+                    <Text style={styles.statusHistoryLabel}>{meta.label}</Text>
+                    <Text style={styles.statusHistoryTime}>{formatDateTime(entry.changed_at)}</Text>
+                  </View>
+                );
+              })}
+            </View>
+          )}
         </View>
       )}
 
@@ -854,6 +909,9 @@ function createStyles(colors: typeof darkColors) {
   },
   stageSummaryText: { flex: 1, fontSize: fontSize.xs, fontWeight: '700', color: colors.textPrimary },
   stageCardBody: { gap: spacing.sm, marginTop: spacing.xs },
+  statusHistoryRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  statusHistoryLabel: { flex: 1, fontSize: fontSize.xs, fontWeight: '600', color: colors.textPrimary },
+  statusHistoryTime: { fontSize: 10, color: colors.textMuted },
   stageTrackWrap: { position: 'relative' },
   stageTrackLabel: {
     fontSize: 10, fontWeight: '700', color: colors.textMuted,
