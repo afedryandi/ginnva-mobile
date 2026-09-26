@@ -58,6 +58,10 @@ const MENU_GROUPS: MenuGroup[] = [
     items: [
       { key: 'warranties', label: 'Garansi Saya', icon: 'shield-checkmark-outline', route: '/account/my-warranties', requiresAuth: true },
       { key: 'bookings', label: 'Booking Saya', icon: 'calendar-outline', route: '/account/my-bookings', requiresAuth: true },
+      // Portal Invoice (gap "standar enterprise" diperbaiki 2026-09-25,
+      // audit Invoice) — sebelumnya customer sama sekali tidak bisa
+      // lihat/unduh invoice sendiri lewat app.
+      { key: 'invoices', label: 'Invoice Saya', icon: 'document-text-outline', route: '/account/invoices', requiresAuth: true },
       { key: 'vouchers', label: 'Voucher Saya', icon: 'ticket-outline', route: '/account/vouchers', requiresAuth: true },
       { key: 'reward-redemptions', label: 'Riwayat Tukar Reward', icon: 'gift-outline', route: '/account/reward-redemptions', requiresAuth: true },
       { key: 'notifications', label: 'Notifikasi', icon: 'notifications-outline', route: '/account/notifications', requiresAuth: true },

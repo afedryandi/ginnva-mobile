@@ -133,6 +133,11 @@ export default function StaffBookingChatScreen() {
   const [completing, setCompleting] = useState(false);
   const [sendingReminder, setSendingReminder] = useState(false);
   const [bookingStatus, setBookingStatus] = useState<'pending' | 'confirmed' | 'completed' | 'cancelled' | null>(null);
+  // Gap UX diperbaiki 2026-09-25 (audit SPK) — Filament sudah punya
+  // tombol "Lihat SPK" 1-klik dari halaman Booking, mobile belum sama
+  // sekali (staff harus pindah ke menu SPK terpisah & cari manual).
+  // null = belum tahu/belum ada SPK, sampai fetchBookingStatus() selesai.
+  const [spkId, setSpkId] = useState<number | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [confirmDurationDays, setConfirmDurationDays] = useState('1');
@@ -261,8 +266,11 @@ export default function StaffBookingChatScreen() {
   // menambah beban request tiap poll padahal status jarang berubah saat
   // layar chat sedang dibuka.
   const fetchBookingStatus = useCallback(() => {
-    return staffApiFetch<{ data: { status: typeof bookingStatus } }>(`/api/staff/bookings/${bookingId}`)
-      .then((res) => setBookingStatus(res.data.status))
+    return staffApiFetch<{ data: { status: typeof bookingStatus; spk: { id: number } | null } }>(`/api/staff/bookings/${bookingId}`)
+      .then((res) => {
+        setBookingStatus(res.data.status);
+        setSpkId(res.data.spk?.id ?? null);
+      })
       .catch(() => {
         // Diam-diam gagal saja — tombol "Konfirmasi Booking" cuma tidak
         // muncul, chat tetap bisa dipakai seperti biasa (fetchMessages
@@ -876,6 +884,23 @@ export default function StaffBookingChatScreen() {
           {(bookingStatus === 'pending' || bookingStatus === 'confirmed') && (
             <Pressable onPress={openCancelModal} style={styles.sideButton}>
               <Ionicons name="close-circle-outline" size={22} color={colors.danger} />
+            </Pressable>
+          )}
+          {/* "Lihat SPK"/"Buat SPK" — gap UX diperbaiki 2026-09-25 (audit
+              SPK). SPK cuma masuk akal untuk booking yang sudah
+              dikonfirmasi (lihat validasi status di SpkController::store())
+              atau sudah selesai (masih relevan dilihat setelahnya). */}
+          {(bookingStatus === 'confirmed' || bookingStatus === 'completed') && (
+            <Pressable
+              onPress={() => (
+                spkId
+                  ? router.push(`/staff/spks/${spkId}` as never)
+                  : router.push({ pathname: '/staff/spks/create', params: { bookingId: String(bookingId) } } as never)
+              )}
+              style={styles.sideButton}
+              accessibilityLabel={spkId ? 'Lihat SPK' : 'Buat SPK'}
+            >
+              <Ionicons name={spkId ? 'document-text' : 'document-text-outline'} size={22} color={colors.accent} />
             </Pressable>
           )}
           <Pressable onPress={openAssignModal} style={styles.sideButton}>

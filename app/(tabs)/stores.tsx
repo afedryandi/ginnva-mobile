@@ -70,7 +70,18 @@ export default function StoresScreen() {
     else setLoading(true);
     setError(null);
     apiFetch<{ data: StoreItem[] }>('/api/stores', { skipAuth: true })
-      .then((res) => setStores(res.data))
+      .then((res) => {
+        // Ginnva House ditaruh paling atas (diminta user 2026-09-25, sama
+        // perubahan yang sudah dilakukan di ginnva-web/app/dealers) —
+        // sisa urutan dari API tetap dipertahankan (stable sort).
+        const sorted = [...res.data].sort((a, b) => {
+          const aIsDefault = a.name === 'Ginnva House';
+          const bIsDefault = b.name === 'Ginnva House';
+          if (aIsDefault === bIsDefault) return 0;
+          return aIsDefault ? -1 : 1;
+        });
+        setStores(sorted);
+      })
       .catch((err) => {
         setError(
           err instanceof ApiError

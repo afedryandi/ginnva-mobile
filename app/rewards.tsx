@@ -109,6 +109,12 @@ export default function RewardsScreen() {
 
   const renderItem = ({ item }: { item: Reward }) => {
     const insufficientPoints = pointsBalance !== null && item.points_cost > pointsBalance;
+    // UX diperbaiki 2026-09-26 (audit Katalog Reward) -- SEBELUMNYA field
+    // stock sudah dikirim API tapi tidak dipakai sama sekali di UI, jadi
+    // customer tidak tahu reward stok terbatas mau habis. Reward stok 0
+    // TIDAK PERNAH sampai ke sini (sudah difilter backend, GET /api/rewards),
+    // jadi ambang "hampir habis" cukup dicek dari stock > 0 saja.
+    const lowStock = item.stock !== null && item.stock > 0 && item.stock <= 5;
     return (
       <View style={styles.card}>
         {item.image ? (
@@ -122,6 +128,9 @@ export default function RewardsScreen() {
           <Text style={styles.cardName} numberOfLines={2}>{item.name}</Text>
           {item.description && (
             <Text style={styles.cardDesc} numberOfLines={2}>{item.description}</Text>
+          )}
+          {lowStock && (
+            <Text style={styles.lowStockText}>⏳ Sisa {item.stock} lagi</Text>
           )}
           <View style={styles.cardFooter}>
             <View style={styles.pointsBadge}>
@@ -268,6 +277,7 @@ function createStyles(colors: typeof darkColors) {
   cardInfo: { flex: 1, gap: 4, justifyContent: 'center' },
   cardName: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
   cardDesc: { fontSize: fontSize.xs, color: colors.textSecondary, lineHeight: 16 },
+  lowStockText: { fontSize: fontSize.xs, fontWeight: '700', color: colors.warning },
   cardFooter: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -15,6 +15,7 @@ import { StatusBar } from 'expo-status-bar';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAppTheme } from '@/lib/theme-context';
+import { useAuth } from '@/lib/auth-context';
 
 // Terpisah dari "Voucher Saya" (app/account/vouchers.tsx) — di sana isinya
 // voucher fisik yang SUDAH di-assign staff ke akun ini, di sini isinya
@@ -54,11 +55,19 @@ function isExpiringSoon(dateStr: string | null): boolean {
 export default function PromoScreen() {
   const { theme, colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { isLoggedIn } = useAuth();
 
   const [promos, setPromos] = useState<PromoVoucher[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // UX diperbaiki 2026-09-26 (audit Voucher Promo) -- SEBELUMNYA card promo
+  // yang customer SUDAH punya voucher-nya tampil identik dengan yang belum,
+  // membingungkan kenapa promo yang sudah dipegang masih tampil sebagai
+  // ajakan datang toko. Cross-check ke "Voucher Saya" HANYA kalau sudah
+  // login (endpoint ini sendiri sengaja publik) -- gagal diam-diam kalau
+  // request itu error, ini murni enhancement UI, bukan data inti halaman.
+  const [ownedVoucherIds, setOwnedVoucherIds] = useState<Set<number>>(new Set());
 
   const fetchData = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -73,7 +82,16 @@ export default function PromoScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+
+    if (isLoggedIn) {
+      try {
+        const claimsRes = await apiFetch<{ data: { voucher_id: number }[] }>('/api/customer/vouchers');
+        setOwnedVoucherIds(new Set(claimsRes.data.map((c) => c.voucher_id)));
+      } catch {
+        // Diamkan -- lihat catatan di atas state ownedVoucherIds.
+      }
+    }
+  }, [isLoggedIn]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -110,6 +128,7 @@ export default function PromoScreen() {
           contentContainerStyle={styles.listContent}
           renderItem={({ item }) => {
             const expiringSoon = isExpiringSoon(item.expires_at);
+            const owned = ownedVoucherIds.has(item.id);
             return (
               <Pressable style={styles.promoCard} onPress={() => router.push('/(tabs)/stores' as never)}>
                 <View style={styles.promoTopRow}>
@@ -120,6 +139,12 @@ export default function PromoScreen() {
                     </View>
                   )}
                 </View>
+                {owned && (
+                  <View style={styles.ownedBadge}>
+                    <Ionicons name="checkmark-circle" size={12} color={colors.success} />
+                    <Text style={styles.ownedBadgeText}>Anda sudah punya voucher ini — cek "Voucher Saya"</Text>
+                  </View>
+                )}
                 {item.description && (
                   <Text style={styles.promoDesc}>{item.description}</Text>
                 )}
@@ -179,6 +204,8 @@ function createStyles(colors: typeof darkColors) {
     paddingHorizontal: spacing.sm, paddingVertical: 3, flexShrink: 0,
   },
   discountBadgeText: { fontSize: fontSize.xs, fontWeight: '800', color: '#ffffff' },
+  ownedBadge: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  ownedBadgeText: { fontSize: fontSize.xs, fontWeight: '600', color: colors.success },
   promoDesc: { fontSize: fontSize.xs, color: colors.textSecondary, lineHeight: 16 },
   promoBottomRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

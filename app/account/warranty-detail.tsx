@@ -35,7 +35,6 @@ interface WarrantyDetail {
   customer_name: string;
   car_type: string;
   car_plate: string;
-  car_year: string | null;
   product_series: string;
   product_category: string | null;
   dealer_name: string;
@@ -63,6 +62,13 @@ interface WarrantyDetail {
   // lewat Filament). Lihat audit modul Garansi 2026-08-27.
   store: { name: string; phone: string | null } | null;
   claims: WarrantyClaimSummary[];
+  // Fitur "Kuota Maintenance" (2026-09-25) -- semuanya null kalau garansi
+  // ini memang tidak ditawarkan maintenance (lihat WarrantyResource,
+  // field "Kuota Maintenance").
+  maintenance_quota: number | null;
+  maintenance_used: number | null;
+  maintenance_remaining: number | null;
+  maintenance_visits: { visited_at: string; note: string | null }[];
 }
 
 const CLAIM_STATUS_LABEL: Record<WarrantyClaimSummary['status'], string> = {
@@ -86,6 +92,10 @@ function getStatusMeta(colors: typeof darkColors): Record<string, { label: strin
     pending_review: { label: 'Menunggu Review', color: colors.warning,  bg: colors.warningBg,  icon: 'time' },
     rejected:       { label: 'Ditolak',         color: colors.danger,   bg: colors.dangerBg,   icon: 'close-circle' },
     expired:        { label: 'Kedaluwarsa',     color: colors.textMuted, bg: colors.surface,   icon: 'calendar' },
+    // Gap "revoke/void" diperbaiki 2026-09-25 (audit Garansi) -- sama
+    // alasan dengan my-warranties.tsx, tanpa ini fallback ke badge hijau
+    // "Aktif" yang menyesatkan untuk garansi yang baru dibatalkan.
+    revoked:        { label: 'Dibatalkan',      color: colors.danger,   bg: colors.dangerBg,   icon: 'close-circle' },
   };
 }
 
@@ -203,7 +213,12 @@ export default function WarrantyDetailScreen() {
             {[
               { label: 'Nama Pemilik',    value: warranty.customer_name },
               { label: 'Produk',          value: warranty.product_series },
-              { label: 'Kendaraan',       value: `${warranty.car_type}${warranty.car_year ? ` (${warranty.car_year})` : ''}` },
+              // GAP DIPERBAIKI 2026-09-25 (audit Garansi) -- car_year
+              // SEBELUMNYA dipakai di sini tapi kolom itu tidak pernah
+              // ada di backend (model/migrasi/API) sama sekali, jadi
+              // selalu kosong. Dihapus daripada dibiarkan jadi field
+              // hantu yang tidak pernah tampil.
+              { label: 'Kendaraan',       value: warranty.car_type },
               { label: 'Plat Nomor',      value: warranty.car_plate },
               { label: 'Dealer Pemasang',  value: warranty.dealer_name },
               { label: 'Tgl. Pemasangan', value: formatDate(warranty.installation_date) },
@@ -273,6 +288,33 @@ export default function WarrantyDetailScreen() {
                     <Text style={styles.rowValue}>{row.value}</Text>
                   </View>
                 ))}
+            </View>
+          )}
+
+          {/* Kuota Maintenance (2026-09-25) — cuma tampil kalau garansi ini
+              memang ditawarkan maintenance (maintenance_quota terisi). */}
+          {warranty.maintenance_quota !== null && (
+            <View style={styles.table}>
+              <View style={styles.techHeader}>
+                <Text style={styles.techHeaderText}>MAINTENANCE</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Sisa Kunjungan</Text>
+                <Text
+                  style={[
+                    styles.rowValue,
+                    { color: (warranty.maintenance_remaining ?? 0) > 0 ? colors.accent : colors.textMuted, fontWeight: '700' },
+                  ]}
+                >
+                  {warranty.maintenance_remaining} dari {warranty.maintenance_quota} kali
+                </Text>
+              </View>
+              {warranty.maintenance_visits.length > 0 && warranty.maintenance_visits.map((visit, i) => (
+                <View key={i} style={[styles.row, styles.rowBorder]}>
+                  <Text style={styles.rowLabel}>{formatDate(visit.visited_at)}</Text>
+                  <Text style={styles.rowValue}>{visit.note || 'Kunjungan tercatat'}</Text>
+                </View>
+              ))}
             </View>
           )}
 

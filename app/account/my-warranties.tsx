@@ -19,6 +19,10 @@ interface MyWarranty {
   expiry_date: string;
   status: string;
   remaining_days: number;
+  // Fitur "Kuota Maintenance" (2026-09-25) -- null kalau garansi ini
+  // memang tidak ditawarkan maintenance.
+  maintenance_quota: number | null;
+  maintenance_remaining: number | null;
 }
 
 function getStatusMeta(colors: typeof darkColors): Record<string, { label: string; color: string; bg: string }> {
@@ -27,6 +31,11 @@ function getStatusMeta(colors: typeof darkColors): Record<string, { label: strin
     pending_review: { label: 'Menunggu Review', color: colors.warning, bg: colors.warningBg },
     rejected: { label: 'Ditolak', color: colors.danger, bg: colors.dangerBg },
     expired: { label: 'Kedaluwarsa', color: colors.textMuted, bg: colors.surface },
+    // Gap "revoke/void" diperbaiki 2026-09-25 (audit Garansi) -- SEBELUMNYA
+    // tidak ada entri ini sama sekali, jadi garansi 'revoked' jatuh ke
+    // fallback STATUS_META.active (badge hijau "Aktif") -- MENYESATKAN,
+    // customer yang garansinya baru dibatalkan malah lihat badge hijau.
+    revoked: { label: 'Dibatalkan', color: colors.danger, bg: colors.dangerBg },
   };
 }
 
@@ -184,6 +193,11 @@ export default function MyWarrantiesScreen() {
                       {item.remaining_days <= 30
                         ? `⚠️ Sisa ${item.remaining_days} hari masa garansi`
                         : `Sisa ${item.remaining_days} hari masa garansi`}
+                    </Text>
+                  )}
+                  {item.maintenance_quota !== null && (
+                    <Text style={styles.remainingText}>
+                      Sisa maintenance: {item.maintenance_remaining} dari {item.maintenance_quota} kali
                     </Text>
                   )}
                 </View>
