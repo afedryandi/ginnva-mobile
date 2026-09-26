@@ -52,6 +52,16 @@ export default function StaffHomeScreen() {
       visible: staff?.has_booking_access,
     },
     {
+      key: 'spks',
+      icon: 'clipboard-outline' as const,
+      title: 'Surat Perintah Kerja',
+      onPress: () => router.push('/staff/spks' as never),
+      // SPK dokumen turunan booking, dipakai staff yang sama yang
+      // pegang akses Booking Toko (diminta user 2026-09-16, isi form
+      // inspeksi kendaraan langsung dari HP di lapangan).
+      visible: staff?.has_booking_access,
+    },
+    {
       key: 'attendance',
       icon: 'finger-print-outline' as const,
       title: 'Absensi & Izin',
@@ -80,13 +90,6 @@ export default function StaffHomeScreen() {
       icon: 'cube-outline' as const,
       title: 'Produk PPF/WF',
       onPress: () => router.push('/staff/inventory/scan' as never),
-      visible: staff?.has_ppf_wf_access,
-    },
-    {
-      key: 'roll-scraps',
-      icon: 'cut-outline' as const,
-      title: 'Sisa Roll',
-      onPress: () => router.push('/staff/inventory/scraps' as never),
       visible: staff?.has_ppf_wf_access,
     },
     {
@@ -144,10 +147,22 @@ export default function StaffHomeScreen() {
         </Pressable>
       </View>
 
-      <View style={styles.subheader}>
-        <Text style={styles.subheaderName}>{staff?.name}</Text>
-        <Text style={styles.subheaderRole}>{formatRoleLabel(staff?.role)}</Text>
-      </View>
+      {/* Ditambahkan 2026-09-26 (audit fitur User) -- SEBELUMNYA subheader
+          ini murni teks statis, staff yang sudah login tidak punya cara
+          apa pun untuk ganti password (satu-satunya jalur adalah lupa
+          password SEBELUM login). Dijadikan tombol ke layar "Akun Saya"
+          yang baru (ganti password) -- entry point paling wajar karena
+          posisinya memang sudah menampilkan identitas akun. */}
+      <Pressable
+        style={styles.subheader}
+        onPress={() => router.push('/staff/change-password' as never)}
+      >
+        <View>
+          <Text style={styles.subheaderName}>{staff?.name}</Text>
+          <Text style={styles.subheaderRole}>{formatRoleLabel(staff?.role)}</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+      </Pressable>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.grid}>
@@ -180,7 +195,15 @@ function createStyles(colors: typeof darkColors) {
     },
     sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
     headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-    subheader: { paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.xs, alignItems: 'center' },
+    subheader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.xs,
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.sm,
+      paddingBottom: spacing.xs,
+    },
     subheaderName: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary },
     subheaderRole: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
     scrollContent: {
