@@ -47,6 +47,21 @@ const STATUS_META: Record<CorrectionRecord['status'], { label: string; color: ke
   rejected: { label: 'Ditolak', color: 'danger', bg: 'dangerBg' },
 };
 
+interface ExistingAttendance {
+  date: string;
+  entry_type: 'clock' | 'manual' | 'field_duty' | 'alpha' | 'leave';
+  clock_in_at: string | null;
+  clock_out_at: string | null;
+}
+
+const ENTRY_TYPE_LABEL: Record<ExistingAttendance['entry_type'], string> = {
+  clock: 'Normal (App)',
+  manual: 'Manual',
+  field_duty: 'Dinas Luar',
+  alpha: 'Alpha (Tanpa Keterangan)',
+  leave: 'Izin/Cuti',
+};
+
 function toDateInputValue(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -90,6 +105,15 @@ export default function StaffAttendanceCorrectionScreen() {
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // UX diperbaiki 2026-09-27 (audit Koreksi Absensi) -- SEBELUMNYA staff
+  // sama sekali tidak diberi tahu kalau tanggal yang dipilih sudah punya
+  // baris absensi (mis. sudah absen Normal, atau tercatat Izin/Cuti resmi)
+  // sebelum submit -- baru admin yang menyadarinya (atau tidak) saat
+  // approve. Fetch riwayat bulan berjalan tiap kali tanggal berubah, cari
+  // baris yang cocok, tampilkan sebagai konteks di atas form.
+  const [existingAttendance, setExistingAttendance] = useState<ExistingAttendance | null>(null);
+  const [checkingExisting, setCheckingExisting] = useState(false);
+
   const loadRequests = useCallback(async () => {
     setError(null);
     try {
@@ -110,6 +134,29 @@ export default function StaffAttendanceCorrectionScreen() {
     await loadRequests();
     setRefreshing(false);
   }, [loadRequests]);
+
+  useEffect(() => {
+    const dateValue = toDateInputValue(date);
+    const monthParam = dateValue.slice(0, 7);
+    let cancelled = false;
+    setCheckingExisting(true);
+
+    staffApiFetch<{ attendances: ExistingAttendance[] }>(`/api/staff/attendance/history?month=${monthParam}`)
+      .then((res) => {
+        if (cancelled) return;
+        setExistingAttendance(res.attendances.find((a) => a.date === dateValue) ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setExistingAttendance(null);
+      })
+      .finally(() => {
+        if (!cancelled) setCheckingExisting(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [date]);
 
   const stepDate = (delta: number) => {
     const next = addDays(date, delta);
@@ -212,6 +259,21 @@ export default function StaffAttendanceCorrectionScreen() {
                   />
                 </Pressable>
               </View>
+
+              {checkingExisting ? (
+                <ActivityIndicator size="small" color={colors.accent} style={styles.existingCheckLoading} />
+              ) : existingAttendance ? (
+                <View style={styles.existingBanner}>
+                  <Ionicons name="information-circle-outline" size={16} color={colors.warning} />
+                  <Text style={styles.existingBannerText}>
+                    Tanggal ini sudah tercatat: {ENTRY_TYPE_LABEL[existingAttendance.entry_type]}
+                    {existingAttendance.clock_in_at || existingAttendance.clock_out_at
+                      ? ` (${formatTime(existingAttendance.clock_in_at)}–${formatTime(existingAttendance.clock_out_at)})`
+                      : ''}
+                    . Mengajukan koreksi akan MENIMPA data ini kalau disetujui.
+                  </Text>
+                </View>
+              ) : null}
 
               <View style={styles.timeRow}>
                 <View style={styles.timeField}>
@@ -331,6 +393,13 @@ function createStyles(colors: typeof darkColors) {
     },
     dateStepButton: { padding: spacing.xs },
     dateStepperText: { fontSize: fontSize.sm, fontWeight: '600', color: colors.textPrimary, textTransform: 'capitalize' },
+    existingCheckLoading: { marginVertical: spacing.xs },
+    existingBanner: {
+      flexDirection: 'row', alignItems: 'flex-start', gap: spacing.xs,
+      backgroundColor: colors.warningBg, borderRadius: radius.md,
+      padding: spacing.sm, marginTop: spacing.sm,
+    },
+    existingBannerText: { flex: 1, fontSize: fontSize.xs, color: colors.warning, lineHeight: 16 },
     timeRow: { flexDirection: 'row', gap: spacing.sm },
     timeField: { flex: 1 },
     timeInput: {
