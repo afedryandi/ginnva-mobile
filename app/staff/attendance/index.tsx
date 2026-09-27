@@ -424,6 +424,16 @@ export default function StaffAttendanceScreen() {
               <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
             </Pressable>
 
+            {/* Gap ditutup 2026-09-26 (audit Absensi Karyawan) --
+                SEBELUMNYA staff tidak punya jalur pengajuan koreksi
+                absensi dari app sama sekali, harus minta admin buatkan
+                manual di Filament. */}
+            <Pressable style={styles.leaveLink} onPress={() => router.push('/staff/attendance/correction' as never)}>
+              <Ionicons name="create-outline" size={18} color={colors.accent} />
+              <Text style={styles.leaveLinkText}>Ajukan Koreksi Absensi</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+            </Pressable>
+
             {/* Riwayat SP milik sendiri — read-only, cuma bisa diterbitkan/
                 diedit admin lewat Filament. Ditaruh di sini (bukan icon
                 header sendiri seperti Absensi/Slip Gaji) karena kebanyakan
