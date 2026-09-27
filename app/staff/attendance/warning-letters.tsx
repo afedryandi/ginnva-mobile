@@ -15,6 +15,10 @@ interface WarningLetterRecord {
   reason: string;
   issued_date: string;
   valid_until: string | null;
+  // Ditambahkan 2026-09-27 (audit Surat Peringatan, "Gap standar
+  // enterprise") -- sebelumnya tidak ada bukti karyawan sudah
+  // diberi tahu/membaca SP-nya.
+  acknowledged_at: string | null;
   document_url: string | null;
   issuer_name: string | null;
 }
@@ -43,6 +47,7 @@ export default function StaffWarningLettersScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [acknowledgingId, setAcknowledgingId] = useState<number | null>(null);
 
   const loadLetters = useCallback(async () => {
     setError(null);
@@ -64,6 +69,21 @@ export default function StaffWarningLettersScreen() {
     await loadLetters();
     setRefreshing(false);
   }, [loadLetters]);
+
+  const handleAcknowledge = useCallback(async (item: WarningLetterRecord) => {
+    setAcknowledgingId(item.id);
+    try {
+      const res = await staffApiFetch<{ warning_letter: WarningLetterRecord }>(
+        `/api/staff/warning-letters/${item.id}/acknowledge`,
+        { method: 'POST' }
+      );
+      setLetters((prev) => prev.map((l) => (l.id === item.id ? res.warning_letter : l)));
+    } catch {
+      setError('Gagal menandai sudah dibaca. Periksa koneksi internet Anda.');
+    } finally {
+      setAcknowledgingId(null);
+    }
+  }, []);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -125,6 +145,28 @@ export default function StaffWarningLettersScreen() {
                     <Text style={styles.attachmentLinkText}>Lihat scan surat</Text>
                   </Pressable>
                 ) : null}
+
+                {item.acknowledged_at ? (
+                  <View style={styles.ackDoneRow}>
+                    <Ionicons name="checkmark-circle" size={14} color={colors.success} />
+                    <Text style={styles.ackDoneText}>
+                      Sudah dibaca {formatDate(item.acknowledged_at)}
+                    </Text>
+                  </View>
+                ) : (
+                  <Pressable
+                    style={styles.ackBtn}
+                    onPress={() => handleAcknowledge(item)}
+                    disabled={acknowledgingId === item.id}
+                  >
+                    {acknowledgingId === item.id ? (
+                      <ActivityIndicator size="small" color={colors.accent} />
+                    ) : (
+                      <Ionicons name="checkmark-outline" size={16} color={colors.accent} />
+                    )}
+                    <Text style={styles.ackBtnText}>Tandai Sudah Dibaca</Text>
+                  </Pressable>
+                )}
               </View>
             );
           }}
@@ -161,6 +203,14 @@ function createStyles(colors: typeof darkColors) {
     cardIssuer: { fontSize: fontSize.xs, color: colors.textMuted, marginBottom: spacing.xs },
     attachmentLink: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     attachmentLinkText: { fontSize: fontSize.xs, fontWeight: '600', color: colors.accent },
+    ackDoneRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: spacing.xs },
+    ackDoneText: { fontSize: fontSize.xs, color: colors.success },
+    ackBtn: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+      marginTop: spacing.sm, paddingVertical: spacing.sm, borderRadius: radius.md,
+      borderWidth: 1, borderColor: colors.accent,
+    },
+    ackBtnText: { fontSize: fontSize.sm, fontWeight: '600', color: colors.accent },
     emptyState: { alignItems: 'center', paddingVertical: spacing.xxl, gap: spacing.sm },
     emptyText: { fontSize: fontSize.sm, color: colors.textMuted, textAlign: 'center' },
   });
