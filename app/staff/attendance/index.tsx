@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Alert, ActivityIndicator, FlatList, RefreshControl } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Alert, ActivityIndicator, FlatList, RefreshControl, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
@@ -16,6 +17,8 @@ interface AttendanceRecord {
   clock_in_at: string | null;
   clock_out_at: string | null;
   clock_in_distance_meters: number | null;
+  clock_in_photo_url: string | null;
+  clock_out_photo_url: string | null;
   late_minutes: number;
   early_leave_minutes: number;
   note: string | null;
@@ -163,22 +166,60 @@ export default function StaffAttendanceScreen() {
     }
   }, []);
 
+  // Fitur "Foto Selfie Absensi" (2026-09-27, diminta user) --
+  // launchCameraAsync() (BUKAN launchImageLibraryAsync) membuka kamera
+  // native LANGSUNG, tidak ada opsi pilih dari galeri sama sekali --
+  // ini yang memenuhi syarat "wajib foto langsung di lokasi" tanpa perlu
+  // bikin layar kamera custom. cameraType 'front' minta kamera depan
+  // (selfie) sebagai default, TIDAK ada validasi wajah otomatis
+  // (keputusan user) -- murni bukti visual utk ditinjau manual admin.
+  const getSelfiePhotoOrAlert = useCallback(async (): Promise<ImagePicker.ImagePickerAsset | null> => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert(
+        'Izin Kamera Diperlukan',
+        'Ginnva memerlukan akses kamera untuk foto selfie absensi. Aktifkan izin kamera di pengaturan HP.'
+      );
+      return null;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      // String literal (bukan enum) -- sesuai signature ImagePickerOptions
+      // versi SDK 54 (docs.expo.dev/versions/v54.0.0/sdk/imagepicker),
+      // cameraType: 'front' | 'back'.
+      cameraType: 'front',
+      quality: 0.5,
+      allowsEditing: false,
+    });
+
+    if (result.canceled || !result.assets?.length) return null;
+    return result.assets[0];
+  }, []);
+
   const handleClockIn = useCallback(async () => {
     const position = await getLocationOrAlert();
     if (!position) return;
+    const photo = await getSelfiePhotoOrAlert();
+    if (!photo) return;
 
     setSubmitting(true);
     try {
+      const form = new FormData();
+      form.append('latitude', String(position.coords.latitude));
+      form.append('longitude', String(position.coords.longitude));
+      // Android saja — expo-location tidak melaporkan status mock di
+      // iOS sama sekali, `mocked` akan undefined dan tidak ikut terkirim
+      // (backend anggap null: tidak bisa dinilai).
+      if (position.mocked !== undefined) form.append('is_mocked', String(position.mocked));
+      form.append('photo', {
+        uri: photo.uri,
+        name: 'selfie-masuk.jpg',
+        type: photo.mimeType || 'image/jpeg',
+      } as unknown as Blob);
+
       const res = await staffApiFetch<{ attendance: AttendanceRecord }>('/api/staff/attendance/clock-in', {
         method: 'POST',
-        body: JSON.stringify({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          // Android saja — expo-location tidak melaporkan status mock di
-          // iOS sama sekali, `mocked` akan undefined dan tidak ikut
-          // terkirim (backend anggap null: tidak bisa dinilai).
-          is_mocked: position.mocked,
-        }),
+        body: form,
       });
       setToday(res.attendance);
       // Backend MENOLAK (lempar error, ditangkap di catch) kalau lokasi di
@@ -193,21 +234,29 @@ export default function StaffAttendanceScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [getLocationOrAlert, loadToday, loadHistory, historyMonth]);
+  }, [getLocationOrAlert, getSelfiePhotoOrAlert, loadToday, loadHistory, historyMonth]);
 
   const handleClockOut = useCallback(async () => {
     const position = await getLocationOrAlert();
     if (!position) return;
+    const photo = await getSelfiePhotoOrAlert();
+    if (!photo) return;
 
     setSubmitting(true);
     try {
+      const form = new FormData();
+      form.append('latitude', String(position.coords.latitude));
+      form.append('longitude', String(position.coords.longitude));
+      if (position.mocked !== undefined) form.append('is_mocked', String(position.mocked));
+      form.append('photo', {
+        uri: photo.uri,
+        name: 'selfie-keluar.jpg',
+        type: photo.mimeType || 'image/jpeg',
+      } as unknown as Blob);
+
       const res = await staffApiFetch<{ attendance: AttendanceRecord }>('/api/staff/attendance/clock-out', {
         method: 'POST',
-        body: JSON.stringify({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          is_mocked: position.mocked,
-        }),
+        body: form,
       });
       setToday(res.attendance);
       Alert.alert('Berhasil', 'Absen keluar tercatat.');
@@ -219,7 +268,7 @@ export default function StaffAttendanceScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [getLocationOrAlert, loadToday, loadHistory, historyMonth]);
+  }, [getLocationOrAlert, getSelfiePhotoOrAlert, loadToday, loadHistory, historyMonth]);
 
   const handleCheckDistance = useCallback(async () => {
     if (!store || store.latitude === null || store.longitude === null) return;
@@ -357,11 +406,17 @@ export default function StaffAttendanceScreen() {
                 <View style={styles.timeBlock}>
                   <Text style={styles.timeLabel}>Jam Masuk</Text>
                   <Text style={styles.timeValue}>{formatTime(today?.clock_in_at ?? null)}</Text>
+                  {today?.clock_in_photo_url ? (
+                    <Image source={{ uri: today.clock_in_photo_url }} style={styles.selfieThumb} />
+                  ) : null}
                 </View>
                 <View style={styles.timeDivider} />
                 <View style={styles.timeBlock}>
                   <Text style={styles.timeLabel}>Jam Keluar</Text>
                   <Text style={styles.timeValue}>{formatTime(today?.clock_out_at ?? null)}</Text>
+                  {today?.clock_out_photo_url ? (
+                    <Image source={{ uri: today.clock_out_photo_url }} style={styles.selfieThumb} />
+                  ) : null}
                 </View>
               </View>
 
@@ -538,6 +593,7 @@ function createStyles(colors: typeof darkColors) {
     timeDivider: { width: 1, height: 36, backgroundColor: colors.border },
     timeLabel: { fontSize: fontSize.xs, color: colors.textMuted, marginBottom: 4 },
     timeValue: { fontSize: fontSize.xxl, fontWeight: '800', color: colors.textPrimary, fontVariant: ['tabular-nums'] },
+    selfieThumb: { width: 40, height: 40, borderRadius: radius.md, marginTop: spacing.xs },
     lateBadge: {
       flexDirection: 'row', alignItems: 'center', gap: 4,
       backgroundColor: colors.warningBg, borderRadius: radius.pill,
