@@ -4,9 +4,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
-import { staffApiFetch } from '@/lib/staff-api';
+import { staffApiFetch, getStaffToken } from '@/lib/staff-api';
+import { API_BASE_URL } from '@/lib/api';
 import { useAppTheme } from '@/lib/theme-context';
+import { hapticError } from '@/lib/haptics';
 
 interface PayrollRecord {
   id: number;
@@ -18,6 +22,12 @@ interface PayrollRecord {
   late_violation_days: number;
   alpha_days: number;
   alpha_deduction: number;
+  // total_commission/has_unrated_commission ditambahkan 2026-09-27 (audit
+  // Penggajian, "Sisi mobile") -- SEBELUMNYA komisi teknisi yang sudah
+  // masuk net_pay invisible di app, staff cuma lihat net_pay polos tanpa
+  // tahu ada komponen komisi di dalamnya.
+  total_commission: number;
+  has_unrated_commission: boolean;
   total_deduction: number;
   net_pay: number;
   paid_at: string | null;
@@ -40,6 +50,7 @@ export default function StaffPayrollScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<number | null>(null);
 
   const loadPayrolls = useCallback(async () => {
     setError(null);
@@ -61,6 +72,37 @@ export default function StaffPayrollScreen() {
     await loadPayrolls();
     setRefreshing(false);
   }, [loadPayrolls]);
+
+  // Endpoint unduh slip gaji baru (2026-09-27, audit "Sisi mobile") --
+  // sama pola dengan Invoice customer (FileSystem.downloadAsync +
+  // Sharing.shareAsync), sudah terbukti jalan di sana.
+  const handleDownload = useCallback(async (item: PayrollRecord) => {
+    setDownloadingId(item.id);
+    try {
+      const token = await getStaffToken();
+      const monthLabel = formatMonthYear(item.period_month).replace(/\s+/g, '-');
+      const fileUri = `${FileSystem.cacheDirectory}Slip-Gaji-${monthLabel}.pdf`;
+      const downloadRes = await FileSystem.downloadAsync(
+        `${API_BASE_URL}/api/staff/payroll/${item.id}/slip`,
+        fileUri,
+        token ? { headers: { Authorization: `Bearer ${token}` } } : undefined
+      );
+      if (downloadRes.status !== 200) throw new Error('download_failed');
+
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(downloadRes.uri, {
+          mimeType: 'application/pdf',
+          dialogTitle: `Slip Gaji ${monthLabel}`,
+        });
+      }
+    } catch {
+      hapticError();
+      setError('Gagal mengunduh slip gaji. Periksa koneksi internet Anda.');
+    } finally {
+      setDownloadingId(null);
+    }
+  }, []);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -136,6 +178,19 @@ export default function StaffPayrollScreen() {
                         </Text>
                       </View>
                     ) : null}
+                    {item.total_commission > 0 ? (
+                      <View style={styles.breakdownRow}>
+                        <Text style={styles.breakdownLabel}>Komisi Teknisi</Text>
+                        <Text style={[styles.breakdownValue, styles.breakdownPositive]}>
+                          +{formatRupiah(item.total_commission)}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {item.has_unrated_commission ? (
+                      <Text style={styles.commissionNote}>
+                        Ada job dengan tarif komisi belum diatur, belum ikut ditotal di atas.
+                      </Text>
+                    ) : null}
                     <View style={styles.breakdownDivider} />
                     <View style={styles.breakdownRow}>
                       <Text style={styles.breakdownLabelBold}>Gaji Bersih</Text>
@@ -146,6 +201,19 @@ export default function StaffPayrollScreen() {
                         Dibayar {new Date(item.paid_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}
                       </Text>
                     ) : null}
+
+                    <Pressable
+                      style={styles.downloadBtn}
+                      onPress={() => handleDownload(item)}
+                      disabled={downloadingId === item.id}
+                    >
+                      {downloadingId === item.id ? (
+                        <ActivityIndicator size="small" color={colors.accent} />
+                      ) : (
+                        <Ionicons name="download-outline" size={16} color={colors.accent} />
+                      )}
+                      <Text style={styles.downloadBtnText}>Unduh Slip Gaji (PDF)</Text>
+                    </Pressable>
                   </View>
                 ) : null}
               </Pressable>
@@ -183,10 +251,18 @@ function createStyles(colors: typeof darkColors) {
     breakdownLabel: { fontSize: fontSize.sm, color: colors.textSecondary },
     breakdownValue: { fontSize: fontSize.sm, color: colors.textPrimary, fontVariant: ['tabular-nums'] },
     breakdownNegative: { color: colors.danger },
+    breakdownPositive: { color: colors.success },
+    commissionNote: { fontSize: fontSize.xs, color: colors.textMuted, fontStyle: 'italic' },
     breakdownDivider: { height: 1, backgroundColor: colors.border, marginVertical: 4 },
     breakdownLabelBold: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
     breakdownValueBold: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary, fontVariant: ['tabular-nums'] },
     paidAtText: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: 4 },
+    downloadBtn: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+      marginTop: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.md,
+      borderWidth: 1, borderColor: colors.accent,
+    },
+    downloadBtnText: { fontSize: fontSize.sm, fontWeight: '600', color: colors.accent },
     emptyState: { alignItems: 'center', paddingVertical: spacing.xxl, gap: spacing.sm },
     emptyText: { fontSize: fontSize.sm, color: colors.textMuted },
   });
