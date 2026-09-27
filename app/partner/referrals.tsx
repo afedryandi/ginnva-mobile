@@ -50,15 +50,24 @@ export default function PartnerReferralsScreen() {
   const [items, setItems] = useState<Referral[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Pagination (2026-09-26, audit Riwayat Poin Partner) -- backend
+  // sebelumnya ->limit(50) hardcoded, sekarang paginate().
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+
+  interface ReferralsResponse { data: Referral[]; current_page: number; has_more: boolean }
 
   const fetchData = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
     try {
-      const res = await staffApiFetch<{ data: Referral[] }>('/api/partner/referrals');
+      const res = await staffApiFetch<ReferralsResponse>('/api/partner/referrals');
       setItems(res.data);
+      setPage(res.current_page ?? 1);
+      setHasMore(res.has_more ?? false);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Gagal memuat riwayat referral.');
     } finally {
@@ -66,6 +75,21 @@ export default function PartnerReferralsScreen() {
       setRefreshing(false);
     }
   }, []);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await staffApiFetch<ReferralsResponse>(`/api/partner/referrals?page=${page + 1}`);
+      setItems((prev) => [...prev, ...(res.data ?? [])]);
+      setPage(res.current_page ?? page + 1);
+      setHasMore(res.has_more ?? false);
+    } catch {
+      // Diamkan -- riwayat yang sudah tampil tetap valid.
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, page]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -137,6 +161,17 @@ export default function PartnerReferralsScreen() {
               </Text>
             </View>
           }
+          ListFooterComponent={
+            hasMore ? (
+              <Pressable style={styles.loadMoreBtn} onPress={loadMore} disabled={loadingMore}>
+                {loadingMore ? (
+                  <ActivityIndicator size="small" color={colors.accent} />
+                ) : (
+                  <Text style={styles.loadMoreText}>Muat Riwayat Lebih Lama</Text>
+                )}
+              </Pressable>
+            ) : null
+          }
         />
       )}
     </SafeAreaView>
@@ -187,5 +222,7 @@ function createStyles(colors: typeof darkColors) {
   emptyBox: { alignItems: 'center', padding: spacing.xl, gap: spacing.sm, marginTop: spacing.lg },
   emptyTitle: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary },
   emptyText: { fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center', lineHeight: 20 },
+  loadMoreBtn: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.md },
+  loadMoreText: { fontSize: fontSize.sm, fontWeight: '700', color: colors.accent },
   });
 }

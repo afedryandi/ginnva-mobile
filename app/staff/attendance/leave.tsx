@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { Button } from '@/components/ui/Button';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
@@ -102,26 +103,66 @@ export default function StaffLeaveRequestScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<number | null>(null);
+  // Pagination (2026-09-27, audit ulang Izin & Cuti) -- backend
+  // sebelumnya ->get() tanpa limit sama sekali, sekarang paginate().
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [type, setType] = useState<LeaveRequestRecord['type']>('izin');
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState(new Date());
   const [reason, setReason] = useState('');
-  const [document, setDocument] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  // Gap ditutup 2026-09-27 (audit ulang Izin & Cuti) -- SEBELUMNYA
+  // lampiran cuma bisa foto (ImagePicker), padahal backend terima PDF
+  // juga. Bentuk seragam supaya hasil ImagePicker & DocumentPicker bisa
+  // ditangani dengan 1 tipe state yang sama.
+  interface LeaveAttachment {
+    uri: string;
+    name: string;
+    mimeType: string;
+  }
+
+  const [document, setDocument] = useState<LeaveAttachment | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  interface LeaveRequestsResponse {
+    leave_requests: LeaveRequestRecord[];
+    cuti_quota: number;
+    cuti_used: number;
+    current_page: number;
+    has_more: boolean;
+  }
 
   const loadRequests = useCallback(async () => {
     setError(null);
     try {
-      const res = await staffApiFetch<{ leave_requests: LeaveRequestRecord[]; cuti_quota: number; cuti_used: number }>('/api/staff/leave-requests');
+      const res = await staffApiFetch<LeaveRequestsResponse>('/api/staff/leave-requests');
       setRequests(res.leave_requests);
       setCutiQuota(res.cuti_quota);
       setCutiUsed(res.cuti_used);
+      setPage(res.current_page ?? 1);
+      setHasMore(res.has_more ?? false);
     } catch {
       setError('Gagal memuat riwayat izin. Periksa koneksi internet Anda.');
     }
   }, []);
+
+  const loadMoreRequests = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await staffApiFetch<LeaveRequestsResponse>(`/api/staff/leave-requests?page=${page + 1}`);
+      setRequests((prev) => [...prev, ...res.leave_requests]);
+      setPage(res.current_page ?? page + 1);
+      setHasMore(res.has_more ?? false);
+    } catch {
+      // Diamkan -- riwayat yang sudah tampil tetap valid.
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, page]);
 
   const handleCancel = useCallback((request: LeaveRequestRecord) => {
     Alert.alert('Batalkan Pengajuan', `Batalkan pengajuan ${TYPE_LABEL[request.type]} ${formatDate(request.start_date)}–${formatDate(request.end_date)}?`, [
@@ -185,7 +226,7 @@ export default function StaffLeaveRequestScreen() {
 
   // Sama pola dengan lampiran foto booking (app/staff/bookings/[id].tsx)
   // — Photo Picker Android tidak butuh izin runtime, iOS tetap perlu.
-  const pickDocument = useCallback(async () => {
+  const pickImageAttachment = useCallback(async () => {
     if (Platform.OS === 'ios') {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
@@ -200,8 +241,29 @@ export default function StaffLeaveRequestScreen() {
     });
 
     if (result.canceled || !result.assets?.length) return;
-    setDocument(result.assets[0]);
+    const asset = result.assets[0];
+    setDocument({ uri: asset.uri, name: asset.fileName || 'lampiran.jpg', mimeType: asset.mimeType || 'image/jpeg' });
   }, []);
+
+  // Gap ditutup 2026-09-27 (audit ulang Izin & Cuti) -- surat keterangan
+  // dokter (jenis 'sakit') biasanya sudah berbentuk PDF (scan resmi),
+  // SEBELUMNYA staff terpaksa foto ulang kertasnya karena cuma ada
+  // opsi galeri foto.
+  const pickPdfAttachment = useCallback(async () => {
+    const result = await DocumentPicker.getDocumentAsync({ type: 'application/pdf' });
+
+    if (result.canceled || !result.assets?.length) return;
+    const asset = result.assets[0];
+    setDocument({ uri: asset.uri, name: asset.name, mimeType: asset.mimeType || 'application/pdf' });
+  }, []);
+
+  const pickAttachment = useCallback(() => {
+    Alert.alert('Lampirkan Dokumen', 'Pilih jenis lampiran', [
+      { text: 'Batal', style: 'cancel' },
+      { text: 'Foto dari Galeri', onPress: pickImageAttachment },
+      { text: 'File PDF', onPress: pickPdfAttachment },
+    ]);
+  }, [pickImageAttachment, pickPdfAttachment]);
 
   const handleSubmit = useCallback(async () => {
     if (!reason.trim()) {
@@ -234,8 +296,8 @@ export default function StaffLeaveRequestScreen() {
         form.append('reason', reason.trim());
         form.append('document', {
           uri: document.uri,
-          name: document.fileName || 'lampiran.jpg',
-          type: document.mimeType || 'image/jpeg',
+          name: document.name,
+          type: document.mimeType,
         } as unknown as Blob);
         body = form;
       } else {
@@ -358,6 +420,17 @@ export default function StaffLeaveRequestScreen() {
               </View>
             );
           }}
+          ListFooterComponent={
+            hasMore ? (
+              <Pressable style={styles.loadMoreBtn} onPress={loadMoreRequests} disabled={loadingMore}>
+                {loadingMore ? (
+                  <ActivityIndicator size="small" color={colors.accent} />
+                ) : (
+                  <Text style={styles.loadMoreText}>Muat Riwayat Lebih Lama</Text>
+                )}
+              </Pressable>
+            ) : null
+          }
         />
       )}
 
@@ -429,17 +502,23 @@ export default function StaffLeaveRequestScreen() {
             <Text style={styles.fieldLabel}>Lampiran (opsional)</Text>
             {document ? (
               <View style={styles.attachmentPreview}>
-                <Image source={{ uri: document.uri }} style={styles.attachmentThumb} />
-                <Text style={styles.attachmentName} numberOfLines={1}>{document.fileName || 'Foto terlampir'}</Text>
+                {document.mimeType === 'application/pdf' ? (
+                  <View style={[styles.attachmentThumb, styles.attachmentPdfIcon]}>
+                    <Ionicons name="document-text" size={20} color={colors.accent} />
+                  </View>
+                ) : (
+                  <Image source={{ uri: document.uri }} style={styles.attachmentThumb} />
+                )}
+                <Text style={styles.attachmentName} numberOfLines={1}>{document.name}</Text>
                 <Pressable onPress={() => setDocument(null)} hitSlop={8}>
                   <Ionicons name="close-circle" size={20} color={colors.danger} />
                 </Pressable>
               </View>
             ) : (
-              <Pressable style={styles.attachButton} onPress={pickDocument}>
-                <Ionicons name="camera-outline" size={18} color={colors.accent} />
+              <Pressable style={styles.attachButton} onPress={pickAttachment}>
+                <Ionicons name="attach-outline" size={18} color={colors.accent} />
                 <Text style={styles.attachButtonText}>
-                  {type === 'sakit' ? 'Lampirkan Foto Surat Dokter' : 'Lampirkan Foto Pendukung'}
+                  {type === 'sakit' ? 'Lampirkan Surat Dokter (Foto/PDF)' : 'Lampirkan Dokumen Pendukung (Foto/PDF)'}
                 </Text>
               </Pressable>
             )}
@@ -497,6 +576,8 @@ function createStyles(colors: typeof darkColors, insetsBottom: number) {
     emptyState: { alignItems: 'center', paddingVertical: spacing.xxl, gap: spacing.sm },
     emptyText: { fontSize: fontSize.sm, color: colors.textMuted },
     emptyButton: { marginTop: spacing.sm, paddingHorizontal: spacing.xl },
+    loadMoreBtn: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.md },
+    loadMoreText: { fontSize: fontSize.sm, fontWeight: '700', color: colors.accent },
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
     modalSheet: {
       backgroundColor: colors.bg, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg,
@@ -546,6 +627,7 @@ function createStyles(colors: typeof darkColors, insetsBottom: number) {
       padding: spacing.xs,
     },
     attachmentThumb: { width: 40, height: 40, borderRadius: radius.sm },
+    attachmentPdfIcon: { backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
     attachmentName: { flex: 1, fontSize: fontSize.xs, color: colors.textPrimary },
     submitButton: { marginTop: spacing.lg },
   });

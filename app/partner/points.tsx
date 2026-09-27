@@ -21,13 +21,28 @@ interface PointTransaction {
   type: 'earn' | 'spend';
   points: number;
   description: string;
+  reference_type: string | null;
   created_at: string;
 }
 
 interface PointsResponse {
   balance: number;
   transactions: PointTransaction[];
+  current_page: number;
+  has_more: boolean;
 }
+
+// Label sumber poin (2026-09-26, audit Riwayat Poin Partner) -- sama pola
+// dengan account/points.tsx (customer), disamakan supaya partner dapat
+// treatment UX yang setara (reference_type sudah dikirim backend tapi
+// sebelumnya tidak dipakai sama sekali di sini).
+const SOURCE_LABEL: Record<string, string> = {
+  booking: 'Booking',
+  reward_redemption: 'Tukar Reward',
+  reward_redemption_refund: 'Refund Reward',
+  reward_redemption_reversal: 'Reward Dibatalkan Ulang',
+  manual: 'Input Manual',
+};
 
 function timeAgo(iso: string): string {
   const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -45,7 +60,12 @@ export default function PartnerPointsScreen() {
   const [transactions, setTransactions] = useState<PointTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Pagination (2026-09-26, audit Riwayat Poin Partner) -- sama pola
+  // dengan account/points.tsx (customer).
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
 
   const fetchPoints = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -55,6 +75,8 @@ export default function PartnerPointsScreen() {
       const res = await staffApiFetch<PointsResponse>('/api/partner/points');
       setBalance(res.balance);
       setTransactions(res.transactions);
+      setPage(res.current_page ?? 1);
+      setHasMore(res.has_more ?? false);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Gagal memuat data poin.');
     } finally {
@@ -62,6 +84,21 @@ export default function PartnerPointsScreen() {
       setRefreshing(false);
     }
   }, []);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await staffApiFetch<PointsResponse>(`/api/partner/points?page=${page + 1}`);
+      setTransactions((prev) => [...prev, ...(res.transactions ?? [])]);
+      setPage(res.current_page ?? page + 1);
+      setHasMore(res.has_more ?? false);
+    } catch {
+      // Diamkan -- riwayat yang sudah tampil tetap valid.
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, page]);
 
   useEffect(() => { fetchPoints(); }, [fetchPoints]);
 
@@ -78,7 +115,14 @@ export default function PartnerPointsScreen() {
         </View>
         <View style={styles.txInfo}>
           <Text style={styles.txDesc}>{item.description}</Text>
-          <Text style={styles.txTime}>{timeAgo(item.created_at)}</Text>
+          <View style={styles.txMetaRow}>
+            {item.reference_type && SOURCE_LABEL[item.reference_type] && (
+              <View style={styles.sourceBadge}>
+                <Text style={styles.sourceBadgeText}>{SOURCE_LABEL[item.reference_type]}</Text>
+              </View>
+            )}
+            <Text style={styles.txTime}>{timeAgo(item.created_at)}</Text>
+          </View>
         </View>
         <Text style={[styles.txPoints, { color: isEarn ? colors.success : colors.danger }]}>
           {isEarn ? '+' : '-'}{item.points}
@@ -123,10 +167,28 @@ export default function PartnerPointsScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={() => fetchPoints(true)} tintColor={colors.accent} />
           }
           ListHeaderComponent={
-            <View style={styles.balanceCard}>
-              <Text style={styles.balanceLabel}>Total Poin Anda</Text>
-              <Text style={styles.balanceValue}>{balance.toLocaleString('id-ID')}</Text>
-            </View>
+            <>
+              <View style={styles.balanceCard}>
+                <Text style={styles.balanceLabel}>Total Poin Anda</Text>
+                <Text style={styles.balanceValue}>{balance.toLocaleString('id-ID')}</Text>
+              </View>
+
+              {/* Ditambah 2026-09-26 (audit Riwayat Poin Partner) -- gap
+                  standar enterprise: versi customer sudah punya kartu ini,
+                  partner sebelumnya tidak, padahal riwayat bisa berisi
+                  baris refund/pembatalan reward yang butuh penjelasan. */}
+              <View style={styles.howCard}>
+                <Text style={styles.howTitle}>Cara Mendapatkan Poin</Text>
+                <View style={styles.howRow}>
+                  <Ionicons name="calendar-outline" size={18} color={colors.accent} />
+                  <Text style={styles.howText}>Customer booking pakai kode referral Anda & selesai → <Text style={styles.howBold}>poin otomatis</Text></Text>
+                </View>
+                <View style={styles.howRow}>
+                  <Ionicons name="gift-outline" size={18} color={colors.accent} />
+                  <Text style={styles.howText}>Batalkan penukaran reward → <Text style={styles.howBold}>poin dikembalikan</Text></Text>
+                </View>
+              </View>
+            </>
           }
           ListEmptyComponent={
             <View style={styles.emptyBox}>
@@ -136,6 +198,17 @@ export default function PartnerPointsScreen() {
                 Bagikan kode referral Anda — poin masuk otomatis saat customer booking & bayar di toko.
               </Text>
             </View>
+          }
+          ListFooterComponent={
+            hasMore ? (
+              <Pressable style={styles.loadMoreBtn} onPress={loadMore} disabled={loadingMore}>
+                {loadingMore ? (
+                  <ActivityIndicator size="small" color={colors.accent} />
+                ) : (
+                  <Text style={styles.loadMoreText}>Muat Riwayat Lebih Lama</Text>
+                )}
+              </Pressable>
+            ) : null
           }
           contentContainerStyle={styles.listContent}
         />
@@ -182,6 +255,21 @@ function createStyles(colors: typeof darkColors) {
   balanceLabel: { fontSize: fontSize.sm, color: 'rgba(255,255,255,0.8)' },
   balanceValue: { fontSize: 40, fontWeight: '800', color: '#ffffff', letterSpacing: -1 },
 
+  howCard: {
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  howTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
+  howRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  howText: { fontSize: fontSize.sm, color: colors.textSecondary, flex: 1 },
+  howBold: { fontWeight: '700', color: colors.textPrimary },
+
   txRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -194,8 +282,19 @@ function createStyles(colors: typeof darkColors) {
   txIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   txInfo: { flex: 1, gap: 2 },
   txDesc: { fontSize: fontSize.sm, color: colors.textPrimary, fontWeight: '500' },
+  txMetaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  sourceBadge: {
+    backgroundColor: colors.accentSoft,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: radius.pill,
+  },
+  sourceBadgeText: { fontSize: 10, fontWeight: '700', color: colors.accent },
   txTime: { fontSize: fontSize.xs, color: colors.textMuted },
   txPoints: { fontSize: fontSize.base, fontWeight: '700', flexShrink: 0 },
+
+  loadMoreBtn: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.md },
+  loadMoreText: { fontSize: fontSize.sm, fontWeight: '700', color: colors.accent },
 
   emptyBox: { alignItems: 'center', padding: spacing.xl, gap: spacing.sm, marginTop: spacing.lg },
   emptyTitle: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary },

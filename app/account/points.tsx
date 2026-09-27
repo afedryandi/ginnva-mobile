@@ -38,13 +38,30 @@ interface PointTransaction {
   type: 'earn' | 'spend';
   points: number;
   description: string;
+  reference_type: string | null;
   created_at: string;
 }
 
 interface PointsResponse {
   balance: number;
   transactions: PointTransaction[];
+  current_page: number;
+  has_more: boolean;
 }
+
+// Label sumber poin (2026-09-26, audit Riwayat Poin Customer) -- SEBELUMNYA
+// reference_type sudah dikirim backend tapi sama sekali tidak dipakai di
+// sini, cuma description mentah yang tampil. Sama daftar label dengan
+// PointTransactionResource.php (Filament) supaya konsisten di kedua sisi.
+const SOURCE_LABEL: Record<string, string> = {
+  booking: 'Booking',
+  customer_referral: 'Ajak Teman',
+  warranty: 'Registrasi Garansi',
+  reward_redemption: 'Tukar Reward',
+  reward_redemption_refund: 'Refund Reward',
+  reward_redemption_reversal: 'Reward Dibatalkan Ulang',
+  manual: 'Penyesuaian Admin',
+};
 
 function timeAgo(iso: string): string {
   const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -72,7 +89,15 @@ export default function PointsScreen() {
   const [transactions, setTransactions] = useState<PointTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Pagination (2026-09-26, audit Riwayat Poin Customer) -- SEBELUMNYA
+  // backend cuma limit(50) tanpa cara melihat riwayat lebih lama sama
+  // sekali; sekarang backend dukung ?page=, layar ini konsumsi lewat
+  // load-more (bukan infinite auto-scroll, supaya jelas ada aksi customer
+  // sebelum request tambahan jalan).
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
 
   const fetchPoints = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -82,6 +107,8 @@ export default function PointsScreen() {
       const res = await apiFetch<PointsResponse>('/api/customer/points');
       setBalance(res.balance ?? 0);
       setTransactions(res.transactions ?? []);
+      setPage(res.current_page ?? 1);
+      setHasMore(res.has_more ?? false);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Gagal memuat data poin.');
     } finally {
@@ -89,6 +116,22 @@ export default function PointsScreen() {
       setRefreshing(false);
     }
   }, []);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await apiFetch<PointsResponse>(`/api/customer/points?page=${page + 1}`);
+      setTransactions((prev) => [...prev, ...(res.transactions ?? [])]);
+      setPage(res.current_page ?? page + 1);
+      setHasMore(res.has_more ?? false);
+    } catch {
+      // Diamkan -- riwayat yang sudah tampil tetap valid, customer bisa
+      // coba tarik lagi lewat tombol "Muat Lagi".
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, page]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
@@ -108,7 +151,14 @@ export default function PointsScreen() {
         </View>
         <View style={styles.txInfo}>
           <Text style={styles.txDesc}>{item.description}</Text>
-          <Text style={styles.txTime}>{timeAgo(item.created_at)}</Text>
+          <View style={styles.txMetaRow}>
+            {item.reference_type && SOURCE_LABEL[item.reference_type] && (
+              <View style={styles.sourceBadge}>
+                <Text style={styles.sourceBadgeText}>{SOURCE_LABEL[item.reference_type]}</Text>
+              </View>
+            )}
+            <Text style={styles.txTime}>{timeAgo(item.created_at)}</Text>
+          </View>
         </View>
         <Text style={[styles.txPoints, { color: isEarn ? colors.success : colors.danger }]}>
           {isEarn ? '+' : '-'}{item.points}
@@ -203,6 +253,14 @@ export default function PointsScreen() {
                   <Ionicons name="person-add-outline" size={18} color={colors.accent} />
                   <Text style={styles.howText}>Ajak teman pakai kode referral Anda → <Text style={styles.howBold}>poin setiap teman booking</Text></Text>
                 </View>
+                {/* Ditambah 2026-09-26 (audit Riwayat Poin Customer) --
+                    SEBELUMNYA cuma 2 sumber disebut, padahal riwayat bisa
+                    berisi baris refund/pembatalan reward yang tidak match
+                    penjelasan manapun di kartu ini. */}
+                <View style={styles.howRow}>
+                  <Ionicons name="gift-outline" size={18} color={colors.accent} />
+                  <Text style={styles.howText}>Batalkan penukaran reward → <Text style={styles.howBold}>poin dikembalikan</Text></Text>
+                </View>
               </View>
 
               {/* Kode referral sendiri — bagikan ke teman lewat WhatsApp/dsb */}
@@ -235,6 +293,17 @@ export default function PointsScreen() {
                 Daftarkan kendaraan Anda dan dapatkan 100 poin saat garansi disetujui.
               </Text>
             </View>
+          }
+          ListFooterComponent={
+            hasMore ? (
+              <Pressable style={styles.loadMoreBtn} onPress={loadMore} disabled={loadingMore}>
+                {loadingMore ? (
+                  <ActivityIndicator size="small" color={colors.accent} />
+                ) : (
+                  <Text style={styles.loadMoreText}>Muat Riwayat Lebih Lama</Text>
+                )}
+              </Pressable>
+            ) : null
           }
           contentContainerStyle={styles.listContent}
         />
@@ -406,8 +475,23 @@ function createStyles(colors: typeof darkColors) {
   },
   txInfo: { flex: 1, gap: 2 },
   txDesc: { fontSize: fontSize.sm, color: colors.textPrimary, fontWeight: '500' },
+  txMetaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  sourceBadge: {
+    backgroundColor: colors.accentSoft,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: radius.pill,
+  },
+  sourceBadgeText: { fontSize: 10, fontWeight: '700', color: colors.accent },
   txTime: { fontSize: fontSize.xs, color: colors.textMuted },
   txPoints: { fontSize: fontSize.base, fontWeight: '700', flexShrink: 0 },
+
+  loadMoreBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.md,
+  },
+  loadMoreText: { fontSize: fontSize.sm, fontWeight: '700', color: colors.accent },
 
   emptyBox: {
     alignItems: 'center',
