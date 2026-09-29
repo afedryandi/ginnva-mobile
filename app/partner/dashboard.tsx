@@ -346,7 +346,24 @@ export default function PartnerDashboardScreen() {
                       key={promo.id}
                       style={styles.promoSlide}
                       disabled={!promo.link_url}
-                      onPress={() => promo.link_url && Linking.openURL(promo.link_url)}
+                      onPress={async () => {
+                        if (!promo.link_url) return;
+
+                        // Bug diperbaiki 2026-09-29 (audit Banner/Carousel) -- SEBELUMNYA
+                        // Linking.openURL() dipanggil langsung tanpa penanganan error, sama
+                        // bug class yang sudah diperbaiki di carousel beranda Customer
+                        // (lihat handleCarouselTap di app/(tabs)/index.tsx).
+                        try {
+                          const canOpen = await Linking.canOpenURL(promo.link_url);
+                          if (!canOpen) {
+                            Alert.alert('Tidak Bisa Membuka Link', 'Link pada banner ini tidak valid atau tidak didukung.');
+                            return;
+                          }
+                          await Linking.openURL(promo.link_url);
+                        } catch {
+                          Alert.alert('Gagal Membuka Link', 'Terjadi kesalahan saat membuka link banner ini.');
+                        }
+                      }}
                     >
                       <Image source={{ uri: promo.image ?? undefined }} style={styles.promoImage} contentFit="cover" />
                       {(promo.title || promo.subtitle) && (
