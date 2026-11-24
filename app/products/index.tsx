@@ -1,12 +1,14 @@
 import React, { useMemo } from 'react';
-import { View, Text, FlatList, Pressable, StyleSheet } from 'react-native';
+import { View, Text, FlatList, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { FadeInUp } from '@/components/ui/FadeInUp';
+import { PressableScale } from '@/components/ui/PressableScale';
+import { darkColors, spacing } from '@/constants/theme';
 import { useAppTheme } from '@/lib/theme-context';
 
 // Sumber konten sama persis dengan 4 halaman /product/* di ginnva-web,
@@ -56,45 +58,45 @@ export default function ProductCategoriesScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <LinearGradient pointerEvents="none" colors={[colors.accentSoft, 'transparent']} start={{ x: 1, y: 0 }} end={{ x: 0.2, y: 1 }} style={styles.glow} />
+
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Produk</Text>
-        <Text style={styles.headerSubtitle}>
-          Pilih kategori untuk lihat detail & spesifikasi produk
-        </Text>
+        <Text style={styles.headerSubtitle}>Pilih kategori untuk lihat detail dan spesifikasi produk</Text>
       </View>
+
       <FlatList
         data={CATEGORIES}
         keyExtractor={(item) => item.key}
         contentContainerStyle={styles.listContent}
-        renderItem={({ item }) => (
-          <Pressable
-            style={styles.card}
-            onPress={() => router.push(`/products/${item.key}` as never)}
-          >
-            <Image source={item.image} style={styles.cardImage} contentFit="cover" />
-            <LinearGradient
-              colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.35)', 'rgba(0,0,0,0.82)']}
-              locations={[0, 0.45, 1]}
-              style={styles.cardOverlay}
-            />
-            {item.comingSoon && (
-              <View style={styles.comingSoonBadge}>
-                <Text style={styles.comingSoonBadgeText}>Segera Hadir</Text>
-              </View>
-            )}
-            <View style={styles.cardText}>
-              <View style={styles.cardTextRow}>
-                <View style={{ flex: 1 }}>
+        showsVerticalScrollIndicator={false}
+        renderItem={({ item, index }) => (
+          <FadeInUp index={index} enabled={index < 4}>
+            <PressableScale style={styles.card} onPress={() => router.push(`/products/${item.key}` as never)} accessibilityRole="button" accessibilityLabel={item.title}>
+              <Image source={item.image} style={styles.cardImage} contentFit="cover" />
+              <LinearGradient
+                colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.3)', 'rgba(0,0,0,0.78)']}
+                locations={[0.15, 0.55, 1]}
+                style={styles.cardOverlay}
+              />
+              {item.comingSoon && (
+                <View style={styles.comingSoonBadge}>
+                  <Ionicons name="time-outline" size={13} color="#ffffff" />
+                  <Text style={styles.comingSoonBadgeText}>Segera Hadir</Text>
+                </View>
+              )}
+              <View style={styles.cardText}>
+                <View style={styles.cardTextBody}>
                   <Text style={styles.cardEnTitle}>{item.enTitle}</Text>
                   <Text style={styles.cardTitle}>{item.title}</Text>
-                  <Text style={styles.cardDesc} numberOfLines={2}>
-                    {item.desc}
-                  </Text>
+                  <Text style={styles.cardDesc} numberOfLines={2}>{item.desc}</Text>
                 </View>
-                <Ionicons name="chevron-forward" size={18} color="#ffffff" style={styles.cardChevron} />
+                <View style={styles.cardArrow}>
+                  <Ionicons name="arrow-forward" size={18} color={colors.accent} />
+                </View>
               </View>
-            </View>
-          </Pressable>
+            </PressableScale>
+          </FadeInUp>
         )}
       />
     </SafeAreaView>
@@ -103,90 +105,28 @@ export default function ProductCategoriesScreen() {
 
 function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
-    container: {
-      flex: 1,
-      backgroundColor: colors.bg,
-    },
-    header: {
-      paddingHorizontal: spacing.md,
-      paddingTop: spacing.md,
-      paddingBottom: spacing.sm,
-    },
-    headerTitle: {
-      fontSize: fontSize.xxl,
-      fontWeight: '800',
-      color: colors.textPrimary,
-    },
-    headerSubtitle: {
-      fontSize: fontSize.sm,
-      color: colors.textSecondary,
-      marginTop: spacing.xs,
-    },
-    listContent: {
-      paddingHorizontal: spacing.md,
-      paddingBottom: spacing.xxl,
-      gap: spacing.md,
-    },
-    card: {
-      height: 160,
-      borderRadius: radius.lg,
-      overflow: 'hidden',
-      backgroundColor: colors.surface,
-    },
-    cardImage: {
-      ...StyleSheet.absoluteFillObject,
-    },
-    cardOverlay: {
-      ...StyleSheet.absoluteFillObject,
-    },
-    cardText: {
-      position: 'absolute',
-      left: spacing.md,
-      right: spacing.md,
-      bottom: spacing.md,
-    },
-    cardTextRow: {
-      flexDirection: 'row',
-      alignItems: 'flex-end',
-      gap: spacing.sm,
-    },
-    comingSoonBadge: {
-      position: 'absolute',
-      top: spacing.md,
-      left: spacing.md,
-      paddingHorizontal: spacing.sm,
-      paddingVertical: 4,
-      borderRadius: radius.pill,
-      backgroundColor: 'rgba(0,0,0,0.55)',
-      borderWidth: 1,
-      borderColor: 'rgba(255,255,255,0.4)',
-    },
-    comingSoonBadgeText: {
-      fontSize: fontSize.xs,
-      fontWeight: '700',
-      color: '#ffffff',
-    },
-    cardEnTitle: {
-      fontSize: fontSize.xs,
-      fontWeight: '700',
-      color: 'rgba(255,255,255,0.75)',
-      letterSpacing: 0.6,
-      textTransform: 'uppercase',
-    },
-    cardTitle: {
-      fontSize: fontSize.lg,
-      fontWeight: '800',
-      color: '#ffffff',
-      marginTop: 2,
-    },
-    cardDesc: {
-      fontSize: fontSize.xs,
-      color: 'rgba(255,255,255,0.85)',
-      marginTop: spacing.xs,
-      lineHeight: 16,
-    },
-    cardChevron: {
-      marginBottom: 2,
-    },
+    container: { flex: 1, backgroundColor: colors.bg },
+    glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 300 },
+
+    header: { paddingHorizontal: 24, paddingTop: spacing.lg, paddingBottom: spacing.md, gap: 6 },
+    headerTitle: { fontSize: 30, lineHeight: 38, fontWeight: '800', letterSpacing: -0.8, color: colors.textPrimary },
+    headerSubtitle: { fontSize: 14, lineHeight: 21, color: colors.textSecondary },
+
+    // Ruang bawah menyisakan tempat untuk bilah tab.
+    listContent: { paddingHorizontal: 24, paddingBottom: 120, gap: 16 },
+
+    card: { height: 200, borderRadius: 28, overflow: 'hidden', backgroundColor: colors.surfaceElevated },
+    cardImage: { ...StyleSheet.absoluteFillObject },
+    cardOverlay: { ...StyleSheet.absoluteFillObject },
+    cardText: { position: 'absolute', left: 20, right: 16, bottom: 18, flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
+    cardTextBody: { flex: 1, gap: 2 },
+    cardArrow: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff' },
+
+    comingSoonBadge: { position: 'absolute', top: 16, left: 16, flexDirection: 'row', alignItems: 'center', gap: 6, height: 30, paddingHorizontal: 12, borderRadius: 15, backgroundColor: 'rgba(0,0,0,0.5)' },
+    comingSoonBadgeText: { fontSize: 12, fontWeight: '800', color: '#ffffff' },
+
+    cardEnTitle: { fontSize: 11, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase', color: 'rgba(255,255,255,0.75)' },
+    cardTitle: { fontSize: 22, lineHeight: 28, fontWeight: '800', letterSpacing: -0.5, color: '#ffffff' },
+    cardDesc: { fontSize: 13, lineHeight: 19, color: 'rgba(255,255,255,0.88)' },
   });
 }

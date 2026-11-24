@@ -1,0 +1,32 @@
+# Audit framework 2026-09-14, "Ketergantungan pihak ketiga (dependency)"
+# -- otomasi PR update dependency + alert kerentanan keamanan. Alert
+# keamanan (Dependabot security alerts) aktif otomatis begitu file ini
+# ada, TIDAK perlu konfigurasi tambahan -- cek tab "Security" repo
+# GitHub kalau ada alert. File ini khusus mengatur PR update VERSI
+# berkala (bukan cuma yang berkaitan kerentanan).
+#
+# CATATAN Expo/React Native: jangan langsung merge PR Dependabot untuk
+# paket inti Expo/react-native tanpa cek `npx expo install --check`
+# dulu -- versi yang "terbaru" di npm belum tentu kompatibel dengan
+# versi Expo SDK yang dipakai project ini.
+
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(ci)"

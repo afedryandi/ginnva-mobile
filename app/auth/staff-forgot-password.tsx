@@ -1,11 +1,10 @@
-import React, { useMemo, useState } from 'react';
-import { View, Text, TextInput, ScrollView, StyleSheet, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useState } from 'react';
+import { Pressable, StyleSheet } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import { StatusBar } from 'expo-status-bar';
 import { Button } from '@/components/ui/Button';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { PasswordInput } from '@/components/ui/PasswordInput';
+import { AppText as Text, AppTextInput as TextInput } from '@/components/ui/AppText';
+import { AuthShell, AuthField, AuthNotice, OtpBoxes, useAuthSubmitStyle } from '@/components/auth/AuthShell';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
 
@@ -16,12 +15,13 @@ import { useAppTheme } from '@/lib/theme-context';
 // pakai OTP untuk login itu sendiri, di sini kode OTP dipakai murni untuk
 // verifikasi identitas sebelum ganti password, akun tetap pakai
 // email+password seperti biasa setelahnya.
+//
+// Tampilan disamakan dengan layar masuk (2026-11-24) lewat AuthShell; alur dan panggilan API tidak berubah.
 type Step = 'request' | 'reset';
 
 export default function StaffForgotPasswordScreen() {
   const params = useLocalSearchParams<{ email?: string }>();
-  const { theme, colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const { colors } = useAppTheme();
 
   const [step, setStep] = useState<Step>('request');
   const [email, setEmail] = useState(params.email ?? '');
@@ -36,6 +36,11 @@ export default function StaffForgotPasswordScreen() {
   const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const isValidCode = code.trim().length === 6;
   const isValidPassword = newPassword.length >= 8 && newPassword === confirmPassword;
+  const canRequest = isValidEmail && !loading;
+  const canReset = isValidCode && isValidPassword && !loading;
+  const requestStyle = useAuthSubmitStyle(canRequest);
+  const resetStyle = useAuthSubmitStyle(canReset);
+  const doneStyle = useAuthSubmitStyle(true);
 
   const handleRequestCode = () => {
     if (!isValidEmail || loading) return;
@@ -53,7 +58,7 @@ export default function StaffForgotPasswordScreen() {
       })
       .catch((err) => {
         setError(
-          err instanceof ApiError ? err.message : 'Gagal memproses. Periksa koneksi internet Anda.'
+          err instanceof ApiError ? err.message : 'Gagal memproses. Periksa koneksi internetmu.'
         );
       })
       .finally(() => setLoading(false));
@@ -79,7 +84,7 @@ export default function StaffForgotPasswordScreen() {
       })
       .catch((err) => {
         setError(
-          err instanceof ApiError ? err.message : 'Gagal mengubah password. Periksa koneksi internet Anda.'
+          err instanceof ApiError ? err.message : 'Gagal mengubah password. Periksa koneksi internetmu.'
         );
       })
       .finally(() => setLoading(false));
@@ -87,231 +92,95 @@ export default function StaffForgotPasswordScreen() {
 
   if (done) {
     return (
-      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-        <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-        <View style={styles.scrollContent}>
-          <View style={styles.iconWrap}>
-            <Ionicons name="checkmark-circle" size={40} color={colors.success} />
-          </View>
-          <Text style={styles.title}>Password Berhasil Diubah</Text>
-          <Text style={styles.subtitle}>Silakan masuk kembali dengan password baru Anda.</Text>
-          <Button
-            label="Kembali ke Login"
-            onPress={() => router.replace('/auth/login' as never)}
-            style={styles.submitButton}
-          />
-        </View>
-      </SafeAreaView>
+      <AuthShell
+        stepKey="done"
+        eyebrowIcon="checkmark-circle-outline"
+        eyebrow="Selesai"
+        title={'Password\nberhasil diubah'}
+        subtitle="Silakan masuk kembali dengan password baru."
+      >
+        <Button label="Kembali ke Login" onPress={() => router.replace('/auth/login' as never)} style={doneStyle as never} />
+      </AuthShell>
     );
   }
 
+  const mismatch = newPassword.length > 0 && confirmPassword.length > 0 && newPassword !== confirmPassword;
+
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-      <View style={styles.header}>
-        <Pressable
-          onPress={() => (step === 'reset' ? setStep('request') : router.back())}
-          style={styles.sideButton}
-        >
-          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
-        </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>Reset Password</Text>
-        <View style={styles.sideButton} />
-      </View>
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-        <View style={styles.iconWrap}>
-          <Ionicons name={step === 'request' ? 'key-outline' : 'shield-checkmark-outline'} size={32} color={colors.accent} />
-        </View>
-
-        {step === 'request' ? (
-          <>
-            <Text style={styles.title}>Reset Password</Text>
-            <Text style={styles.subtitle}>
-              Masukkan email akun Anda. Kami kirim kode verifikasi 6 digit untuk konfirmasi identitas sebelum Anda bisa mengganti password.
-            </Text>
-
-            <Text style={styles.fieldLabel}>Alamat Email</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="nama@ginnva.id"
-              placeholderTextColor={colors.textMuted}
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-              onSubmitEditing={handleRequestCode}
-            />
-
-            {error && <Text style={styles.errorText}>{error}</Text>}
-
-            <Button
-              label="Kirim Kode Verifikasi"
-              onPress={handleRequestCode}
-              disabled={!isValidEmail}
-              loading={loading}
-              style={styles.submitButton}
-            />
-          </>
-        ) : (
-          <>
-            <Text style={styles.title}>Masukkan Kode & Password Baru</Text>
-            <Text style={styles.subtitle}>
-              {successMessage ?? `Kode 6 digit telah dikirim ke ${email.trim()}.`}
-            </Text>
-
-            <Text style={styles.fieldLabel}>Kode Verifikasi</Text>
-            <TextInput
-              style={styles.otpInput}
-              placeholder="000000"
-              placeholderTextColor={colors.textMuted}
-              value={code}
-              onChangeText={(v) => setCode(v.replace(/[^0-9]/g, '').slice(0, 6))}
-              keyboardType="number-pad"
-              maxLength={6}
-            />
-
-            <Text style={[styles.fieldLabel, { marginTop: spacing.md }]}>Password Baru</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Minimal 8 karakter"
-              placeholderTextColor={colors.textMuted}
-              value={newPassword}
-              onChangeText={setNewPassword}
-              secureTextEntry
-            />
-
-            <Text style={[styles.fieldLabel, { marginTop: spacing.md }]}>Konfirmasi Password Baru</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Ulangi password baru"
-              placeholderTextColor={colors.textMuted}
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry
-              onSubmitEditing={handleResetPassword}
-            />
-            {newPassword.length > 0 && confirmPassword.length > 0 && newPassword !== confirmPassword && (
-              <Text style={styles.errorText}>Password tidak sama.</Text>
+    <AuthShell
+      stepKey={step}
+      onBack={() => (step === 'reset' ? setStep('request') : router.back())}
+      eyebrowIcon={step === 'request' ? 'key-outline' : 'shield-checkmark-outline'}
+      eyebrow="Reset password"
+      title={step === 'request' ? 'Lupa\npassword?' : 'Kode dan\npassword baru'}
+      subtitle={
+        step === 'request'
+          ? 'Masukkan email akun karyawan. Kode verifikasi 6 digit dikirim ke email itu untuk memastikan ini memang kamu.'
+          : successMessage ?? `Kode 6 digit sudah dikirim ke ${email.trim()}.`
+      }
+    >
+      {step === 'request' ? (
+        <>
+          <AuthField label="Alamat email" icon="mail-outline">
+            {(input) => (
+              <TextInput
+                {...input}
+                placeholder="nama@ginnva.id"
+                placeholderTextColor={colors.textMuted}
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                onSubmitEditing={handleRequestCode}
+              />
             )}
+          </AuthField>
 
-            {error && <Text style={styles.errorText}>{error}</Text>}
+          {error ? <AuthNotice kind="error" message={error} /> : null}
 
-            <Button
-              label="Ubah Password"
-              onPress={handleResetPassword}
-              disabled={!isValidCode || !isValidPassword}
-              loading={loading}
-              style={styles.submitButton}
-            />
+          <Button label="Kirim Kode Verifikasi" onPress={handleRequestCode} disabled={!isValidEmail} loading={loading} style={requestStyle as never} />
+        </>
+      ) : (
+        <>
+          <Text style={styles.sectionLabel}>Kode verifikasi</Text>
+          <OtpBoxes value={code} onChange={setCode} hasError={!!error && !isValidCode} autoFocus />
 
-            <Pressable style={styles.resendLink} onPress={handleRequestCode} disabled={loading}>
-              <Text style={styles.resendText}>Tidak menerima kode? Kirim ulang</Text>
-            </Pressable>
-          </>
-        )}
-      </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+          <AuthField label="Password baru" icon="lock-closed-outline" gap>
+            {(input) => (
+              <PasswordInput {...input} placeholder="Minimal 8 karakter" placeholderTextColor={colors.textMuted} value={newPassword} onChangeText={setNewPassword} />
+            )}
+          </AuthField>
+
+          <AuthField label="Konfirmasi password baru" icon="lock-closed-outline" gap>
+            {(input) => (
+              <PasswordInput
+                {...input}
+                placeholder="Ulangi password baru"
+                placeholderTextColor={colors.textMuted}
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                onSubmitEditing={handleResetPassword}
+              />
+            )}
+          </AuthField>
+
+          {mismatch ? <AuthNotice kind="error" message="Password tidak sama." /> : null}
+          {error ? <AuthNotice kind="error" message={error} /> : null}
+
+          <Button label="Ubah Password" onPress={handleResetPassword} disabled={!isValidCode || !isValidPassword} loading={loading} style={resetStyle as never} />
+
+          <Pressable style={styles.resendLink} onPress={handleRequestCode} disabled={loading} accessibilityRole="button">
+            <Text style={[styles.resendText, { color: colors.accent }]}>Tidak menerima kode? Kirim ulang</Text>
+          </Pressable>
+        </>
+      )}
+    </AuthShell>
   );
 }
 
-function createStyles(colors: typeof darkColors) {
-  return StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-  flex: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.bg,
-  },
-  sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-  scrollContent: {
-    padding: spacing.md,
-    alignItems: 'center',
-    paddingTop: spacing.xxl,
-  },
-  iconWrap: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: colors.accentSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.md,
-  },
-  title: {
-    fontSize: fontSize.xl,
-    fontWeight: '800',
-    color: colors.textPrimary,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginTop: spacing.xs,
-    marginBottom: spacing.lg,
-    lineHeight: 19,
-    paddingHorizontal: spacing.md,
-  },
-  fieldLabel: {
-    alignSelf: 'flex-start',
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    marginBottom: spacing.xs,
-  },
-  input: {
-    width: '100%',
-    height: 48,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-  },
-  otpInput: {
-    width: '100%',
-    height: 56,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    fontSize: fontSize.xxl,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    textAlign: 'center',
-    letterSpacing: 8,
-  },
-  errorText: {
-    width: '100%',
-    fontSize: fontSize.sm,
-    color: colors.danger,
-    marginTop: spacing.sm,
-  },
-  submitButton: {
-    width: '100%',
-    marginTop: spacing.lg,
-  },
-  resendLink: {
-    marginTop: spacing.md,
-    padding: spacing.sm,
-  },
-  resendText: {
-    fontSize: fontSize.sm,
-    color: colors.accent,
-    fontWeight: '600',
-  },
-  });
-}
+const styles = StyleSheet.create({
+  sectionLabel: { fontSize: 13, fontWeight: '700', marginBottom: 8, marginLeft: 4, opacity: 0.7 },
+  resendLink: { alignSelf: 'center', marginTop: 12, paddingVertical: 10, paddingHorizontal: 16 },
+  resendText: { fontSize: 14, fontWeight: '700' },
+});

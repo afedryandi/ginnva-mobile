@@ -1,11 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
   ScrollView,
   StyleSheet,
   Pressable,
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -13,10 +13,14 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { Button } from '@/components/ui/Button';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { LinearGradient } from 'expo-linear-gradient';
+import { AuthField } from '@/components/auth/AuthShell';
+import { AppTextInput as TextInput } from '@/components/ui/AppText';
+import { PressableScale } from '@/components/ui/PressableScale';
+import { darkColors, spacing } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAppTheme } from '@/lib/theme-context';
+import { getLeadAttribution, LeadAttribution } from '@/lib/lead-attribution';
 
 type Phase = 'form' | 'submitting' | 'success';
 
@@ -46,6 +50,11 @@ export default function PartnershipScreen() {
     return Object.keys(errors).length === 0;
   };
 
+  const [attribution, setAttribution] = useState<LeadAttribution | undefined>(undefined);
+  useEffect(() => {
+    getLeadAttribution().then(setAttribution);
+  }, []);
+
   const handleSubmit = async () => {
     if (!validate()) return;
     setPhase('submitting');
@@ -66,6 +75,7 @@ export default function PartnershipScreen() {
           email: email.trim(),
           city: city.trim(),
           message: message.trim() || null,
+          attribution,
         }),
       });
       setPhase('success');
@@ -81,24 +91,27 @@ export default function PartnershipScreen() {
         setSubmitError(
           err instanceof ApiError
             ? err.message
-            : 'Gagal mengirim. Periksa koneksi internet Anda dan coba lagi.'
+            : 'Gagal mengirim. Periksa koneksi internetmu dan coba lagi.'
         );
       }
     }
   };
 
-  const HeaderBar = () => (
-    <View style={styles.header}>
-      {router.canGoBack() ? (
-        <Pressable onPress={() => router.back()} style={styles.sideButton}>
-          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
-        </Pressable>
-      ) : (
-        <View style={styles.sideButton} />
-      )}
-      <Text style={styles.headerTitle} numberOfLines={1}>Ajukan Kemitraan</Text>
-      <View style={styles.sideButton} />
-    </View>
+  const setField = (key: string, setter: (v: string) => void) => (v: string) => {
+    setter(v);
+    setFieldErrors((e) => ({ ...e, [key]: '' }));
+  };
+
+  const glow = (
+    <LinearGradient pointerEvents="none" colors={[colors.accentSoft, 'transparent']} start={{ x: 1, y: 0 }} end={{ x: 0.2, y: 1 }} style={styles.glow} />
+  );
+
+  const backButton = router.canGoBack() ? (
+    <Pressable onPress={() => router.back()} style={styles.backButton} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kembali">
+      <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+    </Pressable>
+  ) : (
+    <View style={styles.backSpacer} />
   );
 
   // ===== Success =====
@@ -106,147 +119,137 @@ export default function PartnershipScreen() {
     return (
       <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-        <HeaderBar />
+        {glow}
+        <View style={styles.topRow}>{backButton}</View>
         <View style={styles.centerState}>
-          <View style={styles.successIconWrap}>
-            <Ionicons name="checkmark" size={36} color="#ffffff" />
+          <View style={styles.successRing}>
+            <View style={styles.successIconWrap}>
+              <Ionicons name="checkmark" size={38} color="#ffffff" />
+            </View>
           </View>
           <Text style={styles.successTitle}>Pengajuan Terkirim!</Text>
           <Text style={styles.successNote}>
-            Terima kasih atas minat Anda menjadi mitra Ginnva House.
-            Tim kami akan menghubungi Anda dalam 1–3 hari kerja untuk mendiskusikan
-            peluang kemitraan lebih lanjut.
+            Terima kasih atas minatmu menjadi mitra Ginnva House. Tim kami akan menghubungimu dalam 1–3 hari kerja untuk
+            mendiskusikan peluang kemitraan lebih lanjut.
           </Text>
-          <Button
-            label="Kembali ke Beranda"
-            onPress={() => router.replace('/(tabs)' as never)}
-            style={styles.successButton}
-          />
+          <PressableScale style={styles.primaryButton} onPress={() => router.replace('/(tabs)' as never)} accessibilityRole="button">
+            <Text style={styles.primaryButtonText}>Kembali ke Beranda</Text>
+          </PressableScale>
         </View>
       </SafeAreaView>
     );
   }
 
+  const submitting = phase === 'submitting';
+
   // ===== Form =====
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-      <HeaderBar />
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom + 80, 100) }]}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Info banner */}
-        <View style={styles.noticeBox}>
-          <Ionicons name="business-outline" size={20} color={colors.accent} />
-          <Text style={styles.noticeText}>
-            Bergabunglah sebagai dealer atau mitra resmi Ginnva House.
-            Isi formulir berikut dan tim kami akan menghubungi Anda untuk
+      {glow}
+      <View style={styles.topRow}>{backButton}</View>
+
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom + 40, 56) }]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.title}>Ajukan Kemitraan</Text>
+          <Text style={styles.subtitle}>
+            Bergabunglah sebagai dealer atau mitra resmi Ginnva House. Isi formulir berikut dan tim kami akan menghubungimu untuk
             mendiskusikan peluang kerja sama.
           </Text>
-        </View>
 
-        <View style={styles.formCard}>
-          {/* Nama */}
-          <Text style={styles.fieldLabel}>Nama Lengkap / Nama Perusahaan *</Text>
-          <TextInput
-            style={[styles.input, fieldErrors.applicant_name && styles.inputError]}
-            placeholder="Nama Anda atau perusahaan"
-            placeholderTextColor={colors.textMuted}
-            value={applicantName}
-            onChangeText={(v) => {
-              setApplicantName(v);
-              setFieldErrors((e) => ({ ...e, applicant_name: '' }));
-            }}
-          />
-          {fieldErrors.applicant_name ? (
-            <Text style={styles.errorText}>{fieldErrors.applicant_name}</Text>
-          ) : null}
+          <View style={styles.stack}>
+            <AuthField label="Nama Lengkap / Nama Perusahaan *" icon="business-outline" error={fieldErrors.applicant_name || undefined}>
+              {(input) => (
+                <TextInput
+                  {...input}
+                  placeholder="Namamu atau perusahaan"
+                  placeholderTextColor={colors.textMuted}
+                  value={applicantName}
+                  onChangeText={setField('applicant_name', setApplicantName)}
+                />
+              )}
+            </AuthField>
 
-          {/* WhatsApp */}
-          <Text style={[styles.fieldLabel, { marginTop: spacing.md }]}>
-            Nomor WhatsApp *
-          </Text>
-          <TextInput
-            style={[styles.input, fieldErrors.phone_number && styles.inputError]}
-            placeholder="08xxxxxxxxxx"
-            placeholderTextColor={colors.textMuted}
-            value={phoneNumber}
-            onChangeText={(v) => {
-              setPhoneNumber(v);
-              setFieldErrors((e) => ({ ...e, phone_number: '' }));
-            }}
-            keyboardType="phone-pad"
-          />
-          {fieldErrors.phone_number ? (
-            <Text style={styles.errorText}>{fieldErrors.phone_number}</Text>
-          ) : null}
+            <AuthField label="Nomor WhatsApp *" icon="logo-whatsapp" error={fieldErrors.phone_number || undefined}>
+              {(input) => (
+                <TextInput
+                  {...input}
+                  placeholder="08xxxxxxxxxx"
+                  placeholderTextColor={colors.textMuted}
+                  value={phoneNumber}
+                  onChangeText={setField('phone_number', setPhoneNumber)}
+                  keyboardType="phone-pad"
+                />
+              )}
+            </AuthField>
 
-          {/* Email */}
-          <Text style={[styles.fieldLabel, { marginTop: spacing.md }]}>Email *</Text>
-          <TextInput
-            style={[styles.input, fieldErrors.email && styles.inputError]}
-            placeholder="email@perusahaan.com"
-            placeholderTextColor={colors.textMuted}
-            value={email}
-            onChangeText={(v) => {
-              setEmail(v);
-              setFieldErrors((e) => ({ ...e, email: '' }));
-            }}
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
-          {fieldErrors.email ? (
-            <Text style={styles.errorText}>{fieldErrors.email}</Text>
-          ) : null}
+            <AuthField label="Email *" icon="mail-outline" error={fieldErrors.email || undefined}>
+              {(input) => (
+                <TextInput
+                  {...input}
+                  placeholder="email@perusahaan.com"
+                  placeholderTextColor={colors.textMuted}
+                  value={email}
+                  onChangeText={setField('email', setEmail)}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
+              )}
+            </AuthField>
 
-          {/* Kota */}
-          <Text style={[styles.fieldLabel, { marginTop: spacing.md }]}>Kota *</Text>
-          <TextInput
-            style={[styles.input, fieldErrors.city && styles.inputError]}
-            placeholder="Mis. Jakarta, Surabaya, Bandung"
-            placeholderTextColor={colors.textMuted}
-            value={city}
-            onChangeText={(v) => {
-              setCity(v);
-              setFieldErrors((e) => ({ ...e, city: '' }));
-            }}
-          />
-          {fieldErrors.city ? (
-            <Text style={styles.errorText}>{fieldErrors.city}</Text>
-          ) : null}
+            <AuthField label="Kota *" icon="location-outline" error={fieldErrors.city || undefined}>
+              {(input) => (
+                <TextInput
+                  {...input}
+                  placeholder="Mis. Jakarta, Surabaya, Bandung"
+                  placeholderTextColor={colors.textMuted}
+                  value={city}
+                  onChangeText={setField('city', setCity)}
+                />
+              )}
+            </AuthField>
 
-          {/* Pesan */}
-          <Text style={[styles.fieldLabel, { marginTop: spacing.md }]}>
-            Pesan / Informasi Tambahan <Text style={styles.optional}>(opsional)</Text>
-          </Text>
-          <TextInput
-            style={[styles.input, styles.textArea]}
-            placeholder="Mis. pengalaman di industri otomotif, luas bengkel, dsb."
-            placeholderTextColor={colors.textMuted}
-            value={message}
-            onChangeText={setMessage}
-            multiline
-            numberOfLines={4}
-            textAlignVertical="top"
-          />
-        </View>
-
-        {submitError ? (
-          <View style={styles.errorBanner}>
-            <Ionicons name="alert-circle" size={16} color={colors.danger} />
-            <Text style={styles.errorBannerText}>{submitError}</Text>
+            <AuthField label="Pesan / Informasi Tambahan (opsional)" icon="create-outline" multiline>
+              {(input) => (
+                <TextInput
+                  {...input}
+                  placeholder="Mis. pengalaman di industri otomotif, luas bengkel, dsb."
+                  placeholderTextColor={colors.textMuted}
+                  value={message}
+                  onChangeText={setMessage}
+                  multiline
+                />
+              )}
+            </AuthField>
           </View>
-        ) : null}
 
-        <Button
-          label={phase === 'submitting' ? 'Mengirim...' : 'Kirim Pengajuan'}
-          onPress={handleSubmit}
-          loading={phase === 'submitting'}
-          style={styles.submitButton}
-        />
-      </ScrollView>
+          {submitError ? (
+            <View style={styles.errorBanner}>
+              <Ionicons name="alert-circle" size={18} color={colors.danger} />
+              <Text style={styles.errorBannerText}>{submitError}</Text>
+            </View>
+          ) : null}
+
+          <PressableScale
+            style={[styles.primaryButton, submitting && styles.buttonDisabled]}
+            onPress={handleSubmit}
+            disabled={submitting}
+            accessibilityRole="button"
+          >
+            {submitting ? (
+              <ActivityIndicator color="#ffffff" />
+            ) : (
+              <>
+                <Text style={styles.primaryButtonText}>Kirim Pengajuan</Text>
+                <Ionicons name="paper-plane-outline" size={18} color="#ffffff" />
+              </>
+            )}
+          </PressableScale>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -254,128 +257,30 @@ export default function PartnershipScreen() {
 
 function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-  flex: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.bg,
-  },
-  sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-  scrollContent: {
-    padding: spacing.md,
-    paddingBottom: spacing.xxl,
-  },
-  centerState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.xl,
-  },
-  noticeBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.sm,
-    backgroundColor: colors.accentSoft,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-  },
-  noticeText: {
-    flex: 1,
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    lineHeight: 20,
-  },
-  formCard: {
-    marginBottom: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  fieldLabel: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    marginBottom: spacing.xs,
-    fontWeight: '600',
-  },
-  optional: {
-    fontWeight: '400',
-  },
-  input: {
-    height: 44,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-  },
-  inputError: {
-    borderColor: colors.danger,
-  },
-  textArea: {
-    height: 100,
-    paddingTop: spacing.sm,
-  },
-  errorText: {
-    fontSize: fontSize.xs,
-    color: colors.danger,
-    marginTop: spacing.xs,
-  },
-  errorBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.dangerBg,
-    borderRadius: radius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  errorBannerText: {
-    flex: 1,
-    fontSize: fontSize.sm,
-    color: colors.danger,
-  },
-  submitButton: {
-    marginTop: spacing.sm,
-  },
-  successIconWrap: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.sm,
-  },
-  successTitle: {
-    fontSize: fontSize.xl,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  successNote: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 20,
-    marginTop: spacing.xs,
-  },
-  successButton: {
-    marginTop: spacing.lg,
-    width: '100%',
-  },
+    container: { flex: 1, backgroundColor: colors.bg },
+    flex: { flex: 1 },
+    glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 300 },
+
+    topRow: { flexDirection: 'row', alignItems: 'center', minHeight: 44, paddingHorizontal: 24, paddingTop: spacing.md, paddingBottom: spacing.sm },
+    backButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceElevated },
+    backSpacer: { width: 44, height: 44 },
+
+    scrollContent: { paddingHorizontal: 24, paddingTop: spacing.md, gap: 14 },
+    title: { fontSize: 30, lineHeight: 38, fontWeight: '800', letterSpacing: -0.8, color: colors.textPrimary },
+    subtitle: { fontSize: 14, lineHeight: 21, color: colors.textSecondary, marginBottom: 4 },
+    stack: { gap: 14 },
+
+    errorBanner: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: 20, backgroundColor: colors.dangerBg },
+    errorBannerText: { flex: 1, fontSize: 14, lineHeight: 20, color: colors.danger },
+
+    primaryButton: { flexDirection: 'row', gap: 8, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent, alignSelf: 'stretch', marginTop: 6 },
+    primaryButtonText: { fontSize: 16, fontWeight: '800', color: '#ffffff' },
+    buttonDisabled: { opacity: 0.6 },
+
+    centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 24, paddingBottom: 48 },
+    successRing: { width: 112, height: 112, borderRadius: 56, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft, marginBottom: 6 },
+    successIconWrap: { width: 76, height: 76, borderRadius: 38, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent },
+    successTitle: { fontSize: 28, lineHeight: 36, fontWeight: '800', letterSpacing: -0.7, color: colors.textPrimary, textAlign: 'center' },
+    successNote: { fontSize: 14, lineHeight: 21, color: colors.textSecondary, textAlign: 'center', marginBottom: 6 },
   });
 }

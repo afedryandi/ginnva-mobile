@@ -1,12 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Modal, TextInput, Alert, Image, Linking, Platform, ScrollView, Keyboard } from 'react-native';
+import { View, Pressable, StyleSheet, FlatList, RefreshControl, ActivityIndicator, Alert, Linking } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import * as ImagePicker from 'expo-image-picker';
+import { AppText as Text } from '@/components/ui/AppText';
+import { PressableScale } from '@/components/ui/PressableScale';
+import { FadeInUp } from '@/components/ui/FadeInUp';
+import { SkeletonCards } from '@/components/ui/Skeleton';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
-import { Button } from '@/components/ui/Button';
+import LeaveRequestForm, { LeaveTypeOption, leaveTypeIcon } from '@/components/staff/LeaveRequestForm';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
 
@@ -14,15 +17,42 @@ interface LeaveRequestRecord {
   id: number;
   request_number: string;
   type: 'izin' | 'sakit' | 'cuti';
+  leave_type_id?: number | null;
+  leave_type_name?: string | null;
   start_date: string;
   end_date: string;
   reason: string;
   document_url: string | null;
-  status: 'pending' | 'approved' | 'rejected' | 'cancelled';
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled' | 'revoked';
   review_note: string | null;
   reviewer_name: string | null;
   reviewed_at: string | null;
 }
+
+// Izin Sebagian Hari (telat masuk, keluar kantor, pulang cepat) tampil di daftar yang sama dengan izin/cuti sehari penuh.
+interface PartialLeaveRecord {
+  id: number;
+  date: string;
+  category: 'late_arrival' | 'leave_office' | 'early_leave';
+  category_label: string;
+  window_label: string;
+  reason: string;
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled';
+  review_notes: string | null;
+  reviewer_name: string | null;
+  reviewed_at: string | null;
+  can_cancel: boolean;
+}
+
+type HistoryEntry =
+  | { kind: 'full'; sortKey: string; record: LeaveRequestRecord }
+  | { kind: 'partial'; sortKey: string; record: PartialLeaveRecord };
+
+const PARTIAL_ICON: Record<PartialLeaveRecord['category'], keyof typeof Ionicons.glyphMap> = {
+  late_arrival: 'log-in-outline',
+  leave_office: 'walk-outline',
+  early_leave: 'log-out-outline',
+};
 
 const TYPE_LABEL: Record<LeaveRequestRecord['type'], string> = {
   izin: 'Izin',
@@ -30,70 +60,47 @@ const TYPE_LABEL: Record<LeaveRequestRecord['type'], string> = {
   cuti: 'Cuti',
 };
 
+function typeName(record: LeaveRequestRecord): string {
+  return record.leave_type_name || TYPE_LABEL[record.type];
+}
+
 const STATUS_META: Record<LeaveRequestRecord['status'], { label: string; color: keyof typeof darkColors; bg: keyof typeof darkColors }> = {
-  pending: { label: 'Menunggu Persetujuan', color: 'warning', bg: 'warningBg' },
+  pending: { label: 'Menunggu', color: 'warning', bg: 'warningBg' },
   approved: { label: 'Disetujui', color: 'success', bg: 'successBg' },
   rejected: { label: 'Ditolak', color: 'danger', bg: 'dangerBg' },
-  cancelled: { label: 'Dibatalkan Sendiri', color: 'textMuted', bg: 'surface' },
+  cancelled: { label: 'Dibatalkan Sendiri', color: 'textMuted', bg: 'surfaceElevated' },
+  revoked: { label: 'Dicabut Admin', color: 'danger', bg: 'dangerBg' },
 };
-
-// Sama persis LeaveRequest::MAX_DURATION_DAYS di backend — dipakai buat
-// validasi cepat sisi app sebelum submit, BUKAN pengganti validasi
-// server (backend tetap sumber kebenaran akhir).
-const MAX_DURATION_DAYS = 30;
 
 function formatDate(dateString: string): string {
   return new Date(dateString).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function toDateInputValue(date: Date): string {
-  return date.toISOString().slice(0, 10);
+// "12 – 14 Nov 2026" bila satu bulan, "30 Okt – 2 Nov 2026" bila lintas bulan, dan satu tanggal saja bila sehari.
+function formatRange(start: string, end: string): string {
+  const s = new Date(start);
+  const e = new Date(end);
+
+  if (start === end || s.toDateString() === e.toDateString()) {
+    return formatDate(end);
+  }
+
+  const sameMonth = s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear();
+  const startPart = sameMonth ? String(s.getDate()) : s.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+
+  return `${startPart} – ${e.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}`;
 }
 
-function addDays(date: Date, amount: number): Date {
-  const next = new Date(date);
-  next.setDate(next.getDate() + amount);
-  return next;
-}
-
-function isBeforeDay(a: Date, b: Date): boolean {
-  return toDateInputValue(a) < toDateInputValue(b);
+function dayCountOf(record: LeaveRequestRecord): number {
+  return Math.round((new Date(record.end_date).getTime() - new Date(record.start_date).getTime()) / 86_400_000) + 1;
 }
 
 export default function StaffLeaveRequestScreen() {
   const { theme, colors } = useAppTheme();
+  const isDark = theme === 'dark';
   const insets = useSafeAreaInsets();
-
-  // KeyboardAvoidingView bawaan RN TERBUKTI tidak reliable untuk sheet ini
-  // (behavior="height" macet di tinggi lama setelah keyboard ditutup,
-  // behavior="padding" masih nyisakan jarak kosong ke tombol Kirim) —
-  // SAMA PERSIS gejala yang sudah pernah ditemukan & diperbaiki di kolom
-  // chat booking (app/staff/bookings/[id].tsx, fix 2026-08-28) dan
-  // components/ui/PickerModal.tsx. Pola yang SUDAH TERBUKTI jalan di
-  // keduanya dipakai lagi di sini: lacak tinggi keyboard manual lewat
-  // Keyboard event, dorong sheet naik sejumlah itu sendiri via
-  // marginBottom, tidak bergantung behavior bawaan KeyboardAvoidingView
-  // sama sekali.
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-  useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSub = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates.height));
-    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-    };
-  }, []);
-  // Padding aman bawah (nav bar Android) cuma relevan saat keyboard
-  // TERTUTUP — begitu keyboard muncul, marginBottom={keyboardHeight} di
-  // bawah sudah mengangkat sheet di atas keyboard, jadi menambahkan
-  // insetsBottom lagi di atas itu cuma bikin jarak kosong yang tidak
-  // perlu antara tombol Kirim & keyboard.
-  const styles = useMemo(
-    () => createStyles(colors, keyboardHeight > 0 ? 0 : insets.bottom),
-    [colors, insets.bottom, keyboardHeight]
-  );
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
+  const accentText = isDark ? '#ff6b8f' : '#cc1042';
 
   const [requests, setRequests] = useState<LeaveRequestRecord[]>([]);
   const [cutiQuota, setCutiQuota] = useState(0);
@@ -102,29 +109,79 @@ export default function StaffLeaveRequestScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<number | null>(null);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  const [modalVisible, setModalVisible] = useState(false);
-  const [type, setType] = useState<LeaveRequestRecord['type']>('izin');
-  const [startDate, setStartDate] = useState(new Date());
-  const [endDate, setEndDate] = useState(new Date());
-  const [reason, setReason] = useState('');
-  const [document, setDocument] = useState<ImagePicker.ImagePickerAsset | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [partials, setPartials] = useState<PartialLeaveRecord[]>([]);
+  const [formVisible, setFormVisible] = useState(false);
+  const [leaveTypes, setLeaveTypes] = useState<LeaveTypeOption[]>([]);
+
+  interface LeaveRequestsResponse {
+    leave_requests: LeaveRequestRecord[];
+    cuti_quota: number;
+    cuti_used: number;
+    current_page: number;
+    has_more: boolean;
+  }
 
   const loadRequests = useCallback(async () => {
     setError(null);
     try {
-      const res = await staffApiFetch<{ leave_requests: LeaveRequestRecord[]; cuti_quota: number; cuti_used: number }>('/api/staff/leave-requests');
+      const res = await staffApiFetch<LeaveRequestsResponse>('/api/staff/leave-requests');
       setRequests(res.leave_requests);
       setCutiQuota(res.cuti_quota);
       setCutiUsed(res.cuti_used);
+      setPage(res.current_page ?? 1);
+      setHasMore(res.has_more ?? false);
+
+      try {
+        const partial = await staffApiFetch<{ partial_leave_requests: PartialLeaveRecord[] }>('/api/staff/partial-leave-requests');
+        setPartials(partial.partial_leave_requests);
+      } catch {
+        // Riwayat izin sebagian hari gagal dimuat: izin/cuti sehari penuh tetap tampil.
+      }
     } catch {
-      setError('Gagal memuat riwayat izin. Periksa koneksi internet Anda.');
+      setError('Gagal memuat riwayat izin. Periksa koneksi internet.');
     }
   }, []);
 
+  const loadMoreRequests = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await staffApiFetch<LeaveRequestsResponse>(`/api/staff/leave-requests?page=${page + 1}`);
+      setRequests((prev) => [...prev, ...res.leave_requests]);
+      setPage(res.current_page ?? page + 1);
+      setHasMore(res.has_more ?? false);
+    } catch {
+      // Riwayat yang sudah tampil tetap valid.
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, page]);
+
+  const handleCancelPartial = useCallback((request: PartialLeaveRecord) => {
+    Alert.alert('Batalkan Pengajuan', `Batalkan pengajuan ${request.category_label} ${formatDate(request.date)}?`, [
+      { text: 'Tidak', style: 'cancel' },
+      {
+        text: 'Ya, Batalkan', style: 'destructive', onPress: async () => {
+          setCancellingId(-request.id);
+          try {
+            await staffApiFetch(`/api/staff/partial-leave-requests/${request.id}/cancel`, { method: 'POST' });
+            loadRequests();
+          } catch (err) {
+            Alert.alert('Gagal', err instanceof ApiError ? err.message : 'Terjadi kesalahan, coba lagi.');
+          } finally {
+            setCancellingId(null);
+          }
+        },
+      },
+    ]);
+  }, [loadRequests]);
+
   const handleCancel = useCallback((request: LeaveRequestRecord) => {
-    Alert.alert('Batalkan Pengajuan', `Batalkan pengajuan ${TYPE_LABEL[request.type]} ${formatDate(request.start_date)}–${formatDate(request.end_date)}?`, [
+    Alert.alert('Batalkan Pengajuan', `Batalkan pengajuan ${typeName(request)} ${formatDate(request.start_date)}–${formatDate(request.end_date)}?`, [
       { text: 'Tidak', style: 'cancel' },
       {
         text: 'Ya, Batalkan', style: 'destructive', onPress: async () => {
@@ -147,406 +204,348 @@ export default function StaffLeaveRequestScreen() {
     loadRequests().finally(() => setLoading(false));
   }, [loadRequests]);
 
+  useEffect(() => {
+    staffApiFetch<{ leave_types: LeaveTypeOption[] }>('/api/staff/leave-types')
+      .then((res) => setLeaveTypes(res.leave_types))
+      .catch(() => {
+        // Daftar jenis gagal dimuat: form tetap terbuka dengan kategori dasar.
+      });
+  }, []);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadRequests();
     setRefreshing(false);
   }, [loadRequests]);
 
-  // endDate tidak boleh sebelum startDate — kalau staff geser "Dari
-  // Tanggal" melewati "Sampai Tanggal" yang sudah dipilih, ikutkan maju
-  // supaya tidak perlu 2 langkah manual tiap kali.
-  useEffect(() => {
-    if (isBeforeDay(endDate, startDate)) {
-      setEndDate(startDate);
-    }
-  }, [startDate, endDate]);
+  // Satu daftar menurut tanggal terbaru: izin/cuti sehari penuh (tanggal mulai) dan izin sebagian hari (tanggalnya).
+  const entries = useMemo<HistoryEntry[]>(
+    () => [
+      ...requests.map((record): HistoryEntry => ({ kind: 'full', sortKey: `${record.start_date.slice(0, 10)}-${String(record.id).padStart(8, '0')}`, record })),
+      ...partials.map((record): HistoryEntry => ({ kind: 'partial', sortKey: `${record.date.slice(0, 10)}-${String(record.id).padStart(8, '0')}`, record })),
+    ].sort((a, b) => (a.sortKey < b.sortKey ? 1 : -1)),
+    [requests, partials],
+  );
 
-  const stepStartDate = (delta: number) => {
-    const next = addDays(startDate, delta);
-    if (delta < 0 && isBeforeDay(next, new Date())) return;
-    setStartDate(next);
-  };
-
-  const stepEndDate = (delta: number) => {
-    const next = addDays(endDate, delta);
-    if (delta < 0 && isBeforeDay(next, startDate)) return;
-    setEndDate(next);
-  };
-
-  const openModal = () => {
-    setType('izin');
-    setStartDate(new Date());
-    setEndDate(new Date());
-    setReason('');
-    setDocument(null);
-    setModalVisible(true);
-  };
-
-  // Sama pola dengan lampiran foto booking (app/staff/bookings/[id].tsx)
-  // — Photo Picker Android tidak butuh izin runtime, iOS tetap perlu.
-  const pickDocument = useCallback(async () => {
-    if (Platform.OS === 'ios') {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert('Izin Galeri Diperlukan', 'Aktifkan izin galeri di pengaturan HP untuk melampirkan foto.');
-        return;
-      }
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.7,
-    });
-
-    if (result.canceled || !result.assets?.length) return;
-    setDocument(result.assets[0]);
-  }, []);
-
-  const handleSubmit = useCallback(async () => {
-    if (!reason.trim()) {
-      Alert.alert('Alasan Wajib Diisi', 'Tuliskan alasan pengajuan izin/cuti ini.');
-      return;
-    }
-    if (endDate < startDate) {
-      Alert.alert('Tanggal Tidak Valid', '"Sampai Tanggal" tidak boleh sebelum "Dari Tanggal".');
-      return;
-    }
-
-    const dayCount = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-    if (dayCount > MAX_DURATION_DAYS) {
-      Alert.alert('Durasi Terlalu Panjang', `Durasi pengajuan maksimal ${MAX_DURATION_DAYS} hari. Hubungi admin untuk kasus khusus di luar itu.`);
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      // Multipart CUMA kalau ada lampiran — form JSON biasa tetap dipakai
-      // saat tidak ada dokumen, supaya tidak mengubah kebiasaan lama tanpa
-      // perlu (staffApiFetch otomatis lepas header Content-Type kalau body
-      // instanceof FormData, lihat lib/staff-api.ts).
-      let body: FormData | string;
-      if (document) {
-        const form = new FormData();
-        form.append('type', type);
-        form.append('start_date', toDateInputValue(startDate));
-        form.append('end_date', toDateInputValue(endDate));
-        form.append('reason', reason.trim());
-        form.append('document', {
-          uri: document.uri,
-          name: document.fileName || 'lampiran.jpg',
-          type: document.mimeType || 'image/jpeg',
-        } as unknown as Blob);
-        body = form;
-      } else {
-        body = JSON.stringify({
-          type,
-          start_date: toDateInputValue(startDate),
-          end_date: toDateInputValue(endDate),
-          reason: reason.trim(),
-        });
-      }
-
-      await staffApiFetch('/api/staff/leave-requests', { method: 'POST', body });
-      setModalVisible(false);
-      Alert.alert('Berhasil', 'Pengajuan izin/cuti terkirim, menunggu persetujuan admin.');
-      loadRequests();
-    } catch (err) {
-      Alert.alert('Gagal', err instanceof ApiError ? err.message : 'Terjadi kesalahan, coba lagi.');
-    } finally {
-      setSubmitting(false);
-    }
-  }, [type, startDate, endDate, reason, document, loadRequests]);
+  const remaining = Math.max(0, cutiQuota - cutiUsed);
+  const usedPercent = cutiQuota > 0 ? Math.min(100, Math.round((cutiUsed / cutiQuota) * 100)) : 0;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.sideButton}>
-          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+        <Pressable onPress={() => router.back()} style={styles.backButton} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kembali">
+          <Ionicons name="chevron-back" size={22} color={colors.textSecondary} />
         </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>Izin & Cuti</Text>
-        <Pressable onPress={openModal} style={styles.sideButton}>
-          <Ionicons name="add-circle" size={26} color={colors.accent} />
-        </Pressable>
+        <Text style={styles.title} numberOfLines={1}>Izin & Cuti</Text>
       </View>
 
       {loading ? (
-        <View style={styles.centerState}>
-          <ActivityIndicator color={colors.accent} />
-        </View>
+        <SkeletonCards count={3} />
       ) : (
         <FlatList
-          data={requests}
-          keyExtractor={(item) => String(item.id)}
+          data={entries}
+          keyExtractor={(entry) => `${entry.kind}-${entry.record.id}`}
+          showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} colors={[colors.accent]} />
           }
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[styles.listContent, { paddingBottom: 112 + insets.bottom }]}
           ListHeaderComponent={
-            <View>
+            <View style={styles.headerBlock}>
               {error ? (
                 <View style={styles.errorBox}>
+                  <Ionicons name="alert-circle-outline" size={18} color={colors.danger} />
                   <Text style={styles.errorText}>{error}</Text>
                 </View>
               ) : null}
+
               {cutiQuota > 0 ? (
-                <View style={styles.quotaBox}>
-                  <Ionicons name="calendar-clear-outline" size={16} color={colors.accent} />
-                  <Text style={styles.quotaText}>
-                    Sisa jatah Cuti tahun ini: <Text style={styles.quotaTextBold}>{cutiQuota - cutiUsed} hari</Text> (dari {cutiQuota} hari)
-                  </Text>
-                </View>
+                <FadeInUp>
+                  <View style={styles.quotaCard}>
+                    <View style={styles.quotaTop}>
+                      <View style={styles.quotaIcon}>
+                        <Ionicons name="calendar-outline" size={20} color={accentText} />
+                      </View>
+                      <Text style={styles.quotaLabel}>Sisa cuti tahun ini</Text>
+                    </View>
+
+                    <View style={styles.quotaNumberRow}>
+                      <Text style={styles.quotaBig}>{remaining}</Text>
+                      <Text style={styles.quotaUnit}>hari</Text>
+                    </View>
+
+                    <View style={styles.quotaTrack}>
+                      <View style={[styles.quotaFill, { width: `${usedPercent}%` }]} />
+                    </View>
+                    <View style={styles.quotaLegend}>
+                      <Text style={styles.quotaLegendText}>Dipakai {cutiUsed} hari</Text>
+                      <Text style={styles.quotaLegendText}>Jatah {cutiQuota} hari</Text>
+                    </View>
+                  </View>
+                </FadeInUp>
               ) : null}
+
+              {entries.length > 0 ? <Text style={styles.listTitle}>Riwayat pengajuan</Text> : null}
             </View>
           }
           ListEmptyComponent={
             <View style={styles.emptyState}>
-              <Ionicons name="calendar-outline" size={40} color={colors.textMuted} />
-              <Text style={styles.emptyText}>Belum ada pengajuan izin/cuti.</Text>
-              <Button label="Ajukan Izin/Cuti" onPress={openModal} style={styles.emptyButton} />
+              <View style={styles.emptyIcon}>
+                <Ionicons name="calendar-outline" size={38} color={colors.textMuted} />
+              </View>
+              <Text style={styles.emptyTitle}>Belum ada pengajuan</Text>
+              <Text style={styles.emptyText}>Izin, sakit, cuti, atau izin sebagian hari yang diajukan akan muncul di sini beserta statusnya.</Text>
             </View>
           }
-          renderItem={({ item }) => {
+          renderItem={({ item: entry, index }) => {
+            if (entry.kind === 'partial') {
+              const part = entry.record;
+              const partMeta = STATUS_META[part.status];
+              const partTone = colors[partMeta.color];
+
+              return (
+                <FadeInUp index={index} enabled={index < 6}>
+                  <View style={styles.card}>
+                    <View style={styles.cardTop}>
+                      <View style={styles.typeTile}>
+                        <Ionicons name={PARTIAL_ICON[part.category]} size={22} color={accentText} />
+                      </View>
+                      <View style={styles.cardTitleWrap}>
+                        <Text style={styles.cardType} numberOfLines={1}>{part.category_label}</Text>
+                        <Text style={styles.cardDates} numberOfLines={1}>{formatDate(part.date)} · {part.window_label}</Text>
+                      </View>
+                      <View style={styles.daysChip}>
+                        <Text style={styles.daysChipText}>Sebagian hari</Text>
+                      </View>
+                    </View>
+
+                    {part.reason ? <Text style={styles.cardReason} numberOfLines={3}>{part.reason}</Text> : null}
+
+                    {part.status === 'rejected' && part.review_notes ? (
+                      <View style={styles.noteBox}>
+                        <Text style={styles.noteLabel}>Alasan ditolak</Text>
+                        <Text style={styles.noteText}>{part.review_notes}</Text>
+                      </View>
+                    ) : null}
+
+                    <View style={styles.cardFooter}>
+                      <View style={[styles.statusPill, { backgroundColor: colors[partMeta.bg] }]}>
+                        <View style={[styles.statusDot, { backgroundColor: partTone }]} />
+                        <Text style={[styles.statusText, { color: partTone }]}>{partMeta.label}</Text>
+                      </View>
+                      <View style={styles.cardActions}>
+                        {part.can_cancel ? (
+                          <Pressable
+                            style={[styles.actionChip, styles.actionChipDanger]}
+                            onPress={() => handleCancelPartial(part)}
+                            disabled={cancellingId === -part.id}
+                            hitSlop={6}
+                            accessibilityRole="button"
+                            accessibilityLabel="Batalkan pengajuan"
+                          >
+                            {cancellingId === -part.id ? (
+                              <ActivityIndicator size="small" color={colors.danger} />
+                            ) : (
+                              <Text style={[styles.actionChipText, { color: colors.danger }]}>Batalkan</Text>
+                            )}
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    </View>
+                  </View>
+                </FadeInUp>
+              );
+            }
+
+            const item = entry.record;
             const meta = STATUS_META[item.status];
+            const tone = colors[meta.color];
+            const days = dayCountOf(item);
+            const reviewed = item.reviewer_name && (item.status === 'approved' || item.status === 'rejected');
+
             return (
-              <View style={styles.card}>
-                <View style={styles.cardTopRow}>
-                  <Text style={styles.cardType}>{TYPE_LABEL[item.type]}</Text>
-                  <View style={[styles.statusBadge, { backgroundColor: colors[meta.bg] }]}>
-                    <Text style={[styles.statusBadgeText, { color: colors[meta.color] }]}>{meta.label}</Text>
+              <FadeInUp index={index} enabled={index < 6}>
+                <View style={styles.card}>
+                  <View style={styles.cardTop}>
+                    <View style={styles.typeTile}>
+                      <Ionicons name={leaveTypeIcon(item.leave_type_name, item.type)} size={22} color={accentText} />
+                    </View>
+                    <View style={styles.cardTitleWrap}>
+                      <Text style={styles.cardType} numberOfLines={1}>{typeName(item)}</Text>
+                      <Text style={styles.cardDates} numberOfLines={1}>{formatRange(item.start_date, item.end_date)}</Text>
+                    </View>
+                    <View style={styles.daysChip}>
+                      <Text style={styles.daysChipText}>{days} hari</Text>
+                    </View>
                   </View>
-                </View>
-                <Text style={styles.cardDates}>
-                  {formatDate(item.start_date)} – {formatDate(item.end_date)}
-                </Text>
-                <Text style={styles.cardReason} numberOfLines={3}>{item.reason}</Text>
-                {item.document_url ? (
-                  <Pressable onPress={() => Linking.openURL(item.document_url!)} style={styles.attachmentLink}>
-                    <Ionicons name="attach-outline" size={14} color={colors.accent} />
-                    <Text style={styles.attachmentLinkText}>Lihat lampiran</Text>
-                  </Pressable>
-                ) : null}
-                {item.status === 'rejected' && item.review_note ? (
-                  <View style={styles.reviewNoteBox}>
-                    <Text style={styles.reviewNoteLabel}>Alasan ditolak:</Text>
-                    <Text style={styles.reviewNoteText}>{item.review_note}</Text>
-                  </View>
-                ) : null}
-                {item.reviewer_name && (item.status === 'approved' || item.status === 'rejected') ? (
-                  <Text style={styles.reviewerText}>
-                    Ditinjau oleh {item.reviewer_name}
-                    {item.reviewed_at ? ` · ${formatDate(item.reviewed_at)}` : ''}
-                  </Text>
-                ) : null}
-                <View style={styles.cardBottomRow}>
-                  <Text style={styles.cardNumber}>{item.request_number}</Text>
-                  {item.status === 'pending' ? (
-                    <Pressable
-                      style={styles.cancelButton}
-                      onPress={() => handleCancel(item)}
-                      disabled={cancellingId === item.id}
-                    >
-                      {cancellingId === item.id ? (
-                        <ActivityIndicator size="small" color={colors.danger} />
-                      ) : (
-                        <Text style={styles.cancelButtonText}>Batalkan</Text>
-                      )}
-                    </Pressable>
+
+                  {item.reason ? <Text style={styles.cardReason} numberOfLines={3}>{item.reason}</Text> : null}
+
+                  {item.status === 'rejected' && item.review_note ? (
+                    <View style={styles.noteBox}>
+                      <Text style={styles.noteLabel}>Alasan ditolak</Text>
+                      <Text style={styles.noteText}>{item.review_note}</Text>
+                    </View>
                   ) : null}
+                  {item.status === 'revoked' && item.review_note ? (
+                    <View style={styles.noteBox}>
+                      <Text style={styles.noteLabel}>Alasan dicabut</Text>
+                      <Text style={styles.noteText}>{item.review_note}</Text>
+                    </View>
+                  ) : null}
+
+                  <View style={styles.cardFooter}>
+                    <View style={[styles.statusPill, { backgroundColor: colors[meta.bg] }]}>
+                      <View style={[styles.statusDot, { backgroundColor: tone }]} />
+                      <Text style={[styles.statusText, { color: tone }]}>{meta.label}</Text>
+                    </View>
+
+                    <View style={styles.cardActions}>
+                      {item.document_url ? (
+                        <Pressable onPress={() => Linking.openURL(item.document_url!)} style={styles.actionChip} hitSlop={6} accessibilityRole="button" accessibilityLabel="Buka lampiran">
+                          <Ionicons name="attach-outline" size={15} color={colors.textSecondary} />
+                          <Text style={styles.actionChipText}>Lampiran</Text>
+                        </Pressable>
+                      ) : null}
+                      {item.status === 'pending' ? (
+                        <Pressable
+                          style={[styles.actionChip, styles.actionChipDanger]}
+                          onPress={() => handleCancel(item)}
+                          disabled={cancellingId === item.id}
+                          hitSlop={6}
+                          accessibilityRole="button"
+                          accessibilityLabel="Batalkan pengajuan"
+                        >
+                          {cancellingId === item.id ? (
+                            <ActivityIndicator size="small" color={colors.danger} />
+                          ) : (
+                            <Text style={[styles.actionChipText, { color: colors.danger }]}>Batalkan</Text>
+                          )}
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  </View>
+
+                  <Text style={styles.cardMeta} numberOfLines={2}>
+                    {item.request_number}
+                    {reviewed ? ` · Ditinjau ${item.reviewer_name}${item.reviewed_at ? `, ${formatDate(item.reviewed_at)}` : ''}` : ''}
+                  </Text>
                 </View>
-              </View>
+              </FadeInUp>
             );
           }}
+          ListFooterComponent={
+            hasMore ? (
+              <Pressable style={styles.loadMoreBtn} onPress={loadMoreRequests} disabled={loadingMore} accessibilityRole="button">
+                {loadingMore ? (
+                  <ActivityIndicator size="small" color={colors.accent} />
+                ) : (
+                  <Text style={styles.loadMoreText}>Muat riwayat lebih lama</Text>
+                )}
+              </Pressable>
+            ) : null
+          }
         />
       )}
 
-      <Modal visible={modalVisible} animationType="slide" transparent onRequestClose={() => setModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalSheet, { marginBottom: keyboardHeight }]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Ajukan Izin/Cuti</Text>
-              <Pressable onPress={() => setModalVisible(false)} hitSlop={12}>
-                <Ionicons name="close" size={24} color={colors.textPrimary} />
-              </Pressable>
-            </View>
+      <View style={[styles.ctaWrap, { paddingBottom: Math.max(insets.bottom, 12) }]} pointerEvents="box-none">
+        <PressableScale style={styles.cta} onPress={() => setFormVisible(true)} accessibilityRole="button" accessibilityLabel="Ajukan izin atau cuti">
+          <Ionicons name="add-circle-outline" size={22} color="#ffffff" />
+          <Text style={styles.ctaText}>Ajukan Izin / Cuti</Text>
+        </PressableScale>
+      </View>
 
-            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-            <Text style={styles.fieldLabel}>Jenis</Text>
-            <View style={styles.typeRow}>
-              {(Object.keys(TYPE_LABEL) as LeaveRequestRecord['type'][]).map((t) => (
-                <Pressable
-                  key={t}
-                  style={[styles.typeChip, type === t && styles.typeChipActive]}
-                  onPress={() => setType(t)}
-                >
-                  <Text style={[styles.typeChipText, type === t && styles.typeChipTextActive]}>{TYPE_LABEL[t]}</Text>
-                </Pressable>
-              ))}
-            </View>
-
-            <View style={styles.dateRow}>
-              <View style={styles.dateField}>
-                <Text style={styles.fieldLabel}>Dari Tanggal</Text>
-                <View style={styles.dateStepper}>
-                  <Pressable style={styles.dateStepButton} onPress={() => stepStartDate(-1)} hitSlop={8}>
-                    <Ionicons name="chevron-back" size={18} color={colors.textPrimary} />
-                  </Pressable>
-                  <Text style={styles.dateStepperText}>{formatDate(toDateInputValue(startDate))}</Text>
-                  <Pressable style={styles.dateStepButton} onPress={() => stepStartDate(1)} hitSlop={8}>
-                    <Ionicons name="chevron-forward" size={18} color={colors.textPrimary} />
-                  </Pressable>
-                </View>
-              </View>
-            </View>
-
-            <View style={styles.dateRow}>
-              <View style={styles.dateField}>
-                <Text style={styles.fieldLabel}>Sampai Tanggal</Text>
-                <View style={styles.dateStepper}>
-                  <Pressable style={styles.dateStepButton} onPress={() => stepEndDate(-1)} hitSlop={8}>
-                    <Ionicons name="chevron-back" size={18} color={colors.textPrimary} />
-                  </Pressable>
-                  <Text style={styles.dateStepperText}>{formatDate(toDateInputValue(endDate))}</Text>
-                  <Pressable style={styles.dateStepButton} onPress={() => stepEndDate(1)} hitSlop={8}>
-                    <Ionicons name="chevron-forward" size={18} color={colors.textPrimary} />
-                  </Pressable>
-                </View>
-              </View>
-            </View>
-
-            <Text style={styles.fieldLabel}>Alasan</Text>
-            <TextInput
-              style={styles.textArea}
-              value={reason}
-              onChangeText={setReason}
-              placeholder="Tuliskan alasan pengajuan..."
-              placeholderTextColor={colors.textMuted}
-              multiline
-              numberOfLines={4}
-            />
-
-            <Text style={styles.fieldLabel}>Lampiran (opsional)</Text>
-            {document ? (
-              <View style={styles.attachmentPreview}>
-                <Image source={{ uri: document.uri }} style={styles.attachmentThumb} />
-                <Text style={styles.attachmentName} numberOfLines={1}>{document.fileName || 'Foto terlampir'}</Text>
-                <Pressable onPress={() => setDocument(null)} hitSlop={8}>
-                  <Ionicons name="close-circle" size={20} color={colors.danger} />
-                </Pressable>
-              </View>
-            ) : (
-              <Pressable style={styles.attachButton} onPress={pickDocument}>
-                <Ionicons name="camera-outline" size={18} color={colors.accent} />
-                <Text style={styles.attachButtonText}>
-                  {type === 'sakit' ? 'Lampirkan Foto Surat Dokter' : 'Lampirkan Foto Pendukung'}
-                </Text>
-              </Pressable>
-            )}
-
-            <Button label="Kirim Pengajuan" onPress={handleSubmit} loading={submitting} style={styles.submitButton} />
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+      <LeaveRequestForm
+        visible={formVisible}
+        onClose={() => setFormVisible(false)}
+        onSubmitted={loadRequests}
+        leaveTypes={leaveTypes}
+        cutiQuota={cutiQuota}
+        cutiUsed={cutiUsed}
+      />
     </SafeAreaView>
   );
 }
 
-function createStyles(colors: typeof darkColors, insetsBottom: number) {
+function createStyles(colors: typeof darkColors, isDark: boolean) {
+  // Sama dengan Beranda, Absensi, dan formulir SPK: latar abu-putih dengan kartu putih di mode terang; tingkat abu bawaan di mode gelap.
+  const screenBg = isDark ? colors.bg : '#f5f5f8';
+  const card = isDark ? colors.surface : '#ffffff';
+  const chip = isDark ? colors.surfaceElevated : '#efeff4';
+  const line = isDark ? colors.border : '#e8e8ee';
+  const accentText = isDark ? '#ff6b8f' : '#cc1042';
+  const shadow = isDark
+    ? {}
+    : { shadowColor: '#14141b', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.06, shadowRadius: 20, elevation: 2 };
+
   return StyleSheet.create({
-    container: { flex: 1, backgroundColor: colors.bg },
-    centerState: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    header: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      paddingHorizontal: spacing.sm, paddingVertical: spacing.sm,
-      borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.bg,
+    container: { flex: 1, backgroundColor: screenBg },
+
+    header: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm + 4, paddingHorizontal: 20, paddingTop: spacing.sm, paddingBottom: spacing.md },
+    backButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: card, borderWidth: 1, borderColor: line },
+    title: { flex: 1, fontSize: 26, fontWeight: '800', letterSpacing: -0.8, color: colors.textPrimary },
+
+    listContent: { paddingHorizontal: 20, paddingTop: spacing.xs, flexGrow: 1 },
+    headerBlock: { gap: 20, marginBottom: 14 },
+    errorBox: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: 18, backgroundColor: colors.dangerBg },
+    errorText: { flex: 1, fontSize: fontSize.sm, fontWeight: '600', color: colors.danger, lineHeight: 20 },
+
+    // Kartu sisa cuti
+    quotaCard: { gap: 14, padding: 20, borderRadius: 28, backgroundColor: card, borderWidth: 1, borderColor: line, ...shadow },
+    quotaTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    quotaIcon: { width: 36, height: 36, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+    quotaLabel: { flex: 1, fontSize: 14, fontWeight: '700', color: colors.textSecondary },
+    quotaNumberRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+    quotaBig: { fontSize: 52, fontWeight: '800', letterSpacing: -2, lineHeight: 58, color: colors.textPrimary, fontVariant: ['tabular-nums'] },
+    quotaUnit: { fontSize: 18, fontWeight: '700', color: colors.textMuted },
+    quotaTrack: { height: 8, borderRadius: 4, backgroundColor: chip, overflow: 'hidden' },
+    quotaFill: { height: 8, borderRadius: 4, backgroundColor: colors.accent },
+    quotaLegend: { flexDirection: 'row', justifyContent: 'space-between' },
+    quotaLegendText: { fontSize: 12.5, fontWeight: '600', color: colors.textMuted, fontVariant: ['tabular-nums'] },
+
+    listTitle: { fontSize: 13, fontWeight: '800', letterSpacing: 0.4, color: colors.textMuted },
+
+    // Kartu pengajuan
+    card: { gap: 14, padding: 18, marginBottom: 12, borderRadius: 26, backgroundColor: card, borderWidth: 1, borderColor: line, ...shadow },
+    cardTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    typeTile: { width: 46, height: 46, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+    cardTitleWrap: { flex: 1, gap: 2 },
+    cardType: { fontSize: fontSize.base + 1, fontWeight: '800', letterSpacing: -0.2, color: colors.textPrimary },
+    cardDates: { fontSize: 13, fontWeight: '500', color: colors.textMuted, fontVariant: ['tabular-nums'] },
+    daysChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: chip },
+    daysChipText: { fontSize: 12, fontWeight: '800', color: colors.textSecondary, fontVariant: ['tabular-nums'] },
+    cardReason: { fontSize: fontSize.sm + 1, lineHeight: 22, color: colors.textSecondary },
+
+    noteBox: { gap: 2, padding: 14, borderRadius: 18, backgroundColor: colors.dangerBg },
+    noteLabel: { fontSize: 12, fontWeight: '800', color: colors.danger },
+    noteText: { fontSize: fontSize.sm, lineHeight: 20, color: colors.danger },
+
+    cardFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+    statusPill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: radius.pill },
+    statusDot: { width: 6, height: 6, borderRadius: 3 },
+    statusText: { fontSize: 12.5, fontWeight: '800' },
+    cardActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    actionChip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, minWidth: 44, height: 34, paddingHorizontal: 12, borderRadius: radius.pill, backgroundColor: chip },
+    actionChipDanger: { backgroundColor: colors.dangerBg },
+    actionChipText: { fontSize: 12.5, fontWeight: '700', color: colors.textSecondary },
+    cardMeta: { fontSize: 11.5, fontWeight: '500', color: colors.textMuted },
+
+    emptyState: { alignItems: 'center', gap: 6, paddingTop: 72, paddingHorizontal: spacing.xl },
+    emptyIcon: { width: 88, height: 88, borderRadius: 44, alignItems: 'center', justifyContent: 'center', marginBottom: 8, backgroundColor: card, borderWidth: 1, borderColor: line, ...shadow },
+    emptyTitle: { fontSize: 20, fontWeight: '800', letterSpacing: -0.3, color: colors.textPrimary },
+    emptyText: { fontSize: fontSize.sm, lineHeight: 22, textAlign: 'center', color: colors.textMuted },
+
+    loadMoreBtn: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.md },
+    loadMoreText: { fontSize: fontSize.sm, fontWeight: '700', color: accentText },
+
+    // Tombol ajukan melayang di atas daftar, tanpa garis pemisah
+    ctaWrap: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 20, paddingTop: 12 },
+    cta: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, height: 56, borderRadius: radius.pill, backgroundColor: colors.accent,
+      shadowColor: colors.accent, shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.28, shadowRadius: 20, elevation: 4,
     },
-    sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-    listContent: { padding: spacing.md, paddingBottom: spacing.xxl, flexGrow: 1 },
-    errorBox: { backgroundColor: colors.dangerBg, borderRadius: radius.md, padding: spacing.sm, marginBottom: spacing.md },
-    errorText: { color: colors.danger, fontSize: fontSize.sm },
-    quotaBox: {
-      flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
-      backgroundColor: colors.accentSoft, borderRadius: radius.md,
-      paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginBottom: spacing.md,
-    },
-    quotaText: { flex: 1, fontSize: fontSize.xs, color: colors.textSecondary },
-    quotaTextBold: { fontWeight: '700', color: colors.textPrimary },
-    card: {
-      backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border,
-      padding: spacing.md, marginBottom: spacing.sm,
-    },
-    cardTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.xs },
-    cardType: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary },
-    statusBadge: { paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill },
-    statusBadgeText: { fontSize: fontSize.xs, fontWeight: '700' },
-    cardDates: { fontSize: fontSize.sm, color: colors.textSecondary, marginBottom: 4, fontVariant: ['tabular-nums'] },
-    cardReason: { fontSize: fontSize.sm, color: colors.textPrimary, marginBottom: spacing.xs },
-    attachmentLink: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: spacing.xs },
-    attachmentLinkText: { fontSize: fontSize.xs, fontWeight: '600', color: colors.accent },
-    reviewerText: { fontSize: fontSize.xs, color: colors.textMuted, marginBottom: spacing.xs },
-    reviewNoteBox: { backgroundColor: colors.dangerBg, borderRadius: radius.sm, padding: spacing.xs, marginBottom: spacing.xs },
-    reviewNoteLabel: { fontSize: fontSize.xs, fontWeight: '700', color: colors.danger },
-    reviewNoteText: { fontSize: fontSize.xs, color: colors.danger },
-    cardBottomRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    cardNumber: { fontSize: 10, color: colors.textMuted },
-    cancelButton: { paddingHorizontal: spacing.sm, paddingVertical: 4 },
-    cancelButtonText: { fontSize: fontSize.xs, fontWeight: '700', color: colors.danger },
-    emptyState: { alignItems: 'center', paddingVertical: spacing.xxl, gap: spacing.sm },
-    emptyText: { fontSize: fontSize.sm, color: colors.textMuted },
-    emptyButton: { marginTop: spacing.sm, paddingHorizontal: spacing.xl },
-    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-    modalSheet: {
-      backgroundColor: colors.bg, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg,
-      // paddingBottom + insetsBottom — sama bug & perbaikan dengan
-      // purchase-requests/index.tsx (Modal RN tidak otomatis dapat inset
-      // bawah, tombol submit ketutup navigation bar Android).
-      padding: spacing.lg, paddingBottom: spacing.xl + insetsBottom,
-      // maxHeight — supaya ScrollView isi form (Jenis..tombol Kirim)
-      // punya batas untuk bisa discroll, bukan sekadar tumbuh mengikuti
-      // konten. Tanpa ini keyboard di TextInput "Alasan" bisa menutupi
-      // tombol Kirim tanpa cara menjangkaunya (khususnya iOS).
-      maxHeight: '88%',
-    },
-    modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.md },
-    modalTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary },
-    fieldLabel: { fontSize: fontSize.xs, fontWeight: '700', color: colors.textMuted, marginBottom: spacing.xs, marginTop: spacing.sm },
-    typeRow: { flexDirection: 'row', gap: spacing.sm },
-    typeChip: {
-      paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.pill,
-      backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
-    },
-    typeChipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-    typeChipText: { fontSize: fontSize.sm, color: colors.textPrimary, fontWeight: '600' },
-    typeChipTextActive: { color: '#ffffff' },
-    dateRow: { flexDirection: 'row', gap: spacing.md },
-    dateField: { flex: 1 },
-    dateStepper: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
-      paddingHorizontal: spacing.xs, paddingVertical: spacing.xs,
-    },
-    dateStepButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
-    dateStepperText: { flex: 1, textAlign: 'center', fontSize: fontSize.sm, fontWeight: '600', color: colors.textPrimary },
-    textArea: {
-      backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
-      paddingHorizontal: spacing.md, paddingVertical: spacing.sm, fontSize: fontSize.sm, color: colors.textPrimary,
-      minHeight: 90, textAlignVertical: 'top',
-    },
-    attachButton: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs,
-      backgroundColor: colors.accentSoft, borderRadius: radius.md, paddingVertical: spacing.sm,
-    },
-    attachButtonText: { fontSize: fontSize.sm, fontWeight: '600', color: colors.accent },
-    attachmentPreview: {
-      flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
-      backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
-      padding: spacing.xs,
-    },
-    attachmentThumb: { width: 40, height: 40, borderRadius: radius.sm },
-    attachmentName: { flex: 1, fontSize: fontSize.xs, color: colors.textPrimary },
-    submitButton: { marginTop: spacing.lg },
+    ctaText: { fontSize: fontSize.base, fontWeight: '700', color: '#ffffff' },
   });
 }

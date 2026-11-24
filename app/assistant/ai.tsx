@@ -18,6 +18,9 @@
  *   di endpoint POST /api/chat, yang kemudian forward ke Groq API.
  *   Ini supaya API key aman di server, tidak ter-bundle ke APK.
  * - Conversation history dikirim tiap request (stateless dari sisi server).
+ * - Keyboard: pengangkatan kolom ketik memakai useKeyboardLift (sama dengan
+ *   chat booking), bukan KeyboardAvoidingView 'height' yang menyusut dua kali
+ *   di Android.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -25,22 +28,23 @@ import {
   ActivityIndicator,
   Animated,
   FlatList,
-  KeyboardAvoidingView,
   Linking,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { darkColors, fontSize, radius, spacing } from '@/constants/theme';
+import { LinearGradient } from 'expo-linear-gradient';
+import { AutoGrowTextInput } from '@/components/ui/AutoGrowTextInput';
+import { PressableScale } from '@/components/ui/PressableScale';
+import { darkColors, spacing } from '@/constants/theme';
 import { SALES_WA_NUMBER } from '@/constants/contact';
 import { apiFetch, ApiError } from '@/lib/api';
+import { useKeyboardLift } from '@/lib/use-keyboard-lift';
 import { useAppTheme } from '@/lib/theme-context';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -68,12 +72,14 @@ const SUGGESTED_QUESTIONS = [
 const WELCOME_MESSAGE: Message = {
   id: 'welcome',
   role: 'assistant',
-  text: 'Halo! Saya Asisten Ginnva 👋\n\nSaya siap membantu Anda seputar produk PPF, Window Film, prosedur garansi, dan perawatan film Ginnva.\n\nAda yang bisa saya bantu?',
+  text: 'Halo! Saya Asisten Ginnva 👋\n\nSaya siap membantumu seputar produk PPF, Window Film, prosedur garansi, dan perawatan film Ginnva.\n\nAda yang bisa saya bantu?',
 };
 
 // ─── Components ──────────────────────────────────────────────────────────────
 
-function UserBubble({ text, styles }: { text: string; styles: ReturnType<typeof createStyles> }) {
+type Styles = ReturnType<typeof createStyles>;
+
+function UserBubble({ text, styles }: { text: string; styles: Styles }) {
   return (
     <View style={styles.userRow}>
       <View style={styles.userBubble}>
@@ -83,12 +89,18 @@ function UserBubble({ text, styles }: { text: string; styles: ReturnType<typeof 
   );
 }
 
-function AssistantBubble({ text, isError, styles }: { text: string; isError?: boolean; styles: ReturnType<typeof createStyles> }) {
+function Avatar({ styles }: { styles: Styles }) {
+  return (
+    <View style={styles.assistantAvatar}>
+      <Ionicons name="sparkles" size={14} color="#ffffff" />
+    </View>
+  );
+}
+
+function AssistantBubble({ text, isError, styles }: { text: string; isError?: boolean; styles: Styles }) {
   return (
     <View style={styles.assistantRow}>
-      <View style={styles.assistantAvatar}>
-        <Text style={styles.avatarText}>G</Text>
-      </View>
+      <Avatar styles={styles} />
       <View style={[styles.assistantBubble, isError && styles.errorBubble]}>
         <Text style={[styles.assistantText, isError && styles.errorText]}>{text}</Text>
       </View>
@@ -98,7 +110,7 @@ function AssistantBubble({ text, isError, styles }: { text: string; isError?: bo
 
 // Titik ke-i mulai animasinya belakangan (staggerDelay * i) supaya
 // terlihat "bergelombang" kiri-ke-kanan, bukan berdenyut bersamaan.
-function TypingDot({ styles, delay }: { styles: ReturnType<typeof createStyles>; delay: number }) {
+function TypingDot({ styles, delay }: { styles: Styles; delay: number }) {
   const opacity = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -117,12 +129,10 @@ function TypingDot({ styles, delay }: { styles: ReturnType<typeof createStyles>;
   return <Animated.View style={[styles.dot, { opacity }]} />;
 }
 
-function TypingIndicator({ styles }: { styles: ReturnType<typeof createStyles> }) {
+function TypingIndicator({ styles }: { styles: Styles }) {
   return (
     <View style={styles.assistantRow}>
-      <View style={styles.assistantAvatar}>
-        <Text style={styles.avatarText}>G</Text>
-      </View>
+      <Avatar styles={styles} />
       <View style={styles.assistantBubble}>
         <View style={styles.typingDots}>
           <TypingDot styles={styles} delay={0} />
@@ -143,8 +153,8 @@ export default function AiAssistantScreen() {
   const [messages, setMessages] = useState<Message[]>([WELCOME_MESSAGE]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [headerHeight, setHeaderHeight] = useState(55);
   const listRef = useRef<FlatList>(null);
+  const { lift, onBoxLayout } = useKeyboardLift();
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
@@ -214,92 +224,90 @@ export default function AiAssistantScreen() {
   );
 
   const showSuggestions = messages.length === 1; // Hanya tampil saat baru buka
+  const canSend = input.trim().length > 0 && !loading;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <LinearGradient pointerEvents="none" colors={[colors.accentSoft, 'transparent']} start={{ x: 1, y: 0 }} end={{ x: 0.2, y: 1 }} style={styles.glow} />
+
       {/* Header */}
-      <View style={styles.header} onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}>
-        <View style={styles.headerLeft}>
-          <Pressable style={styles.backBtn} onPress={() => router.back()}>
-            <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
-          </Pressable>
-          <View style={styles.headerAvatar}>
-            <Text style={styles.headerAvatarText}>G</Text>
-          </View>
-          <View>
-            <Text style={styles.headerTitle}>Asisten Ginnva</Text>
-            <Text style={styles.headerSubtitle}>AI · Produk & Garansi</Text>
+      <View style={styles.header}>
+        <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kembali">
+          <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+        </Pressable>
+        <View style={styles.headerAvatar}>
+          <Ionicons name="sparkles" size={18} color="#ffffff" />
+        </View>
+        <View style={styles.headerText}>
+          <Text style={styles.headerTitle} numberOfLines={1}>Asisten Ginnva</Text>
+          <View style={styles.statusRow}>
+            <View style={styles.statusDot} />
+            <Text style={styles.headerSubtitle} numberOfLines={1}>Produk & Garansi</Text>
           </View>
         </View>
-        <Pressable
-          style={styles.waButton}
-          onPress={() => Linking.openURL(WA_URL)}
-        >
-          <Ionicons name="logo-whatsapp" size={18} color="#ffffff" />
+        <PressableScale style={styles.waButton} onPress={() => Linking.openURL(WA_URL)} accessibilityRole="button" accessibilityLabel="Hubungi sales lewat WhatsApp">
+          <Ionicons name="logo-whatsapp" size={17} color="#ffffff" />
           <Text style={styles.waButtonText}>Sales</Text>
-        </Pressable>
+        </PressableScale>
       </View>
 
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + headerHeight : 0}
-      >
-        {/* Message list */}
-        <FlatList
-          ref={listRef}
-          data={messages}
-          keyExtractor={(item, index) => item.id ?? String(index)}
-          renderItem={renderItem}
-          contentContainerStyle={styles.listContent}
-          onContentSizeChange={scrollToBottom}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          ListFooterComponent={loading ? <TypingIndicator styles={styles} /> : null}
-        />
-
-        {/* Suggested questions — hanya tampil di awal */}
-        {showSuggestions && !loading && (
-          <View style={styles.suggestionsWrap}>
-            <Text style={styles.suggestionsLabel}>Pertanyaan umum:</Text>
-            <View style={styles.suggestionsRow}>
-              {SUGGESTED_QUESTIONS.map((q) => (
-                <Pressable key={q} style={styles.suggestionChip} onPress={() => sendMessage(q)}>
-                  <Text style={styles.suggestionText}>{q}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        )}
-
-        {/* Input */}
-        <View style={[styles.inputWrap, { paddingBottom: insets.bottom > 0 ? insets.bottom : spacing.sm }]}>
-          <TextInput
-            style={styles.input}
-            value={input}
-            onChangeText={setInput}
-            placeholder="Ketik pertanyaan Anda..."
-            placeholderTextColor={colors.textMuted}
-            multiline
-            maxLength={500}
-            returnKeyType="send"
-            onSubmitEditing={() => sendMessage(input)}
-            blurOnSubmit
+      <View style={styles.flex} onLayout={onBoxLayout}>
+        <View style={[styles.flex, { marginBottom: lift }]}>
+          <FlatList
+            ref={listRef}
+            style={styles.flex}
+            data={messages}
+            keyExtractor={(item, index) => item.id ?? String(index)}
+            renderItem={renderItem}
+            contentContainerStyle={styles.listContent}
+            onContentSizeChange={scrollToBottom}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            showsVerticalScrollIndicator={false}
+            ListFooterComponent={loading ? <TypingIndicator styles={styles} /> : null}
           />
-          <Pressable
-            style={[styles.sendButton, (!input.trim() || loading) && styles.sendButtonDisabled]}
-            onPress={() => sendMessage(input)}
-            disabled={!input.trim() || loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#ffffff" size="small" />
-            ) : (
-              <Ionicons name="send" size={18} color="#ffffff" />
-            )}
-          </Pressable>
+
+          {/* Pertanyaan umum — hanya tampil di awal */}
+          {showSuggestions && !loading && (
+            <View style={styles.suggestionsWrap}>
+              <Text style={styles.suggestionsLabel}>Coba tanyakan</Text>
+              <View style={styles.suggestionsRow}>
+                {SUGGESTED_QUESTIONS.map((q) => (
+                  <PressableScale key={q} style={styles.suggestionChip} onPress={() => sendMessage(q)} accessibilityRole="button">
+                    <Text style={styles.suggestionText}>{q}</Text>
+                  </PressableScale>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* Input */}
+          <View style={[styles.inputWrap, { paddingBottom: (insets.bottom > 0 ? insets.bottom : spacing.sm) + spacing.sm }]}>
+            <View style={styles.inputBox}>
+              <AutoGrowTextInput
+                style={styles.input}
+                minHeight={48}
+                maxHeight={110}
+                value={input}
+                onChangeText={setInput}
+                placeholder="Ketik pertanyaanmu..."
+                placeholderTextColor={colors.textMuted}
+                maxLength={500}
+              />
+            </View>
+            <Pressable
+              style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
+              onPress={() => sendMessage(input)}
+              disabled={!canSend}
+              accessibilityRole="button"
+              accessibilityLabel="Kirim pertanyaan"
+            >
+              {loading ? <ActivityIndicator color="#ffffff" size="small" /> : <Ionicons name="send" size={18} color="#ffffff" />}
+            </Pressable>
+          </View>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -308,216 +316,54 @@ export default function AiAssistantScreen() {
 
 function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
-  flex: { flex: 1 },
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
+    flex: { flex: 1 },
+    container: { flex: 1, backgroundColor: colors.bg },
+    glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 280 },
 
-  // Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.bg,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  backBtn: {
-    width: 32,
-    height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: -spacing.xs,
-  },
-  headerAvatar: {
-    width: 38,
-    height: 38,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerAvatarText: {
-    color: '#ffffff',
-    fontWeight: '800',
-    fontSize: fontSize.base,
-  },
-  headerTitle: {
-    fontSize: fontSize.base,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  headerSubtitle: {
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
-  },
-  waButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    backgroundColor: '#25d366',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 7,
-    borderRadius: radius.pill,
-  },
-  waButtonText: {
-    color: '#ffffff',
-    fontSize: fontSize.xs,
-    fontWeight: '700',
-  },
+    // Header
+    header: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 24, paddingTop: spacing.md, paddingBottom: spacing.md },
+    backBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceElevated },
+    headerAvatar: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent },
+    headerText: { flex: 1, gap: 2 },
+    headerTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3, color: colors.textPrimary },
+    statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    statusDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success },
+    headerSubtitle: { flexShrink: 1, fontSize: 12, color: colors.textSecondary },
+    waButton: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 40, paddingHorizontal: 14, borderRadius: 20, backgroundColor: '#25d366' },
+    waButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '800' },
 
-  // List
-  listContent: {
-    padding: spacing.md,
-    paddingBottom: spacing.sm,
-    gap: spacing.sm,
-  },
+    // List
+    listContent: { paddingHorizontal: 24, paddingTop: spacing.sm, paddingBottom: spacing.md, gap: 12 },
 
-  // User bubble
-  userRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-  },
-  userBubble: {
-    maxWidth: '78%',
-    backgroundColor: colors.accent,
-    borderRadius: radius.lg,
-    borderBottomRightRadius: radius.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  userText: {
-    color: '#ffffff',
-    fontSize: fontSize.sm,
-    lineHeight: 20,
-  },
+    // User bubble
+    userRow: { flexDirection: 'row', justifyContent: 'flex-end' },
+    userBubble: { maxWidth: '80%', backgroundColor: colors.accent, borderRadius: 22, borderBottomRightRadius: 6, paddingHorizontal: 16, paddingVertical: 12 },
+    userText: { color: '#ffffff', fontSize: 15, lineHeight: 22 },
 
-  // Assistant bubble
-  assistantRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: spacing.sm,
-  },
-  assistantAvatar: {
-    width: 30,
-    height: 30,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  avatarText: {
-    color: '#ffffff',
-    fontWeight: '800',
-    fontSize: fontSize.xs,
-  },
-  assistantBubble: {
-    maxWidth: '78%',
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderBottomLeftRadius: radius.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  errorBubble: {
-    backgroundColor: colors.dangerBg,
-  },
-  assistantText: {
-    color: colors.textPrimary,
-    fontSize: fontSize.sm,
-    lineHeight: 20,
-  },
-  errorText: {
-    color: colors.danger,
-  },
+    // Assistant bubble
+    assistantRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 10 },
+    assistantAvatar: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent, flexShrink: 0 },
+    assistantBubble: { flexShrink: 1, maxWidth: '82%', backgroundColor: colors.surfaceElevated, borderRadius: 22, borderBottomLeftRadius: 6, paddingHorizontal: 16, paddingVertical: 12 },
+    errorBubble: { backgroundColor: colors.dangerBg },
+    assistantText: { color: colors.textPrimary, fontSize: 15, lineHeight: 22 },
+    errorText: { color: colors.danger },
 
-  // Typing indicator
-  typingDots: {
-    flexDirection: 'row',
-    gap: 4,
-    paddingVertical: 4,
-    alignItems: 'center',
-  },
-  dot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: colors.textMuted,
-  },
+    // Typing indicator
+    typingDots: { flexDirection: 'row', gap: 5, paddingVertical: 6, paddingHorizontal: 2, alignItems: 'center' },
+    dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.textMuted },
 
-  // Suggested questions
-  suggestionsWrap: {
-    paddingHorizontal: spacing.md,
-    paddingBottom: spacing.sm,
-  },
-  suggestionsLabel: {
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
-    marginBottom: spacing.xs,
-  },
-  suggestionsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
-  },
-  suggestionChip: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-  },
-  suggestionText: {
-    fontSize: fontSize.xs,
-    color: colors.accent,
-    fontWeight: '600',
-  },
+    // Suggested questions
+    suggestionsWrap: { paddingHorizontal: 24, paddingBottom: spacing.sm, gap: 10 },
+    suggestionsLabel: { fontSize: 12, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase', color: colors.textMuted },
+    suggestionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    suggestionChip: { borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: colors.accentSoft },
+    suggestionText: { fontSize: 13, lineHeight: 18, fontWeight: '700', color: colors.accent },
 
-  // Input area
-  inputWrap: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    backgroundColor: colors.bg,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  input: {
-    flex: 1,
-    minHeight: 44,
-    maxHeight: 100,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.md,
-    paddingVertical: Platform.OS === 'ios' ? 11 : 8,
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-  },
-  sendButton: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  sendButtonDisabled: {
-    backgroundColor: colors.textMuted,
-  },
+    // Input area
+    inputWrap: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, paddingHorizontal: 24, paddingTop: 10, backgroundColor: colors.bg },
+    inputBox: { flex: 1, borderRadius: 24, backgroundColor: colors.surfaceElevated },
+    input: { fontSize: 15, lineHeight: 21, paddingHorizontal: 18, paddingVertical: 13, color: colors.textPrimary },
+    sendButton: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent, flexShrink: 0 },
+    sendButtonDisabled: { opacity: 0.4 },
   });
 }

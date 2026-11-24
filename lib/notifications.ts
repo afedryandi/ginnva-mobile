@@ -51,7 +51,7 @@ const ALLOWED_ROUTE_PREFIXES = [
   '/warranty',
 ];
 
-function isAllowedRoute(route: string): boolean {
+export function isAllowedRoute(route: string): boolean {
   if (typeof route !== 'string' || !route.startsWith('/')) return false;
   return ALLOWED_ROUTE_PREFIXES.some((prefix) => route === prefix || route.startsWith(`${prefix}/`));
 }
@@ -171,5 +171,24 @@ export async function getCurrentPushToken(): Promise<string | null> {
     return result.data;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Set badge count di icon app ke angka PASTI (dari unread_count backend) --
+ * diperbaiki 2026-10-01, audit Notifikasi. SEBELUMNYA shouldSetBadge: true
+ * diset di handler (atas) tapi setBadgeCountAsync TIDAK PERNAH dipanggil
+ * di mana pun — badge terus bertambah otomatis oleh OS tiap ada push
+ * masuk tapi tidak pernah berkurang/reset walau user sudah baca semua
+ * notifikasi di app. Dipanggil dari layar riwayat notifikasi (Customer &
+ * Partner) tiap kali unread_count berubah (fetch/tap/mark-all-read).
+ */
+export async function setBadgeCount(count: number): Promise<void> {
+  if (!Device.isDevice || isExpoGo()) return;
+  try {
+    await Notifications.setBadgeCountAsync(Math.max(0, count));
+  } catch {
+    // Badge gagal di-set (mis. permission dicabut) -- bukan hal fatal,
+    // diamkan saja, tidak perlu mengganggu UI.
   }
 }

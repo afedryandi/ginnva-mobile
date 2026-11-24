@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
-import { Pressable, Text, StyleSheet, ActivityIndicator, ViewStyle } from 'react-native';
+import { Text, StyleSheet, ActivityIndicator, ViewStyle } from 'react-native';
+import { PressableScale } from '@/components/ui/PressableScale';
 import { darkColors, radius, fontSize, spacing } from '@/constants/theme';
 import { useAppTheme } from '@/lib/theme-context';
 
@@ -25,7 +26,7 @@ export function Button({
   const isDisabled = disabled || loading;
 
   return (
-    <Pressable
+    <PressableScale
       onPress={onPress}
       disabled={isDisabled}
       style={[
@@ -51,7 +52,7 @@ export function Button({
           {label}
         </Text>
       )}
-    </Pressable>
+    </PressableScale>
   );
 }
 

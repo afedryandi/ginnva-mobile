@@ -18,6 +18,7 @@ import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAppTheme } from '@/lib/theme-context';
 import { useAuth } from '@/lib/auth-context';
+import ComingSoon from '@/components/ui/ComingSoon';
 
 interface Reward {
   id: number;
@@ -26,12 +27,22 @@ interface Reward {
   image: string | null;
   points_cost: number;
   stock: number | null;
+  // Reward bertipe voucher: menukar poin langsung menerbitkan voucher diskon ke "Voucher Saya".
+  type?: 'item' | 'voucher';
+  voucher_discount?: number | null;
+  voucher_valid_days?: number | null;
 }
 
 // Layar katalog reward customer — penukaran reward Partner SENGAJA
 // tatap muka langsung di toko (lihat app/partner/dashboard.tsx), bukan
 // self-service lewat app, jadi layar ini tidak lagi punya jalur partner.
+// GATE COMING SOON (diminta user, 2026-09-30) -- lihat catatan lengkap
+// di app/account/points.tsx (pola sama persis).
 export default function RewardsScreen() {
+  return <ComingSoon title="Tukar Reward" message="Katalog reward sedang kami persiapkan dan akan segera bisa kamu gunakan." icon="gift-outline" />;
+}
+
+function RewardsScreenReal() {
   const { theme, colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { isLoggedIn: loggedIn } = useAuth();
@@ -85,14 +96,21 @@ export default function RewardsScreen() {
           onPress: async () => {
             setRedeemingId(reward.id);
             try {
-              const res = await apiFetch<{ message: string }>(
+              const res = await apiFetch<{ message: string; voucher?: { code: string } | null }>(
                 `/api/customer/rewards/${reward.id}/redeem`,
                 { method: 'POST' }
               );
 
               setPointsBalance((prev) => (prev !== null ? prev - reward.points_cost : prev));
-              Alert.alert('Berhasil', res.message);
-              router.back();
+              if (res.voucher) {
+                // Voucher langsung terbit: arahkan ke "Voucher Saya" supaya kodenya terlihat.
+                Alert.alert('Voucher Berhasil Ditukar', `${res.message}\n\nKode: ${res.voucher.code}`, [
+                  { text: 'Lihat Voucher', onPress: () => router.replace('/account/vouchers' as never) },
+                ]);
+              } else {
+                Alert.alert('Berhasil', res.message);
+                router.back();
+              }
             } catch (err) {
               const message = err instanceof ApiError
                 ? err.message
@@ -109,6 +127,12 @@ export default function RewardsScreen() {
 
   const renderItem = ({ item }: { item: Reward }) => {
     const insufficientPoints = pointsBalance !== null && item.points_cost > pointsBalance;
+    // UX diperbaiki 2026-09-26 (audit Katalog Reward) -- SEBELUMNYA field
+    // stock sudah dikirim API tapi tidak dipakai sama sekali di UI, jadi
+    // customer tidak tahu reward stok terbatas mau habis. Reward stok 0
+    // TIDAK PERNAH sampai ke sini (sudah difilter backend, GET /api/rewards),
+    // jadi ambang "hampir habis" cukup dicek dari stock > 0 saja.
+    const lowStock = item.stock !== null && item.stock > 0 && item.stock <= 5;
     return (
       <View style={styles.card}>
         {item.image ? (
@@ -122,6 +146,15 @@ export default function RewardsScreen() {
           <Text style={styles.cardName} numberOfLines={2}>{item.name}</Text>
           {item.description && (
             <Text style={styles.cardDesc} numberOfLines={2}>{item.description}</Text>
+          )}
+          {item.type === 'voucher' && item.voucher_discount ? (
+            <Text style={styles.lowStockText}>
+              🎟️ Voucher diskon Rp{Math.round(item.voucher_discount).toLocaleString('id-ID')}
+              {item.voucher_valid_days ? ` • berlaku ${item.voucher_valid_days} hari setelah ditukar` : ''}
+            </Text>
+          ) : null}
+          {lowStock && (
+            <Text style={styles.lowStockText}>⏳ Sisa {item.stock} lagi</Text>
           )}
           <View style={styles.cardFooter}>
             <View style={styles.pointsBadge}>
@@ -151,7 +184,7 @@ export default function RewardsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         {router.canGoBack() ? (
@@ -196,7 +229,7 @@ export default function RewardsScreen() {
               <View style={styles.balanceBox}>
                 <Ionicons name="star" size={16} color={colors.accent} />
                 <Text style={styles.balanceText}>
-                  Poin kamu: <Text style={styles.balanceValue}>{pointsBalance.toLocaleString('id-ID')}</Text>
+                  Poinmu: <Text style={styles.balanceValue}>{pointsBalance.toLocaleString('id-ID')}</Text>
                 </Text>
               </View>
             ) : null
@@ -268,6 +301,7 @@ function createStyles(colors: typeof darkColors) {
   cardInfo: { flex: 1, gap: 4, justifyContent: 'center' },
   cardName: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
   cardDesc: { fontSize: fontSize.xs, color: colors.textSecondary, lineHeight: 16 },
+  lowStockText: { fontSize: fontSize.xs, fontWeight: '700', color: colors.warning },
   cardFooter: {
     flexDirection: 'row',
     alignItems: 'center',

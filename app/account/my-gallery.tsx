@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
-  Text,
   SectionList,
   StyleSheet,
   Pressable,
@@ -14,6 +13,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
+import { AppText as Text } from '@/components/ui/AppText';
+import { PressableScale } from '@/components/ui/PressableScale';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -22,7 +24,7 @@ import { StatusBar } from 'expo-status-bar';
 // (lebih ringkas untuk kasus sederhana ini) tetap didukung resmi.
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { darkColors, spacing } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAppTheme } from '@/lib/theme-context';
 import { hapticSuccess, hapticError } from '@/lib/haptics';
@@ -64,7 +66,7 @@ export default function MyGalleryScreen() {
   const { theme, colors } = useAppTheme();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const isPortrait = screenHeight >= screenWidth;
-  const thumbSize = (screenWidth - spacing.md * 2 - spacing.sm * 2) / 3;
+  const thumbSize = Math.floor((screenWidth - 48 - 12) / 2);
   const styles = useMemo(
     () => createStyles(colors, thumbSize),
     [colors, thumbSize]
@@ -107,7 +109,7 @@ export default function MyGalleryScreen() {
         // user tidak akan pernah bisa mengaktifkan izinnya lewat app,
         // harus tahu sendiri caranya buka Settings secara manual.
         Alert.alert(
-          'Izin Diperlukan',
+          'Butuh Izin',
           'Aktifkan izin akses galeri di Pengaturan untuk menyimpan foto.',
           [
             { text: 'Batal', style: 'cancel' },
@@ -123,10 +125,10 @@ export default function MyGalleryScreen() {
       await MediaLibrary.saveToLibraryAsync(uri);
 
       hapticSuccess();
-      Alert.alert('Berhasil', 'Foto disimpan ke galeri perangkat Anda.');
+      Alert.alert('Berhasil', 'Foto disimpan ke galeri perangkatmu.');
     } catch {
       hapticError();
-      Alert.alert('Gagal', 'Foto gagal disimpan. Periksa koneksi internet Anda.');
+      Alert.alert('Gagal', 'Foto gagal disimpan. Periksa koneksi internetmu.');
     } finally {
       setDownloadingId(null);
     }
@@ -140,7 +142,7 @@ export default function MyGalleryScreen() {
     apiFetch<{ data: GallerySection[] }>('/api/customer/my-gallery')
       .then((res) => setSections(res.data))
       .catch((err) => {
-        setError(err instanceof ApiError ? err.message : 'Gagal memuat galeri Anda.');
+        setError(err instanceof ApiError ? err.message : 'Gagal memuat galerimu.');
       })
       .finally(() => {
         setLoading(false);
@@ -153,18 +155,18 @@ export default function MyGalleryScreen() {
   }, []);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-      <View style={styles.header}>
+
+      <LinearGradient pointerEvents="none" colors={[colors.accentSoft, 'transparent']} start={{ x: 1, y: 0 }} end={{ x: 0.2, y: 1 }} style={styles.glow} />
+
+      <View style={styles.topRow}>
         {router.canGoBack() ? (
-          <Pressable onPress={() => router.back()} style={styles.sideButton}>
-            <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+          <Pressable onPress={() => router.back()} style={styles.backButton} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kembali">
+            <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
           </Pressable>
-        ) : (
-          <View style={styles.sideButton} />
-        )}
-        <Text style={styles.headerTitle} numberOfLines={1}>Galeri Mobil Saya</Text>
-        <View style={styles.sideButton} />
+        ) : null}
+        <Text style={styles.topTitle} numberOfLines={1}>Galeri Mobil Saya</Text>
       </View>
 
       {loading ? (
@@ -173,17 +175,22 @@ export default function MyGalleryScreen() {
         </View>
       ) : error ? (
         <View style={styles.centerState}>
-          <Ionicons name="cloud-offline-outline" size={32} color={colors.textMuted} />
+          <View style={styles.centerIcon}>
+            <Ionicons name="cloud-offline-outline" size={30} color={colors.accent} />
+          </View>
           <Text style={styles.centerStateText}>{error}</Text>
-          <Pressable style={styles.retryButton} onPress={() => load()}>
-            <Text style={styles.retryText}>Coba Lagi</Text>
-          </Pressable>
+          <PressableScale style={styles.primaryButton} onPress={() => load()} accessibilityRole="button">
+            <Text style={styles.primaryButtonText}>Coba Lagi</Text>
+          </PressableScale>
         </View>
       ) : sections.length === 0 ? (
         <View style={styles.centerState}>
-          <Ionicons name="camera-outline" size={32} color={colors.textMuted} />
+          <View style={styles.centerIcon}>
+            <Ionicons name="images-outline" size={30} color={colors.accent} />
+          </View>
+          <Text style={styles.centerStateTitle}>Belum ada foto</Text>
           <Text style={styles.centerStateText}>
-            Belum ada foto. Foto progress instalasi mobil Anda akan muncul di sini setelah admin toko mengirimkannya.
+            Foto progress instalasi mobilmu akan muncul di sini setelah admin toko mengirimkannya.
           </Text>
         </View>
       ) : (
@@ -191,6 +198,8 @@ export default function MyGalleryScreen() {
           sections={sections.map((s) => ({ ...s, data: [s.photos] }))}
           keyExtractor={(_, idx) => String(idx)}
           contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          stickySectionHeadersEnabled={false}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -200,48 +209,68 @@ export default function MyGalleryScreen() {
             />
           }
           renderSectionHeader={({ section }) => {
-            const subtitle = [section.store_name, formatDate(section.preferred_date), section.booking_number]
-              .filter(Boolean)
-              .join(' · ');
+            const date = formatDate(section.preferred_date);
+            // "Galeri Pilihan" (showcase, tidak terikat booking) bisa tidak punya toko/tanggal/nomor booking sama sekali:
+            // chip yang kosong tidak ditampilkan.
+            const chips = [
+              section.store_name ? { icon: 'storefront-outline' as const, text: section.store_name } : null,
+              date ? { icon: 'calendar-outline' as const, text: date } : null,
+              section.booking_number ? { icon: 'receipt-outline' as const, text: section.booking_number } : null,
+            ].filter((c): c is { icon: 'storefront-outline' | 'calendar-outline' | 'receipt-outline'; text: string } => c !== null);
+
             return (
               <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>{section.service_type}</Text>
-                {/* "Galeri Pilihan" (showcase, tidak terikat booking) bisa
-                    tidak punya store_name/tanggal/booking_number sama
-                    sekali — Text kosong tetap memakan tinggi baris di RN,
-                    jadi disembunyikan total kalau memang tidak ada isinya. */}
-                {subtitle.length > 0 && (
-                  <Text style={styles.sectionSubtitle}>{subtitle}</Text>
-                )}
+                <View style={styles.sectionTitleRow}>
+                  <Text style={styles.sectionTitle} numberOfLines={2}>{section.service_type}</Text>
+                  <View style={styles.countPill}>
+                    <Ionicons name="images-outline" size={13} color={colors.accent} />
+                    <Text style={styles.countText}>{section.photos.length}</Text>
+                  </View>
+                </View>
+                {chips.length > 0 ? (
+                  <View style={styles.chips}>
+                    {chips.map((chip) => (
+                      <View key={chip.text} style={styles.chip}>
+                        <Ionicons name={chip.icon} size={13} color={colors.textSecondary} />
+                        <Text style={styles.chipText} numberOfLines={1}>{chip.text}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
               </View>
             );
           }}
           renderItem={({ item: photos }) => (
             <View style={styles.photoGrid}>
               {photos.map((photo) => (
-                <Pressable
+                <PressableScale
                   key={photo.id}
                   style={styles.thumbWrap}
+                  scaleTo={0.98}
                   onPress={() => { setSelectedPhoto(photo); setViewerRotated(false); }}
+                  accessibilityRole="button"
+                  accessibilityLabel={photo.stage_label ? `Foto ${photo.stage_label}` : 'Foto'}
                 >
                   <Image source={{ uri: photo.url }} style={styles.thumb} contentFit="cover" />
-                  {photo.stage_label && (
+                  {photo.stage_label ? (
                     <View style={styles.thumbBadge}>
                       <Text style={styles.thumbBadgeText} numberOfLines={1}>{photo.stage_label}</Text>
                     </View>
-                  )}
+                  ) : null}
                   <Pressable
                     style={styles.thumbDownloadBtn}
                     onPress={(e) => { e.stopPropagation(); handleDownload(photo); }}
                     hitSlop={6}
+                    accessibilityRole="button"
+                    accessibilityLabel="Simpan foto ke galeri"
                   >
                     {downloadingId === photo.id ? (
                       <ActivityIndicator size="small" color="#ffffff" />
                     ) : (
-                      <Ionicons name="download-outline" size={14} color="#ffffff" />
+                      <Ionicons name="download-outline" size={16} color="#ffffff" />
                     )}
                   </Pressable>
-                </Pressable>
+                </PressableScale>
               ))}
             </View>
           )}
@@ -267,10 +296,17 @@ export default function MyGalleryScreen() {
               contentFit="contain"
             />
           )}
+          {selectedPhoto?.stage_label ? (
+            <View style={styles.viewerCaption}>
+              <Text style={styles.viewerCaptionText}>{selectedPhoto.stage_label}</Text>
+            </View>
+          ) : null}
           <Pressable
             style={styles.viewerDownloadBtn}
             onPress={() => selectedPhoto && handleDownload(selectedPhoto)}
             disabled={downloadingId !== null}
+            accessibilityRole="button"
+            accessibilityLabel="Simpan foto ke galeri"
           >
             {downloadingId === selectedPhoto?.id ? (
               <ActivityIndicator size="small" color="#ffffff" />
@@ -282,11 +318,13 @@ export default function MyGalleryScreen() {
             <Pressable
               style={styles.viewerRotateBtn}
               onPress={() => setViewerRotated((v) => !v)}
+              accessibilityRole="button"
+              accessibilityLabel="Putar tampilan foto"
             >
               <Ionicons name="phone-landscape-outline" size={22} color="#ffffff" />
             </Pressable>
           )}
-          <Pressable style={styles.viewerCloseBtn} onPress={() => setSelectedPhoto(null)}>
+          <Pressable style={styles.viewerCloseBtn} onPress={() => setSelectedPhoto(null)} accessibilityRole="button" accessibilityLabel="Tutup foto">
             <Ionicons name="close" size={26} color="#ffffff" />
           </Pressable>
         </Pressable>
@@ -297,69 +335,46 @@ export default function MyGalleryScreen() {
 
 function createStyles(colors: typeof darkColors, thumbSize: number) {
   return StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.bg,
-  },
-  sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-  centerState: {
-    flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, paddingHorizontal: spacing.xl,
-  },
-  centerStateText: { fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center' },
-  retryButton: {
-    marginTop: spacing.xs, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
-    backgroundColor: colors.accent, borderRadius: radius.pill,
-  },
-  retryText: { color: '#ffffff', fontSize: fontSize.sm, fontWeight: '600' },
+    container: { flex: 1, backgroundColor: colors.bg },
+    glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 280 },
 
-  listContent: { padding: spacing.md, gap: spacing.md },
+    topRow: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 44, paddingHorizontal: 24, paddingTop: spacing.md, paddingBottom: spacing.sm },
+    backButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceElevated },
+    topTitle: { flex: 1, fontSize: 22, fontWeight: '800', letterSpacing: -0.5, color: colors.textPrimary },
 
-  sectionHeader: {
-    backgroundColor: colors.bg, paddingTop: spacing.md, paddingBottom: spacing.sm,
-  },
-  sectionTitle: { fontSize: fontSize.base, fontWeight: '800', color: colors.textPrimary },
-  sectionSubtitle: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
+    centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 32, paddingBottom: 72 },
+    centerIcon: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+    centerStateTitle: { fontSize: 18, fontWeight: '800', color: colors.textPrimary, textAlign: 'center' },
+    centerStateText: { fontSize: 14, lineHeight: 21, color: colors.textSecondary, textAlign: 'center' },
+    primaryButton: { height: 52, paddingHorizontal: 32, borderRadius: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent, marginTop: 6 },
+    primaryButtonText: { fontSize: 15, fontWeight: '800', color: '#ffffff' },
 
-  photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
-  thumbWrap: {
-    width: thumbSize, height: thumbSize, borderRadius: radius.md, overflow: 'hidden',
-    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
-  },
-  thumb: { width: '100%', height: '100%' },
-  thumbBadge: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 6, paddingVertical: 3,
-  },
-  thumbBadgeText: { fontSize: 9, fontWeight: '700', color: '#ffffff' },
-  thumbDownloadBtn: {
-    position: 'absolute', top: 4, right: 4,
-    width: 24, height: 24, borderRadius: 12,
-    backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center',
-  },
+    listContent: { paddingHorizontal: 24, paddingTop: spacing.xs, paddingBottom: 56 },
 
-  viewerBackdrop: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center',
-  },
-  viewerImage: { width: '100%', height: '80%' },
-  viewerCloseBtn: {
-    position: 'absolute', top: 48, right: 20, width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center',
-  },
-  viewerRotateBtn: {
-    position: 'absolute', top: 48, right: 68, width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center',
-  },
-  viewerDownloadBtn: {
-    position: 'absolute', top: 48, right: 116, width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center',
-  },
+    sectionHeader: { gap: 10, paddingTop: 18, paddingBottom: 12 },
+    sectionTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+    sectionTitle: { flex: 1, fontSize: 20, lineHeight: 26, fontWeight: '800', letterSpacing: -0.4, color: colors.textPrimary },
+    countPill: { flexDirection: 'row', alignItems: 'center', gap: 5, height: 28, paddingHorizontal: 12, borderRadius: 14, backgroundColor: colors.accentSoft },
+    countText: { fontSize: 12, fontWeight: '800', color: colors.accent },
+    chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    chip: { flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: '100%', height: 30, paddingHorizontal: 12, borderRadius: 15, backgroundColor: colors.surfaceElevated },
+    chipText: { flexShrink: 1, fontSize: 12, fontWeight: '700', color: colors.textSecondary },
+
+    // Foto dalam dua kolom: lebih besar dan lapang dibanding tiga kolom sebelumnya.
+    photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 12 },
+    thumbWrap: { width: thumbSize, height: thumbSize * 0.82, borderRadius: 22, overflow: 'hidden', backgroundColor: colors.surfaceElevated },
+    thumb: { width: '100%', height: '100%' },
+    // Label tahap berupa pil gelap tembus pandang di pojok kiri bawah (putih tetap: duduk di atas foto).
+    thumbBadge: { position: 'absolute', left: 10, bottom: 10, maxWidth: '75%', height: 26, paddingHorizontal: 10, borderRadius: 13, justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.55)' },
+    thumbBadgeText: { fontSize: 11, fontWeight: '800', color: '#ffffff' },
+    thumbDownloadBtn: { position: 'absolute', top: 10, right: 10, width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
+
+    viewerBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
+    viewerImage: { width: '100%', height: '80%' },
+    viewerCaption: { position: 'absolute', bottom: 56, alignSelf: 'center', height: 36, paddingHorizontal: 18, borderRadius: 18, justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.15)' },
+    viewerCaptionText: { fontSize: 14, fontWeight: '800', color: '#ffffff' },
+    viewerCloseBtn: { position: 'absolute', top: 48, right: 20, width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
+    viewerRotateBtn: { position: 'absolute', top: 48, right: 72, width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
+    viewerDownloadBtn: { position: 'absolute', top: 48, right: 124, width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
   });
 }

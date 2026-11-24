@@ -16,6 +16,7 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { Button } from '@/components/ui/Button';
+import { PasswordInput } from '@/components/ui/PasswordInput';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
@@ -141,7 +142,7 @@ export default function PartnerEditProfileScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         {router.canGoBack() ? (
@@ -244,7 +245,7 @@ export default function PartnerEditProfileScreen() {
             <View style={styles.card}>
               <View style={styles.fieldGroup}>
                 <Text style={styles.label}>Password Lama</Text>
-                <TextInput
+                <PasswordInput
                   style={[styles.input, !!passwordErrors.current_password && styles.inputError]}
                   value={currentPassword}
                   onChangeText={(v) => {
@@ -259,7 +260,6 @@ export default function PartnerEditProfileScreen() {
                   }}
                   placeholder="Masukkan password lama"
                   placeholderTextColor={colors.textMuted}
-                  secureTextEntry
                   returnKeyType="next"
                 />
                 {!!passwordErrors.current_password && (
@@ -269,7 +269,7 @@ export default function PartnerEditProfileScreen() {
 
               <View style={styles.fieldGroup}>
                 <Text style={styles.label}>Password Baru</Text>
-                <TextInput
+                <PasswordInput
                   style={[styles.input, !!passwordErrors.password && styles.inputError]}
                   value={newPassword}
                   onChangeText={(v) => {
@@ -284,20 +284,18 @@ export default function PartnerEditProfileScreen() {
                   }}
                   placeholder="Minimal 8 karakter"
                   placeholderTextColor={colors.textMuted}
-                  secureTextEntry
                   returnKeyType="next"
                 />
               </View>
 
               <View style={styles.fieldGroup}>
                 <Text style={styles.label}>Konfirmasi Password Baru</Text>
-                <TextInput
+                <PasswordInput
                   style={styles.input}
                   value={confirmPassword}
                   onChangeText={setConfirmPassword}
                   placeholder="Ulangi password baru"
                   placeholderTextColor={colors.textMuted}
-                  secureTextEntry
                   returnKeyType="done"
                 />
                 {!!passwordErrors.password && (

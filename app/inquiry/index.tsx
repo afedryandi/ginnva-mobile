@@ -1,11 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
   Pressable,
   ScrollView,
   StyleSheet,
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -13,10 +13,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { Button } from '@/components/ui/Button';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { LinearGradient } from 'expo-linear-gradient';
+import { AuthField } from '@/components/auth/AuthShell';
+import { AppTextInput as TextInput } from '@/components/ui/AppText';
+import { PressableScale } from '@/components/ui/PressableScale';
+import { darkColors, spacing } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAppTheme } from '@/lib/theme-context';
+import { getLeadAttribution, LeadAttribution } from '@/lib/lead-attribution';
 
 // Halaman ini KHUSUS untuk produk yang belum dijual di Indonesia (Color
 // Change Film & Architectural Film) — sengaja terpisah dari /quotation
@@ -27,18 +31,12 @@ export default function ProductInquiryScreen() {
   const { theme, colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   // Dikirim dari CTA "Daftarkan Minat Saya" di halaman detail produk
-  // (app/products/[category].tsx) — ProductInquiry tidak punya kolom
-  // produk sendiri, jadi nama produknya di-prefill ke catatan supaya tim
-  // tetap tahu produk mana yang diminati tanpa customer perlu ketik ulang.
+  // (app/products/[category].tsx). Nama produk ditampilkan sebagai kartu
+  // read-only dan digabung ke pesan final saat submit (handleSubmit).
   const { product } = useLocalSearchParams<{ product?: string }>();
 
   const [customerName, setCustomerName] = useState('');
   const [customerContact, setCustomerContact] = useState('');
-  // Kosong murni untuk catatan bebas customer — nama produk TIDAK lagi
-  // di-prefill ke sini (field ini bisa diedit/dihapus bebas, sempat
-  // berisiko info produk hilang tanpa sengaja). Ditampilkan sebagai badge
-  // read-only terpisah (lihat JSX) dan digabung ke pesan final saat
-  // submit, lihat handleSubmit().
   const [message, setMessage] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
@@ -48,6 +46,11 @@ export default function ProductInquiryScreen() {
 
   const isFormValid = customerName.trim().length > 0 && customerContact.trim().length > 0;
 
+  const [attribution, setAttribution] = useState<LeadAttribution | undefined>(undefined);
+  useEffect(() => {
+    getLeadAttribution().then(setAttribution);
+  }, []);
+
   const handleSubmit = () => {
     if (!isFormValid) return;
 
@@ -55,8 +58,7 @@ export default function ProductInquiryScreen() {
     setSubmitError(null);
 
     // Info produk (kalau ada) SELALU disertakan di pesan yang dikirim,
-    // terlepas apa pun yang diketik/dihapus customer di field Catatan —
-    // supaya konteks produk yang diminati tidak pernah hilang begitu saja.
+    // terlepas apa pun yang diketik/dihapus customer di field Catatan.
     const finalMessage = [
       product ? `Produk yang diminati: ${product}` : null,
       message.trim() || null,
@@ -71,6 +73,7 @@ export default function ProductInquiryScreen() {
           customer_name: customerName.trim(),
           customer_contact: customerContact.trim(),
           message: finalMessage || undefined,
+          attribution,
         }),
       }
     )
@@ -82,124 +85,138 @@ export default function ProductInquiryScreen() {
         setSubmitError(
           err instanceof ApiError
             ? err.message
-            : 'Gagal mengirim. Periksa koneksi internet Anda dan coba lagi.'
+            : 'Gagal mengirim. Periksa koneksi internetmu dan coba lagi.'
         );
       })
       .finally(() => setSubmitting(false));
   };
 
-  const HeaderBar = () => (
-    <View style={styles.header}>
-      {router.canGoBack() ? (
-        <Pressable onPress={() => router.back()} style={styles.sideButton}>
-          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
-        </Pressable>
-      ) : (
-        <View style={styles.sideButton} />
-      )}
-      <Text style={styles.headerTitle} numberOfLines={1}>Tanya Produk</Text>
-      <View style={styles.sideButton} />
-    </View>
+  const glow = (
+    <LinearGradient pointerEvents="none" colors={[colors.accentSoft, 'transparent']} start={{ x: 1, y: 0 }} end={{ x: 0.2, y: 1 }} style={styles.glow} />
+  );
+
+  const backButton = router.canGoBack() ? (
+    <Pressable onPress={() => router.back()} style={styles.backButton} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kembali">
+      <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+    </Pressable>
+  ) : (
+    <View style={styles.backSpacer} />
   );
 
   if (success) {
     return (
-      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-        <HeaderBar />
+        {glow}
+        <View style={styles.topRow}>{backButton}</View>
         <View style={styles.centerState}>
-          <View style={styles.successIconWrap}>
-            <Ionicons name="checkmark" size={36} color="#ffffff" />
+          <View style={styles.successRing}>
+            <View style={styles.successIconWrap}>
+              <Ionicons name="checkmark" size={38} color="#ffffff" />
+            </View>
           </View>
           <Text style={styles.successTitle}>Pertanyaan Terkirim</Text>
-          {inquiryNumber && (
-            <Text style={styles.centerStateText}>
-              Nomor referensi: <Text style={styles.inquiryNumber}>{inquiryNumber}</Text>
-            </Text>
-          )}
           <Text style={styles.successNote}>
-            Tim kami akan menghubungi Anda begitu produk ini tersedia di
-            wilayah Anda.
+            Tim kami akan menghubungimu begitu produk ini tersedia di wilayahmu.
           </Text>
-          <Button
-            label="Kembali ke Beranda"
-            onPress={() => router.replace('/(tabs)' as never)}
-            style={styles.successButton}
-          />
+          {inquiryNumber ? (
+            <View style={styles.refCard}>
+              <Text style={styles.refLabel}>Nomor referensi</Text>
+              <Text style={styles.inquiryNumber} selectable>{inquiryNumber}</Text>
+            </View>
+          ) : null}
+          <PressableScale style={styles.primaryButton} onPress={() => router.replace('/(tabs)' as never)} accessibilityRole="button">
+            <Text style={styles.primaryButtonText}>Kembali ke Beranda</Text>
+          </PressableScale>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-      <HeaderBar />
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-        <View style={styles.noticeBox}>
-          <Ionicons name="information-circle" size={20} color={colors.accent} />
-          <Text style={styles.noticeText}>
+      {glow}
+      <View style={styles.topRow}>{backButton}</View>
+
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <Text style={styles.title}>Tanya Produk</Text>
+          <Text style={styles.subtitle}>
             {product
-              ? `${product} belum dijual secara resmi di Indonesia. Daftarkan minat Anda dan tim kami akan menghubungi begitu produk tersedia.`
-              : 'Color Change Film dan Architectural Film belum dijual secara resmi di Indonesia. Daftarkan minat Anda dan tim kami akan menghubungi begitu produk tersedia.'}
+              ? `${product} belum dijual secara resmi di Indonesia. Daftarkan minatmu dan tim kami akan menghubungi begitu produk tersedia.`
+              : 'Color Change Film dan Architectural Film belum dijual secara resmi di Indonesia. Daftarkan minatmu dan tim kami akan menghubungi begitu produk tersedia.'}
           </Text>
-        </View>
 
-        {!!product && (
-          <View style={styles.productBadge}>
-            <Ionicons name="pricetag-outline" size={14} color={colors.accent} />
-            <Text style={styles.productBadgeText}>Produk yang diminati: {product}</Text>
+          {!!product && (
+            <View style={styles.productCard}>
+              <View style={styles.productIcon}>
+                <Ionicons name="pricetag-outline" size={20} color={colors.accent} />
+              </View>
+              <View style={styles.productTextWrap}>
+                <Text style={styles.productHint}>Produk yang diminati</Text>
+                <Text style={styles.productName} numberOfLines={2}>{product}</Text>
+              </View>
+            </View>
+          )}
+
+          <View style={styles.stack}>
+            <AuthField label="Nama Lengkap *" icon="person-outline">
+              {(input) => (
+                <TextInput {...input} placeholder="Namamu" placeholderTextColor={colors.textMuted} value={customerName} onChangeText={setCustomerName} />
+              )}
+            </AuthField>
+            <AuthField label="Nomor WhatsApp / Email *" icon="chatbubble-ellipses-outline">
+              {(input) => (
+                <TextInput
+                  {...input}
+                  placeholder="08xxxxxxxxxx atau emailmu"
+                  placeholderTextColor={colors.textMuted}
+                  value={customerContact}
+                  onChangeText={setCustomerContact}
+                  autoCapitalize="none"
+                />
+              )}
+            </AuthField>
+            <AuthField label="Catatan (opsional)" icon="create-outline" multiline>
+              {(input) => (
+                <TextInput
+                  {...input}
+                  style={input.style}
+                  placeholder="Mis. produk yang diminati, kotamu, dsb."
+                  placeholderTextColor={colors.textMuted}
+                  value={message}
+                  onChangeText={setMessage}
+                  multiline
+                />
+              )}
+            </AuthField>
           </View>
-        )}
 
-        <View style={styles.formCard}>
-          <Text style={styles.fieldLabel}>Nama Lengkap *</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Nama Anda"
-            placeholderTextColor={colors.textMuted}
-            value={customerName}
-            onChangeText={setCustomerName}
-          />
-          <Text style={styles.fieldLabel}>Nomor WhatsApp / Email *</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="08xxxxxxxxxx atau email Anda"
-            placeholderTextColor={colors.textMuted}
-            value={customerContact}
-            onChangeText={setCustomerContact}
-          />
-          <Text style={styles.fieldLabel}>Catatan (opsional)</Text>
-          <TextInput
-            style={[styles.input, styles.textArea]}
-            placeholder="Mis. produk yang diminati, kota Anda, dsb."
-            placeholderTextColor={colors.textMuted}
-            value={message}
-            onChangeText={setMessage}
-            multiline
-            numberOfLines={3}
-          />
-        </View>
+          {submitError && (
+            <View style={styles.submitErrorBox}>
+              <Ionicons name="alert-circle" size={18} color={colors.danger} />
+              <Text style={styles.submitErrorText}>{submitError}</Text>
+            </View>
+          )}
 
-        {submitError && (
-          <View style={styles.submitErrorBox}>
-            <Ionicons name="alert-circle" size={16} color={colors.danger} />
-            <Text style={styles.submitErrorText}>{submitError}</Text>
-          </View>
-        )}
-
-        <Button
-          label="Kirim Pertanyaan"
-          onPress={handleSubmit}
-          disabled={!isFormValid}
-          loading={submitting}
-          style={styles.submitButton}
-        />
-        {!isFormValid && (
-          <Text style={styles.hintText}>Lengkapi nama dan kontak Anda.</Text>
-        )}
-      </ScrollView>
+          <PressableScale
+            style={[styles.primaryButton, (!isFormValid || submitting) && styles.buttonDisabled]}
+            onPress={handleSubmit}
+            disabled={!isFormValid || submitting}
+            accessibilityRole="button"
+          >
+            {submitting ? (
+              <ActivityIndicator color="#ffffff" />
+            ) : (
+              <>
+                <Text style={styles.primaryButtonText}>Kirim Pertanyaan</Text>
+                <Ionicons name="paper-plane-outline" size={18} color="#ffffff" />
+              </>
+            )}
+          </PressableScale>
+          {!isFormValid && <Text style={styles.hintText}>Lengkapi nama dan kontakmu.</Text>}
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -207,149 +224,42 @@ export default function ProductInquiryScreen() {
 
 function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-  flex: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.bg,
-  },
-  sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-  scrollContent: {
-    padding: spacing.md,
-    paddingBottom: spacing.xxl,
-  },
-  centerState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.xl,
-  },
-  centerStateText: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    textAlign: 'center',
-  },
-  noticeBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.sm,
-    backgroundColor: colors.accentSoft,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-  },
-  noticeText: {
-    flex: 1,
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    lineHeight: 19,
-  },
-  productBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    alignSelf: 'flex-start',
-    backgroundColor: colors.accentSoft,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    marginBottom: spacing.md,
-  },
-  productBadgeText: {
-    fontSize: fontSize.xs,
-    fontWeight: '600',
-    color: colors.accent,
-  },
-  formCard: {
-    marginBottom: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  fieldLabel: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    marginBottom: spacing.xs,
-    marginTop: spacing.sm,
-  },
-  input: {
-    height: 44,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-  },
-  textArea: {
-    height: 80,
-    paddingTop: spacing.sm,
-    textAlignVertical: 'top',
-  },
-  submitErrorBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.dangerBg,
-    borderRadius: radius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  submitErrorText: {
-    flex: 1,
-    fontSize: fontSize.sm,
-    color: colors.danger,
-  },
-  submitButton: {
-    marginTop: spacing.sm,
-  },
-  hintText: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    textAlign: 'center',
-    marginTop: spacing.sm,
-  },
-  successIconWrap: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.sm,
-  },
-  successTitle: {
-    fontSize: fontSize.xl,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  inquiryNumber: {
-    fontWeight: '800',
-    color: colors.accent,
-  },
-  successNote: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginTop: spacing.sm,
-    lineHeight: 19,
-  },
-  successButton: {
-    marginTop: spacing.lg,
-    width: '100%',
-  },
+    container: { flex: 1, backgroundColor: colors.bg },
+    flex: { flex: 1 },
+    glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 300 },
+
+    topRow: { flexDirection: 'row', alignItems: 'center', minHeight: 44, paddingHorizontal: 24, paddingTop: spacing.md, paddingBottom: spacing.sm },
+    backButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceElevated },
+    backSpacer: { width: 44, height: 44 },
+
+    scrollContent: { paddingHorizontal: 24, paddingTop: spacing.md, paddingBottom: 48, gap: 14 },
+    title: { fontSize: 30, lineHeight: 38, fontWeight: '800', letterSpacing: -0.8, color: colors.textPrimary },
+    subtitle: { fontSize: 14, lineHeight: 21, color: colors.textSecondary, marginBottom: 4 },
+    stack: { gap: 14 },
+
+    productCard: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14, borderRadius: 24, backgroundColor: colors.surfaceElevated },
+    productIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+    productTextWrap: { flex: 1, gap: 2 },
+    productHint: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
+    productName: { fontSize: 16, lineHeight: 21, fontWeight: '800', color: colors.textPrimary },
+
+    textArea: { minHeight: 84, paddingTop: 12, textAlignVertical: 'top' },
+
+    submitErrorBox: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: 20, backgroundColor: colors.dangerBg },
+    submitErrorText: { flex: 1, fontSize: 14, lineHeight: 20, color: colors.danger },
+
+    primaryButton: { flexDirection: 'row', gap: 8, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent, alignSelf: 'stretch', marginTop: 6 },
+    primaryButtonText: { fontSize: 16, fontWeight: '800', color: '#ffffff' },
+    buttonDisabled: { opacity: 0.4 },
+    hintText: { fontSize: 12, color: colors.textMuted, textAlign: 'center' },
+
+    centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 24, paddingBottom: 48 },
+    successRing: { width: 112, height: 112, borderRadius: 56, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft, marginBottom: 6 },
+    successIconWrap: { width: 76, height: 76, borderRadius: 38, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent },
+    successTitle: { fontSize: 28, lineHeight: 36, fontWeight: '800', letterSpacing: -0.7, color: colors.textPrimary, textAlign: 'center' },
+    successNote: { fontSize: 14, lineHeight: 21, color: colors.textSecondary, textAlign: 'center' },
+    refCard: { alignSelf: 'stretch', alignItems: 'center', gap: 4, paddingVertical: 18, borderRadius: 28, backgroundColor: colors.surfaceElevated },
+    refLabel: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
+    inquiryNumber: { fontSize: 22, fontWeight: '800', letterSpacing: 0.5, color: colors.accent },
   });
 }

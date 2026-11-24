@@ -1,15 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, FlatList, TextInput, Pressable, StyleSheet,
-  Platform, Image, ActivityIndicator, Modal, Linking, useWindowDimensions, Alert, Keyboard,
+  View, FlatList, Pressable, StyleSheet,
+  Platform, Image, ActivityIndicator, Modal, Linking, useWindowDimensions, Alert, Keyboard, AppState,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { AppText as Text, AppTextInput as TextInput } from '@/components/ui/AppText';
+import { PressableScale } from '@/components/ui/PressableScale';
+import { SheetModal, SheetButton, SheetTextInput } from '@/components/ui/SheetModal';
+import { AutoGrowTextInput } from '@/components/ui/AutoGrowTextInput';
+import { darkColors, spacing } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
 import { maybePromptAppReview } from '@/lib/app-review';
+import { useKeyboardLift } from '@/lib/use-keyboard-lift';
 import { useAppTheme } from '@/lib/theme-context';
 
 interface StoreInfo {
@@ -52,6 +58,23 @@ const REVIEW_TAGS: { key: string; label: string; polarity: 'positive' | 'negativ
 ];
 
 // ─── Types ───────────────────────────────────────────────────────────────────
+
+type BookingStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled';
+
+// Riwayat status booking (audit modul Booking Instalasi 2026-09-25, gap
+// "standar enterprise") — SEBELUMNYA customer cuma dapat push notif
+// SEKALI saat status berubah (lihat BookingObserver::updated() di
+// backend), tidak ada cara melihat ulang kapan pending→confirmed
+// terjadi kalau notifnya terlewat/dimatikan. Datanya dibaca dari
+// activity_log yang sudah lama tercatat, cuma baru sekarang
+// disurfacekan lewat endpoint messages ini (lihat
+// BookingMessageController::statusHistory() di backend).
+const STATUS_HISTORY_META: Record<BookingStatus, { label: string; icon: React.ComponentProps<typeof Ionicons>['name'] }> = {
+  pending: { label: 'Menunggu Konfirmasi', icon: 'time-outline' },
+  confirmed: { label: 'Dikonfirmasi Toko', icon: 'checkmark-circle-outline' },
+  completed: { label: 'Selesai', icon: 'flag-outline' },
+  cancelled: { label: 'Dibatalkan', icon: 'close-circle-outline' },
+};
 
 interface BookingMessage {
   id: number;
@@ -106,7 +129,13 @@ export default function CustomerBookingChatScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [messages, setMessages] = useState<BookingMessage[]>([]);
+  const [statusHistory, setStatusHistory] = useState<{ status: BookingStatus; changed_at: string }[]>([]);
+  const [statusHistoryExpanded, setStatusHistoryExpanded] = useState(false);
   const [currentStage, setCurrentStage] = useState<string | null>(null);
+  const [bookingStatus, setBookingStatus] = useState<BookingStatus | null>(null);
+  // Gagal memuat PERTAMA kali (status belum pernah diketahui): tampilkan error
+  // + coba lagi, bukan notice "menunggu konfirmasi" yang menyesatkan.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [secondaryStage, setSecondaryStage] = useState<string | null>(null);
   const [productKacaFilm, setProductKacaFilm] = useState(false);
   const [productPpf, setProductPpf] = useState(false);
@@ -120,17 +149,9 @@ export default function CustomerBookingChatScreen() {
   // layar ini — sama bug dengan app/staff/bookings/[id].tsx, lihat
   // catatan di sana. Pola manual ini sudah terbukti jalan di
   // components/ui/PickerModal.tsx. Ditemukan & diperbaiki 2026-08-28.
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-  useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSub = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates.height));
-    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-    };
-  }, []);
+  // Pengangkatan di atas keyboard dihitung dari seberapa banyak jendela sudah dikecilkan sistem (lihat lib/use-keyboard-lift.ts), supaya tidak
+  // terangkat dua kali: kolom pesan tidak melayang jauh di atas keyboard di perangkat yang jendelanya sudah mengecil sendiri.
+  const { lift: chatLift, onBoxLayout: onChatBoxLayout } = useKeyboardLift();
   const [viewerImage, setViewerImage] = useState<string | null>(null);
   // Beberapa foto tahap diambil staff dalam posisi HP portrait padahal
   // objeknya landscape (mis. bodi mobil) — tombol flip ini biarkan customer
@@ -173,9 +194,18 @@ export default function CustomerBookingChatScreen() {
   const [reviewComment, setReviewComment] = useState('');
   const [submittingReview, setSubmittingReview] = useState(false);
 
-  const fetchMessages = useCallback(() => {
+  // Polling incremental (?after_id=); penuh tiap ~1 menit. Tanpa argumen = penuh.
+  const lastMessageIdRef = useRef(0);
+  const pollTickRef = useRef(0);
+  const fetchSeqRef = useRef(0);
+
+  const fetchMessages = useCallback((incremental: boolean = false) => {
+    const seq = ++fetchSeqRef.current;
+    const afterId = incremental === true && lastMessageIdRef.current > 0 ? lastMessageIdRef.current : 0;
     return apiFetch<{
       data: {
+        status: BookingStatus;
+        status_history: { status: BookingStatus; changed_at: string }[];
         current_stage: string | null;
         secondary_stage: string | null;
         product_kaca_film: boolean;
@@ -185,18 +215,36 @@ export default function CustomerBookingChatScreen() {
         has_review: boolean;
         review: { sentiment: Sentiment; comment: string | null; created_at: string } | null;
       };
-    }>(`/api/customer/bookings/${bookingId}/messages`)
+    }>(`/api/customer/bookings/${bookingId}/messages${afterId ? `?after_id=${afterId}` : ''}`)
       .then((res) => {
-        setMessages(res.data.messages);
+        if (seq !== fetchSeqRef.current) return;
+        const incoming = res.data.messages;
+        if (afterId) {
+          if (incoming.length > 0) {
+            setMessages((prev) => {
+              const known = new Set(prev.map((m) => m.id));
+              return [...prev, ...incoming.filter((m) => !known.has(m.id))];
+            });
+          }
+        } else {
+          setMessages(incoming);
+          lastMessageIdRef.current = 0;
+        }
+        for (const m of incoming) {
+          if (m.id > lastMessageIdRef.current) lastMessageIdRef.current = m.id;
+        }
+        setStatusHistory(res.data.status_history ?? []);
         setCurrentStage(res.data.current_stage);
+        setBookingStatus(res.data.status);
         setSecondaryStage(res.data.secondary_stage);
         setProductKacaFilm(res.data.product_kaca_film);
         setProductPpf(res.data.product_ppf);
         setStore(res.data.store);
         setHasReview(res.data.has_review);
         setReview(res.data.review);
+        setLoadFailed(false);
       })
-      .catch(() => { /* silent, polling akan coba lagi */ });
+      .catch(() => { setLoadFailed(true); /* polling akan coba lagi */ });
   }, [bookingId]);
 
   const handleReview = () => {
@@ -231,14 +279,14 @@ export default function CustomerBookingChatScreen() {
         if (res.data.suggest_google_review && store?.google_place_id) {
           Alert.alert(
             'Terima kasih!',
-            `Senang mendengarnya! Mau bagikan juga pengalamanmu di Google untuk ${store.name}?`,
+            `Mau bagikan juga pengalamanmu di Google untuk ${store.name}? Ulasan apa pun, positif maupun masukan, sangat membantu.`,
             [
               { text: 'Nanti Saja', style: 'cancel' },
               { text: 'Beri Ulasan Google', onPress: handleReview },
             ],
           );
         } else {
-          Alert.alert('Terima kasih!', 'Ulasan kamu sudah kami terima dan akan jadi masukan buat kami.');
+          Alert.alert('Terima kasih!', 'Ulasanmu sudah kami terima dan akan jadi masukan buat kami.');
         }
       })
       .catch((err) => {
@@ -250,8 +298,23 @@ export default function CustomerBookingChatScreen() {
 
   useEffect(() => {
     fetchMessages().finally(() => setLoading(false));
-    const interval = setInterval(fetchMessages, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+    // Polling dijeda saat app di background (diperbaiki 2026-10-02) --
+    // sebelumnya jalan terus tiap 5 detik walau layar tidak terlihat.
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (!interval) {
+        interval = setInterval(() => {
+          pollTickRef.current += 1;
+          fetchMessages(pollTickRef.current % 12 !== 0);
+        }, POLL_INTERVAL_MS);
+      }
+    };
+    const stop = () => { if (interval) { clearInterval(interval); interval = null; } };
+    start();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') { fetchMessages(); start(); } else { stop(); }
+    });
+    return () => { stop(); sub.remove(); };
   }, [fetchMessages]);
 
   // Momen kepuasan tertinggi: booking baru saja mencapai tahap "Selesai".
@@ -275,21 +338,29 @@ export default function CustomerBookingChatScreen() {
     })
       .then(() => fetchMessages())
       .then(() => setTimeout(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }), 100))
+      .catch((err) => {
+        // Kembalikan teks ke input supaya tidak hilang (diperbaiki
+        // 2026-10-02) -- sebelumnya input dikosongkan dan kegagalan
+        // tidak ditangani sama sekali.
+        setInput(trimmed);
+        Alert.alert('Pesan Gagal Terkirim', err instanceof Error ? err.message : 'Periksa koneksi internetmu, lalu coba lagi.');
+      })
       .finally(() => setSending(false));
   };
 
+  // Kepala: sorotan merah lembut, tombol kembali bulat, dan judul besar (sama dengan layar lain yang sudah didesain ulang).
   const HeaderBar = () => (
-    <View style={styles.header}>
-      {router.canGoBack() ? (
-        <Pressable onPress={() => router.back()} style={styles.sideButton}>
-          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
-        </Pressable>
-      ) : (
-        <View style={styles.sideButton} />
-      )}
-      <Text style={styles.headerTitle} numberOfLines={1}>Progress Instalasi</Text>
-      <View style={styles.sideButton} />
-    </View>
+    <>
+      <LinearGradient pointerEvents="none" colors={[colors.accentSoft, 'transparent']} start={{ x: 1, y: 0 }} end={{ x: 0.2, y: 1 }} style={styles.glow} />
+      <View style={styles.topRow}>
+        {router.canGoBack() ? (
+          <Pressable onPress={() => router.back()} style={styles.backButton} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kembali">
+            <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+          </Pressable>
+        ) : null}
+        <Text style={styles.topTitle} numberOfLines={1}>Progress Instalasi</Text>
+      </View>
+    </>
   );
 
   if (loading) {
@@ -335,7 +406,7 @@ export default function CustomerBookingChatScreen() {
       <View key={label ?? 'shared'}>
         {label && <Text style={styles.stageTrackLabel}>{label}</Text>}
         <View style={styles.stageTrackWrap}>
-          <View style={styles.stageLineTrack} pointerEvents="none">
+          <View style={[styles.stageLineTrack, { left: `${50 / trackStages.length}%`, right: `${50 / trackStages.length}%` }]} pointerEvents="none">
             <View style={styles.stageLineBg} />
             <View
               style={[
@@ -351,7 +422,7 @@ export default function CustomerBookingChatScreen() {
               return (
                 <View key={s.key} style={styles.stageStep}>
                   <View style={[styles.stageDot, isDone && styles.stageDotActive]}>
-                    <Ionicons name={s.icon} size={12} color={isDone ? '#ffffff' : colors.textMuted} />
+                    <Ionicons name={s.icon} size={14} color={isDone ? '#ffffff' : colors.textMuted} />
                   </View>
                   <Text style={[styles.stageLabel, isCurrent && styles.stageLabelActive]}>{s.label}</Text>
                 </View>
@@ -378,6 +449,8 @@ export default function CustomerBookingChatScreen() {
           <Pressable
             hitSlop={10}
             onPress={(e) => { e.stopPropagation(); setReviewBannerDismissed(true); }}
+            accessibilityRole="button"
+            accessibilityLabel="Tutup ajakan ulasan"
           >
             <Ionicons name="close" size={18} color={colors.textMuted} />
           </Pressable>
@@ -393,7 +466,7 @@ export default function CustomerBookingChatScreen() {
           <Ionicons name={SENTIMENT_META[review.sentiment].icon} size={20} color={colors.accent} />
           <View style={{ flex: 1 }}>
             <Text style={styles.reviewSummaryTitle}>
-              Ulasan kamu: {SENTIMENT_META[review.sentiment].label}
+              Ulasanmu: {SENTIMENT_META[review.sentiment].label}
             </Text>
             {review.comment ? (
               <Text style={styles.reviewSummaryComment} numberOfLines={2}>{review.comment}</Text>
@@ -402,22 +475,75 @@ export default function CustomerBookingChatScreen() {
         </View>
       )}
 
-      {!currentStage && (
+      {statusHistory.length > 0 && (
+        <View style={styles.stageCard}>
+          <Pressable
+            style={styles.stageSummaryRow}
+            onPress={() => setStatusHistoryExpanded((v) => !v)}
+            accessibilityRole="button"
+            accessibilityLabel="Riwayat status booking"
+            accessibilityState={{ expanded: statusHistoryExpanded }}
+          >
+            <View style={styles.stageSummaryIcon}><Ionicons name="receipt-outline" size={16} color={colors.accent} /></View>
+            <Text style={styles.stageSummaryText} numberOfLines={1}>
+              Riwayat Status Booking
+            </Text>
+            <Ionicons
+              name={statusHistoryExpanded ? 'chevron-up' : 'chevron-down'}
+              size={16}
+              color={colors.textMuted}
+            />
+          </Pressable>
+          {statusHistoryExpanded && (
+            <View style={styles.stageCardBody}>
+              {statusHistory.map((entry, i) => {
+                const meta = STATUS_HISTORY_META[entry.status];
+                return (
+                  <View key={`${entry.status}-${entry.changed_at}-${i}`} style={styles.statusHistoryRow}>
+                    <Ionicons name={meta.icon} size={16} color={colors.accent} />
+                    <Text style={styles.statusHistoryLabel}>{meta.label}</Text>
+                    <Text style={styles.statusHistoryTime}>{formatDateTime(entry.changed_at)}</Text>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+        </View>
+      )}
+
+      {loadFailed && bookingStatus === null && (
+        <View style={styles.pendingNotice}>
+          <Ionicons name="alert-circle-outline" size={16} color={colors.danger} />
+          <Text style={styles.pendingNoticeText}>Tidak bisa memuat status booking. Periksa koneksi internetmu.</Text>
+          <Pressable onPress={() => { fetchMessages(); }} accessibilityRole="button" accessibilityLabel="Coba lagi memuat">
+            <Text style={[styles.pendingNoticeText, { color: colors.accent, fontWeight: '600' }]}>Coba lagi</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {!(loadFailed && bookingStatus === null) && !currentStage && !secondaryStage && (
         <View style={styles.pendingNotice}>
           <Ionicons name="time-outline" size={16} color={colors.textSecondary} />
           <Text style={styles.pendingNoticeText}>
-            Booking Anda sedang menunggu konfirmasi toko. Progress instalasi akan muncul di sini begitu toko mengonfirmasi jadwal Anda.
+            {bookingStatus === 'cancelled'
+              ? 'Booking ini sudah dibatalkan.'
+              : bookingStatus === 'confirmed'
+                ? 'Bookingmu sudah dikonfirmasi. Progress instalasi akan muncul di sini begitu pengerjaan dimulai.'
+                : 'Bookingmu sedang menunggu konfirmasi toko. Progress instalasi akan muncul di sini begitu toko mengonfirmasi jadwalmu.'}
           </Text>
         </View>
       )}
 
-      {currentStage && (
+      {(currentStage || secondaryStage) && (
         <View style={styles.stageCard}>
           <Pressable
             style={styles.stageSummaryRow}
             onPress={() => setStageCardExpanded((v) => !v)}
+            accessibilityRole="button"
+            accessibilityLabel="Ringkasan tahap pengerjaan"
+            accessibilityState={{ expanded: stageCardExpanded }}
           >
-            <Ionicons name="flag-outline" size={14} color={colors.accent} />
+            <View style={styles.stageSummaryIcon}><Ionicons name="flag-outline" size={16} color={colors.accent} /></View>
             <Text style={styles.stageSummaryText} numberOfLines={1}>{stageSummaryLabel}</Text>
             <Ionicons
               name={stageCardExpanded ? 'chevron-up' : 'chevron-down'}
@@ -435,7 +561,8 @@ export default function CustomerBookingChatScreen() {
         </View>
       )}
 
-      <View style={[styles.flex, { marginBottom: keyboardHeight }]}>
+      <View style={styles.flex} onLayout={onChatBoxLayout}>
+      <View style={[styles.flex, { marginBottom: chatLift }]}>
         <FlatList
           ref={listRef}
           // Sama bug dengan layar chat staff — tanpa style={flex:1} list
@@ -459,19 +586,23 @@ export default function CustomerBookingChatScreen() {
         />
 
         {/* +spacing.sm ekstra — sama alasan dengan layar chat staff. */}
+        {bookingStatus !== 'cancelled' && (
         <View style={[styles.inputBar, { paddingBottom: (insets.bottom > 0 ? insets.bottom : spacing.sm) + spacing.sm }]}>
-          <TextInput
+          <AutoGrowTextInput
             style={styles.input}
+            minHeight={48}
+            maxHeight={110}
             placeholder="Ketik pesan ke toko..."
             placeholderTextColor={colors.textMuted}
             value={input}
             onChangeText={setInput}
-            multiline
           />
-          <Pressable style={styles.sendBtn} onPress={handleSend} disabled={sending || !input.trim()}>
+          <Pressable style={styles.sendBtn} onPress={handleSend} disabled={sending || !input.trim()} accessibilityRole="button" accessibilityLabel="Kirim pesan" accessibilityState={{ disabled: sending || !input.trim(), busy: sending }}>
             {sending ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="send" size={18} color="#ffffff" />}
           </Pressable>
         </View>
+        )}
+      </View>
       </View>
 
       {/* Lightbox — tap foto untuk lihat ukuran penuh */}
@@ -496,116 +627,88 @@ export default function CustomerBookingChatScreen() {
               <Ionicons name="phone-landscape-outline" size={22} color="#ffffff" />
             </Pressable>
           )}
-          <Pressable style={styles.viewerCloseBtn} onPress={() => setViewerImage(null)}>
+          <Pressable style={styles.viewerCloseBtn} onPress={() => setViewerImage(null)} accessibilityRole="button" accessibilityLabel="Tutup foto">
             <Ionicons name="close" size={26} color="#ffffff" />
           </Pressable>
         </Pressable>
       </Modal>
 
-      {/* Review internal — sentimen + tag aspek + komentar opsional. */}
-      <Modal
+      {/* Review internal — sentimen + tag aspek + komentar opsional. Memakai SheetModal bersama (lihat components/ui/SheetModal.tsx). */}
+      <SheetModal
         visible={reviewModalOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setReviewModalOpen(false)}
+        onClose={() => setReviewModalOpen(false)}
+        icon="star-outline"
+        title="Bagaimana pengalamanmu?"
+        subtitle={store?.name ? `Ceritakan pengalamanmu di ${store.name}.` : 'Ceritakan pengalamanmu.'}
+        actions={
+          reviewSentiment ? (
+            <SheetButton label="Kirim Ulasan" variant="primary" onPress={handleSubmitReview} loading={submittingReview} />
+          ) : (
+            <SheetButton label="Nanti Saja" onPress={() => setReviewModalOpen(false)} />
+          )
+        }
       >
-        <View style={styles.reviewModalBackdrop}>
-          {/* SEBELUMNYA padding bawah cuma spacing.lg tetap, tidak
-              mempertimbangkan navigation bar Android 3-tombol — tombol
-              "Kirim Ulasan" ketutup nav bar di device begitu. Ditemukan
-              & diperbaiki 2026-08-28. */}
-          <View style={[styles.reviewModalCard, { paddingBottom: spacing.lg + (insets.bottom > 0 ? insets.bottom : spacing.md) }]}>
-            <View style={styles.reviewModalHeader}>
-              <Text style={styles.reviewModalTitle}>Bagaimana pengalamanmu?</Text>
-              <Pressable onPress={() => setReviewModalOpen(false)}>
-                <Ionicons name="close" size={24} color={colors.textMuted} />
-              </Pressable>
-            </View>
-
-            <View style={styles.reviewSentimentRow}>
-              {(Object.entries(SENTIMENT_META) as [Sentiment, typeof SENTIMENT_META[Sentiment]][]).map(([key, opt]) => {
-                const active = reviewSentiment === key;
-                return (
-                  <Pressable
-                    key={key}
-                    style={[styles.reviewSentimentBtn, active && styles.reviewSentimentBtnActive]}
-                    onPress={() => {
-                      setReviewSentiment(key);
-                      // Reset tag yang sudah dipilih — kalau tidak, tag
-                      // dari polaritas sebelumnya (mis. "Proses Lambat"
-                      // waktu masih pilih "Kurang Puas") tetap tersimpan
-                      // di state & ikut terkirim diam-diam walau sudah
-                      // tidak terlihat lagi setelah ganti ke "Puas".
-                      setReviewTags([]);
-                    }}
-                  >
-                    <Ionicons name={opt.icon} size={26} color={active ? '#ffffff' : colors.textPrimary} />
-                    <Text style={[styles.reviewSentimentLabel, active && styles.reviewSentimentLabelActive]}>
-                      {opt.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            {reviewSentiment && (
-              <>
-                <Text style={styles.reviewSectionLabel}>Apa yang paling terasa? (opsional)</Text>
-                <View style={styles.reviewTagsWrap}>
-                  {REVIEW_TAGS.filter((tag) => reviewSentiment === 'neutral' || tag.polarity === reviewSentiment).map((tag) => {
-                    const active = reviewTags.includes(tag.key);
-                    return (
-                      <Pressable
-                        key={tag.key}
-                        style={[styles.reviewTagChip, active && styles.reviewTagChipActive]}
-                        onPress={() => toggleReviewTag(tag.key)}
-                      >
-                        <Text style={[styles.reviewTagChipText, active && styles.reviewTagChipTextActive]}>
-                          {tag.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-
-                <View style={styles.reviewSectionLabelRow}>
-                  <Text style={styles.reviewSectionLabel}>Komentar tambahan (opsional)</Text>
-                  {/* Sebelumnya tidak ada validasi panjang di client sama
-                      sekali — baru gagal setelah request ke server kalau
-                      user paste teks sangat panjang. Backend membatasi
-                      max:2000 (lihat StoreReviewController::store()).
-                      Lihat audit modul Review Toko 2026-08-27. */}
-                  <Text style={styles.reviewCharCount}>
-                    {reviewComment.length}/{REVIEW_COMMENT_MAX_LENGTH}
-                  </Text>
-                </View>
-                <TextInput
-                  style={styles.reviewCommentInput}
-                  placeholder="Ceritakan pengalamanmu lebih lanjut..."
-                  placeholderTextColor={colors.textMuted}
-                  value={reviewComment}
-                  onChangeText={setReviewComment}
-                  maxLength={REVIEW_COMMENT_MAX_LENGTH}
-                  multiline
-                  numberOfLines={3}
-                />
-
-                <Pressable
-                  style={[styles.reviewSubmitBtn, submittingReview && styles.reviewSubmitBtnDisabled]}
-                  onPress={handleSubmitReview}
-                  disabled={submittingReview}
-                >
-                  {submittingReview ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
-                  ) : (
-                    <Text style={styles.reviewSubmitBtnText}>Kirim Ulasan</Text>
-                  )}
-                </Pressable>
-              </>
-            )}
-          </View>
+        <View style={styles.reviewSentimentRow}>
+          {(Object.entries(SENTIMENT_META) as [Sentiment, typeof SENTIMENT_META[Sentiment]][]).map(([key, opt]) => {
+            const active = reviewSentiment === key;
+            return (
+              <PressableScale
+                key={key}
+                style={[styles.reviewSentimentBtn, active && styles.reviewSentimentBtnActive]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                onPress={() => {
+                  setReviewSentiment(key);
+                  // Reset tag yang sudah dipilih — kalau tidak, tag
+                  // dari polaritas sebelumnya (mis. "Proses Lambat"
+                  // waktu masih pilih "Kurang Puas") tetap tersimpan
+                  // di state & ikut terkirim diam-diam walau sudah
+                  // tidak terlihat lagi setelah ganti ke "Puas".
+                  setReviewTags([]);
+                }}
+              >
+                <Ionicons name={opt.icon} size={32} color={active ? '#ffffff' : colors.accent} />
+                <Text style={[styles.reviewSentimentLabel, active && styles.reviewSentimentLabelActive]}>{opt.label}</Text>
+              </PressableScale>
+            );
+          })}
         </View>
-      </Modal>
+
+        {reviewSentiment ? (
+          <>
+            <View style={{ gap: 10 }}>
+              <Text style={styles.reviewSectionLabel}>Apa yang paling terasa? <Text style={styles.reviewOptional}>(opsional)</Text></Text>
+              <View style={styles.reviewTagsWrap}>
+                {REVIEW_TAGS.filter((tag) => reviewSentiment === 'neutral' || tag.polarity === reviewSentiment).map((tag) => {
+                  const active = reviewTags.includes(tag.key);
+                  return (
+                    <PressableScale
+                      key={tag.key}
+                      style={[styles.reviewTagChip, active && styles.reviewTagChipActive]}
+                      onPress={() => toggleReviewTag(tag.key)}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: active }}
+                    >
+                      {active ? <Ionicons name="checkmark" size={14} color="#ffffff" /> : null}
+                      <Text style={[styles.reviewTagChipText, active && styles.reviewTagChipTextActive]}>{tag.label}</Text>
+                    </PressableScale>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* Backend membatasi komentar max:2000 (StoreReviewController::store()); hitungan karakter menampilkannya. */}
+            <SheetTextInput
+              label="Komentar tambahan (opsional)"
+              placeholder="Ceritakan pengalamanmu lebih lanjut..."
+              value={reviewComment}
+              onChangeText={setReviewComment}
+              maxLength={REVIEW_COMMENT_MAX_LENGTH}
+              multiline
+            />
+          </>
+        ) : null}
+      </SheetModal>
     </SafeAreaView>
   );
 }
@@ -708,263 +811,104 @@ function PhotoGrid({
 
 function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
-  flex: { flex: 1 },
-  centerState: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    container: { flex: 1, backgroundColor: colors.bg },
+    flex: { flex: 1 },
+    centerState: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 260 },
 
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.bg,
-  },
-  sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
+    topRow: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 44, paddingHorizontal: 24, paddingTop: spacing.md, paddingBottom: spacing.sm },
+    backButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceElevated },
+    topTitle: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5, color: colors.textPrimary },
 
-  reviewBanner: {
-    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
-    padding: spacing.md, backgroundColor: colors.accentSoft,
-    borderBottomWidth: 1, borderBottomColor: colors.border,
-  },
-  reviewBannerTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
-  reviewBannerSubtitle: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
+    // Kartu-kartu di atas percakapan: sudut besar, tanpa bingkai, berjarak dari tepi layar.
+    reviewBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: 24, marginBottom: 10, padding: 14, borderRadius: 22, backgroundColor: colors.accentSoft },
+    reviewBannerTitle: { fontSize: 14, fontWeight: '800', color: colors.textPrimary },
+    reviewBannerSubtitle: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
 
-  reviewSummaryCard: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm,
-    padding: spacing.md, backgroundColor: colors.surface,
-    borderBottomWidth: 1, borderBottomColor: colors.border,
-  },
-  reviewSummaryTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
-  reviewSummaryComment: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
+    reviewSummaryCard: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginHorizontal: 24, marginBottom: 10, padding: 14, borderRadius: 22, backgroundColor: colors.surfaceElevated },
+    reviewSummaryTitle: { fontSize: 14, fontWeight: '800', color: colors.textPrimary },
+    reviewSummaryComment: { fontSize: 12, lineHeight: 18, color: colors.textSecondary, marginTop: 2 },
 
-  reviewModalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  reviewModalCard: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
-    padding: spacing.lg,
-    maxHeight: '85%',
-  },
-  reviewModalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing.md,
-  },
-  reviewModalTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary },
-  reviewSentimentRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  reviewSentimentBtn: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: 4,
-  },
-  reviewSentimentBtnActive: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
-  },
-  reviewSentimentLabel: { fontSize: fontSize.xs, color: colors.textPrimary, fontWeight: '600' },
-  reviewSentimentLabelActive: { color: '#ffffff' },
-  reviewSectionLabel: {
-    fontSize: fontSize.sm,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    marginBottom: spacing.sm,
-    marginTop: spacing.sm,
-  },
-  reviewSectionLabelRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  reviewCharCount: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    marginTop: spacing.sm,
-  },
-  reviewTagsWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  reviewTagChip: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: radius.pill ?? 999,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  reviewTagChipActive: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
-  },
-  reviewTagChipText: { fontSize: fontSize.xs, color: colors.textPrimary },
-  reviewTagChipTextActive: { color: '#ffffff', fontWeight: '600' },
-  reviewCommentInput: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-    textAlignVertical: 'top',
-    minHeight: 80,
-  },
-  reviewSubmitBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.md,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-    marginTop: spacing.lg,
-  },
-  reviewSubmitBtnDisabled: { opacity: 0.6 },
-  reviewSubmitBtnText: { color: '#ffffff', fontWeight: '700', fontSize: fontSize.sm },
+    // Isi lembar ulasan (kerangka lembar ada di SheetModal).
+    reviewSentimentRow: { flexDirection: 'row', gap: 10 },
+    reviewSentimentBtn: { flex: 1, alignItems: 'center', paddingVertical: 18, borderRadius: 24, gap: 8, backgroundColor: colors.surfaceElevated },
+    reviewSentimentBtnActive: { backgroundColor: colors.accent },
+    reviewSentimentLabel: { fontSize: 13, color: colors.textPrimary, fontWeight: '700' },
+    reviewSentimentLabelActive: { color: '#ffffff', fontWeight: '800' },
+    reviewSectionLabel: { fontSize: 14, fontWeight: '800', color: colors.textPrimary },
+    reviewOptional: { fontWeight: '500', color: colors.textMuted },
+    reviewTagsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    reviewTagChip: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 40, paddingHorizontal: 16, borderRadius: 20, backgroundColor: colors.surfaceElevated },
+    reviewTagChipActive: { backgroundColor: colors.accent },
+    reviewTagChipText: { fontSize: 13, fontWeight: '600', color: colors.textPrimary },
+    reviewTagChipTextActive: { color: '#ffffff', fontWeight: '800' },
 
-  pendingNotice: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm,
-    paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1, borderBottomColor: colors.border,
-  },
-  pendingNoticeText: {
-    flex: 1, fontSize: fontSize.xs, color: colors.textSecondary, lineHeight: 17,
-  },
-  stageCard: {
-    paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
-    backgroundColor: colors.surface,
-  },
-  stageSummaryRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingVertical: 4,
-  },
-  stageSummaryText: { flex: 1, fontSize: fontSize.xs, fontWeight: '700', color: colors.textPrimary },
-  stageCardBody: { gap: spacing.sm, marginTop: spacing.xs },
-  stageTrackWrap: { position: 'relative' },
-  stageTrackLabel: {
-    fontSize: 10, fontWeight: '700', color: colors.textMuted,
-    textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4,
-  },
-  // Garis dirender terpisah dari dot, absolute di belakang — supaya
-  // posisi dot/label (diatur murni oleh flex row + alignItems:center)
-  // tidak pernah kegeser oleh perhitungan garis. Insetnya 10% kiri-kanan
-  // karena tiap dot center ada di tengah segmen 1/5 lebar (5 tahap).
-  stageLineTrack: {
-    position: 'absolute', top: 10, left: '10%', right: '10%', height: 2,
-  },
-  stageLineBg: { position: 'absolute', left: 0, right: 0, height: 2, backgroundColor: colors.border },
-  stageLineFg: { position: 'absolute', left: 0, height: 2, backgroundColor: colors.accent },
-  stageDotsRow: { flexDirection: 'row' },
-  stageStep: { flex: 1, alignItems: 'center' },
-  stageDot: {
-    width: 22, height: 22, borderRadius: 11, backgroundColor: colors.border,
-    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-  },
-  stageDotActive: { backgroundColor: colors.accent },
-  stageLabel: { fontSize: 9, color: colors.textMuted, marginTop: 4, textAlign: 'center' },
-  stageLabelActive: { color: colors.accent, fontWeight: '700' },
+    pendingNotice: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginHorizontal: 24, marginBottom: 10, padding: 14, borderRadius: 20, backgroundColor: colors.surfaceElevated },
+    pendingNoticeText: { flex: 1, fontSize: 13, lineHeight: 19, color: colors.textSecondary },
 
-  messageList: { padding: spacing.md, gap: spacing.md },
+    stageCard: { marginHorizontal: 24, marginBottom: 10, paddingHorizontal: 16, paddingVertical: 6, borderRadius: 22, backgroundColor: colors.surfaceElevated },
+    stageSummaryRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 44 },
+    stageSummaryIcon: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+    stageSummaryText: { flex: 1, fontSize: 14, fontWeight: '800', color: colors.textPrimary },
+    stageCardBody: { gap: 16, paddingTop: 6, paddingBottom: 12 },
+    statusHistoryRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    statusHistoryLabel: { flex: 1, fontSize: 13, fontWeight: '700', color: colors.textPrimary },
+    statusHistoryTime: { fontSize: 12, color: colors.textMuted },
+    stageTrackWrap: { position: 'relative' },
+    stageTrackLabel: { fontSize: 11, fontWeight: '800', color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 },
+    // Garis dirender terpisah dari titik, absolut di belakangnya, supaya posisi titik dan label tidak bergeser oleh perhitungan garis.
+    // Inset kiri-kanan dihitung per jumlah tahap (lihat renderTrack).
+    stageLineTrack: { position: 'absolute', top: 13, height: 3 },
+    stageLineBg: { position: 'absolute', left: 0, right: 0, height: 3, borderRadius: 2, backgroundColor: colors.borderStrong },
+    stageLineFg: { position: 'absolute', left: 0, height: 3, borderRadius: 2, backgroundColor: colors.accent },
+    stageDotsRow: { flexDirection: 'row' },
+    stageStep: { flex: 1, alignItems: 'center' },
+    stageDot: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.bg, borderWidth: 2, borderColor: colors.borderStrong, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+    stageDotActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+    stageLabel: { fontSize: 12, color: colors.textMuted, marginTop: 6, textAlign: 'center' },
+    stageLabelActive: { color: colors.accent, fontWeight: '800' },
 
-  // alignItems per sisi WAJIB diisi eksplisit — default RN 'stretch'
-  // bikin child (bubble, senderLabel, jam) menyesuaikan lebar sibling
-  // TERLEBAR (nama pengirim), sama bug yang sudah diperbaiki di layar
-  // chat staff (app/staff/bookings/[id].tsx). Ditemukan & diperbaiki
-  // 2026-08-28.
-  bubbleWrap: { maxWidth: '78%', gap: 3 },
-  bubbleWrapLeft: { alignSelf: 'flex-start', alignItems: 'flex-start' },
-  bubbleWrapRight: { alignSelf: 'flex-end', alignItems: 'flex-end' },
-  senderLabel: { fontSize: 10, fontWeight: '700', color: colors.textMuted, marginLeft: 6 },
-  bubble: {
-    borderRadius: radius.lg, padding: spacing.sm, overflow: 'hidden',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 3,
-    elevation: 1,
-  },
-  bubbleAdmin: { backgroundColor: colors.surface, borderBottomLeftRadius: 4, borderWidth: 1, borderColor: colors.border },
-  bubbleCustomerSelf: { backgroundColor: colors.accent, borderBottomRightRadius: 4 },
-  bubbleText: { fontSize: fontSize.sm, color: colors.textPrimary, lineHeight: 20 },
-  bubbleTextSelf: { color: '#ffffff' },
-  bubblePhoto: { width: 200, height: 150, borderRadius: radius.sm, marginBottom: 6 },
-  messageTime: { fontSize: 10, color: colors.textMuted, alignSelf: 'flex-end', marginRight: 4 },
+    messageList: { paddingHorizontal: 24, paddingVertical: 16, gap: 14 },
 
-  // Kartu milestone tahap — dulu pill kecil mengambang + foto terpisah,
-  // sekarang 1 kartu utuh (ikon, judul tahap, waktu, foto) supaya progress
-  // instalasi terasa seperti pencapaian, gampang dipindai saat scroll.
-  stageCardWrap: { marginVertical: spacing.xs },
-  stageCardMsg: {
-    backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.accent + '33',
-    padding: spacing.sm, gap: spacing.xs,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 3,
-    elevation: 1,
-  },
-  stageCardHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  stageCardIconWrap: {
-    width: 28, height: 28, borderRadius: 14, backgroundColor: colors.accentSoft,
-    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-  },
-  stageCardHeaderText: { flex: 1 },
-  stageCardEyebrow: {
-    fontSize: 9, fontWeight: '700', color: colors.textMuted,
-    textTransform: 'uppercase', letterSpacing: 0.5,
-  },
-  stageCardTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary, marginTop: 1 },
-  stageCardTime: { fontSize: 10, color: colors.textMuted },
-  stagePhoto: { width: '100%', height: 180, borderRadius: radius.md },
+    // alignItems per sisi WAJIB diisi eksplisit: default RN 'stretch' membuat child (gelembung, nama pengirim, jam) menyesuaikan lebar
+    // sibling terlebar (nama pengirim), sama bug yang sudah diperbaiki di layar chat staff.
+    bubbleWrap: { maxWidth: '80%', gap: 4 },
+    bubbleWrapLeft: { alignSelf: 'flex-start', alignItems: 'flex-start' },
+    bubbleWrapRight: { alignSelf: 'flex-end', alignItems: 'flex-end' },
+    senderLabel: { fontSize: 12, fontWeight: '700', color: colors.textMuted, marginLeft: 8 },
+    bubble: { borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, overflow: 'hidden' },
+    bubbleAdmin: { backgroundColor: colors.surfaceElevated, borderBottomLeftRadius: 6 },
+    bubbleCustomerSelf: { backgroundColor: colors.accent, borderBottomRightRadius: 6 },
+    bubbleText: { fontSize: 15, color: colors.textPrimary, lineHeight: 21 },
+    bubbleTextSelf: { color: '#ffffff' },
+    bubblePhoto: { width: 200, height: 150, borderRadius: 14, marginBottom: 6 },
+    messageTime: { fontSize: 11, color: colors.textMuted, marginHorizontal: 6 },
 
-  photoGrid: {
-    flexDirection: 'row', flexWrap: 'wrap', gap: 4,
-    width: 200, marginBottom: 6,
-  },
-  photoGridInCard: {
-    flexDirection: 'row', flexWrap: 'wrap', gap: 4,
-  },
-  photoGridItem: { width: 98, height: 98, borderRadius: radius.sm },
-  // Beda dari grid di bubble (lebar tetap 200) — kartu tahap full-width,
-  // jadi item grid pakai flexBasis persen supaya rapi mengisi lebar kartu
-  // berapa pun jumlah fotonya (3 per baris).
-  photoGridItemWrap: { flexBasis: '32%', flexGrow: 1 },
-  photoGridItemInCard: { width: '100%', aspectRatio: 1, borderRadius: radius.sm },
+    // Kartu tahap selesai: ikon, judul, waktu, dan foto dalam satu kartu supaya mudah dipindai saat menggulir.
+    stageCardWrap: { marginVertical: 4 },
+    stageCardMsg: { padding: 14, gap: 12, borderRadius: 24, backgroundColor: colors.surfaceElevated },
+    stageCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    stageCardIconWrap: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+    stageCardHeaderText: { flex: 1 },
+    stageCardEyebrow: { fontSize: 11, fontWeight: '800', color: colors.accent, textTransform: 'uppercase', letterSpacing: 0.8 },
+    stageCardTitle: { fontSize: 15, fontWeight: '800', color: colors.textPrimary, marginTop: 2 },
+    stageCardTime: { fontSize: 12, color: colors.textMuted },
+    stagePhoto: { width: '100%', height: 190, borderRadius: 18 },
 
-  viewerBackdrop: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center',
-  },
-  viewerImage: { width: '100%', height: '80%' },
-  viewerCloseBtn: {
-    position: 'absolute', top: 48, right: 20, width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center',
-  },
-  viewerRotateBtn: {
-    position: 'absolute', top: 48, right: 68, width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center',
-  },
+    photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, width: 200, marginBottom: 6 },
+    photoGridInCard: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+    photoGridItem: { width: 98, height: 98, borderRadius: 12 },
+    // Beda dari grid di gelembung (lebar tetap 200): kartu tahap selebar layar, jadi item grid memakai flexBasis persen (3 per baris).
+    photoGridItemWrap: { flexBasis: '31%', flexGrow: 1 },
+    photoGridItemInCard: { width: '100%', aspectRatio: 1, borderRadius: 14 },
 
-  inputBar: {
-    flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm,
-    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.bg,
-  },
-  input: {
-    flex: 1, minHeight: 40, maxHeight: 100, borderWidth: 1, borderColor: colors.border,
-    borderRadius: radius.lg, paddingHorizontal: spacing.md, paddingVertical: 8,
-    fontSize: fontSize.sm, color: colors.textPrimary,
-  },
-  sendBtn: {
-    width: 40, height: 40, borderRadius: 20, backgroundColor: colors.accent,
-    alignItems: 'center', justifyContent: 'center',
-  },
+    viewerBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
+    viewerImage: { width: '100%', height: '80%' },
+    viewerCloseBtn: { position: 'absolute', top: 48, right: 20, width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
+    viewerRotateBtn: { position: 'absolute', top: 48, right: 72, width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
+
+    inputBar: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, paddingHorizontal: 24, paddingTop: 10, backgroundColor: colors.bg },
+    input: { flex: 1, minHeight: 48, maxHeight: 110, borderRadius: 24, paddingHorizontal: 18, paddingVertical: 13, textAlignVertical: 'center', fontSize: 15, color: colors.textPrimary, backgroundColor: colors.surfaceElevated },
+    sendBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
   });
 }

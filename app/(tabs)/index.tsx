@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { PressableScale } from '@/components/ui/PressableScale';
 import {
   View,
   Text,
@@ -23,6 +24,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, API_BASE_URL } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import PromoConsentPrompt from '@/components/PromoConsentPrompt';
 import {
   ShieldCheckIcon,
   StoreIcon,
@@ -116,14 +118,14 @@ interface NewsItem {
   published_at: string | null;
 }
 
-// Sama dengan PromoVoucher di app/account/promo.tsx — discount_amount
-// SELALU string di JSON (cast 'decimal:2' Laravel), bukan number.
-interface PromoVoucher {
+// Bagian C, "Klaim Garansi & Maintenance PPF" (2026-10-01) -- diminta user
+// tampil juga di beranda, bukan cuma push notification.
+interface PendingMaintenanceSchedule {
   id: number;
-  name: string;
-  description: string | null;
-  discount_amount: string;
-  expires_at: string | null;
+  warranty_id: number;
+  warranty_code: string;
+  scheduled_date: string;
+  status: 'pending' | 'confirmation_sent';
 }
 
 interface ActiveBooking {
@@ -177,10 +179,6 @@ function stageSummaryLabel(booking: ActiveBooking): string {
 }
 
 const FALLBACK_IMAGE = 'https://placehold.co/800x1000/161226/e8c078?text=Ginnva';
-
-function formatDiscount(amount: string): string {
-  return `Rp${Number(amount).toLocaleString('id-ID')}`;
-}
 
 function formatDate(iso: string | null): string {
   if (!iso) return '';
@@ -244,7 +242,7 @@ export default function HomeScreen() {
   const [news, setNews] = useState<NewsItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [activeBooking, setActiveBooking] = useState<ActiveBooking | null>(null);
-  const [promoVoucher, setPromoVoucher] = useState<PromoVoucher | null>(null);
+  const [pendingMaintenance, setPendingMaintenance] = useState<PendingMaintenanceSchedule[]>([]);
   // Galeri hanya relevan setelah admin toko MENERIMA booking (status
   // berubah dari 'pending' ke 'confirmed'/'completed') — sebelum itu
   // belum ada proses instalasi yang bisa difoto sama sekali.
@@ -273,9 +271,17 @@ export default function HomeScreen() {
       // Booking yang sedang berjalan = sudah punya tahap tapi belum
       // "selesai" — supaya kartu ini hilang otomatis begitu instalasi
       // kelar, tidak nyangkut selamanya di beranda.
-      const active = res.data.find((b) => b.current_stage && b.current_stage !== 'completed');
+      const active = res.data.find((b) => b.status === 'confirmed' && b.current_stage && b.current_stage !== 'completed');
       setActiveBooking(active ?? null);
       setHasConfirmedBooking(res.data.some((b) => b.status === 'confirmed' || b.status === 'completed'));
+    } catch { /* silent */ }
+  }, [isLoggedIn]);
+
+  const fetchPendingMaintenance = useCallback(async () => {
+    if (!isLoggedIn) { setPendingMaintenance([]); return; }
+    try {
+      const res = await apiFetch<{ data: PendingMaintenanceSchedule[] }>('/api/customer/maintenance-schedules/pending');
+      setPendingMaintenance(res.data);
     } catch { /* silent */ }
   }, [isLoggedIn]);
 
@@ -306,21 +312,9 @@ export default function HomeScreen() {
     } catch { /* silent */ }
   }, [isLoggedIn]);
 
-  const fetchPromo = useCallback(async () => {
-    try {
-      const res = await apiFetch<{ data: PromoVoucher[] }>('/api/customer/vouchers/available', { skipAuth: true });
-      // Banner cuma tampil satu — ambil yang paling baru dibuat (backend
-      // sudah orderByDesc('created_at')), jadi kampanye terbaru yang
-      // ditonjolkan. Kalau kosong, banner disembunyikan total (bukan
-      // fallback ke teks statis) — lihat catatan di JSX.
-      setPromoVoucher(res.data[0] ?? null);
-    } catch { /* silent */ }
-  }, []);
-
   const loadAll = (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     Promise.all([
-      fetchPromo(),
       apiFetch<{ data: CarouselItem[] }>('/api/carousels')
         .then((res) => setCarousels(res.data))
         .catch(() => {}),
@@ -333,6 +327,7 @@ export default function HomeScreen() {
       fetchActiveBooking(),
       fetchGalleryPhotos(),
       fetchUnread(),
+      fetchPendingMaintenance(),
     ]).finally(() => setRefreshing(false));
   };
 
@@ -374,6 +369,9 @@ export default function HomeScreen() {
 
   const handleCarouselTap = async (item: HeroSlide) => {
     if (item.kind !== 'image' || !item.link_url) return;
+
+    // Hitung ketukan banner (Marketing/Konten Fase 5); gagal tidak boleh menghalangi membuka link.
+    apiFetch(`/api/carousels/${item.id}/click`, { method: 'POST' }).catch(() => {});
 
     // SEBELUMNYA tidak ada penanganan error sama sekali — kalau link_url
     // gagal dibuka (format tidak valid, tidak ada app yang bisa handle,
@@ -420,6 +418,7 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
       <StatusBar style="light" />
+      <PromoConsentPrompt />
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         nestedScrollEnabled={true}
@@ -557,22 +556,55 @@ export default function HomeScreen() {
           </ScrollView>
         </View>
 
+        {/* ===== Banner Konfirmasi Maintenance PPF (Bagian C, 2026-10-01) =====
+            Diminta user tampil juga di beranda, bukan cuma push notification.
+            Cuma yang statusnya 'confirmation_sent' yang ditampilkan di sini --
+            'pending' belum masuk window pengingat, belum relevan ditonjolkan
+            di beranda. */}
+        {pendingMaintenance.filter((m) => m.status === 'confirmation_sent').map((m) => (
+          <PressableScale
+            key={m.id}
+            style={styles.maintenanceBanner}
+            onPress={() => router.push(`/account/warranty-detail?id=${m.warranty_id}` as never)}
+            accessibilityRole="button"
+          >
+            <View style={styles.maintenanceIcon}>
+              <Ionicons name="calendar-outline" size={22} color={colors.accent} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.maintenanceBannerTitle}>Konfirmasi Maintenance PPF</Text>
+              <Text style={styles.maintenanceBannerText}>
+                {m.warranty_code} — jadwal {new Date(m.scheduled_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          </PressableScale>
+        ))}
+
         {/* ===== Kartu Progress Instalasi Aktif ===== */}
         {activeBooking && (
-          <Pressable
-
+          <PressableScale
             style={styles.progressCard}
             onPress={() => router.push(`/booking/${activeBooking.id}/chat` as never)}
+            accessibilityRole="button"
+            accessibilityLabel="Buka progress instalasi"
           >
             <View style={styles.progressCardHeader}>
               <View style={styles.progressIconWrap}>
-                <Ionicons name="construct" size={18} color={colors.textPrimary} />
+                <Ionicons name="construct-outline" size={22} color="#ffffff" />
               </View>
-              <View style={{ flex: 1 }}>
+              <View style={styles.progressHeaderText}>
                 <Text style={styles.progressCardTitle}>Progress Instalasi</Text>
-                <Text style={styles.progressCardSubtitle}>{activeBooking.service_type}</Text>
+                <Text style={styles.progressCardSubtitle} numberOfLines={1}>{activeBooking.service_type}</Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+              <View style={styles.progressArrow}>
+                <Ionicons name="arrow-forward" size={16} color={colors.accent} />
+              </View>
+            </View>
+
+            <View style={styles.progressStageBox}>
+              <Text style={styles.progressStageCaption}>Tahap saat ini</Text>
+              <Text style={styles.progressStageLabel}>{stageSummaryLabel(activeBooking)}</Text>
             </View>
 
             {(() => {
@@ -591,7 +623,7 @@ export default function HomeScreen() {
               tracks.push({ stages: SHARED_STAGES, columnValue: activeBooking.current_stage, label: (activeBooking.product_kaca_film || activeBooking.product_ppf) ? 'Tahap Akhir' : null });
 
               return tracks.map((track, ti) => (
-                <View key={ti} style={{ marginTop: ti > 0 ? spacing.xs : 0 }}>
+                <View key={ti} style={styles.progressTrack}>
                   {track.label && <Text style={styles.progressTrackLabel}>{track.label}</Text>}
                   <View style={styles.progressBarRow}>
                     {track.stages.map((s, idx) => {
@@ -607,60 +639,27 @@ export default function HomeScreen() {
                 </View>
               ));
             })()}
-            <Text style={styles.progressStageLabel}>
-              Tahap saat ini: {stageSummaryLabel(activeBooking)}
-            </Text>
-          </Pressable>
+          </PressableScale>
         )}
 
-        {/* ===== Banner Promo — sengaja dibuat mencolok, tombol persegi
-            panjang penuh warna di atas menu utama, supaya jadi hal
-            pertama yang menarik perhatian customer saat buka app.
-            Kontennya diambil dari voucher aktif sesungguhnya (bukan teks
-            statis) — disembunyikan total kalau tidak ada kampanye
-            berjalan, supaya tidak pernah mengiklankan promo yang sudah
-            berakhir/habis kuota. ===== */}
-        {promoVoucher && (
-          <Pressable onPress={() => router.push('/account/promo' as never)} style={styles.promoBannerWrap}>
-            <LinearGradient
-              colors={[colors.accent, colors.gold]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.promoBanner}
-            >
-              <View style={styles.promoBannerIconWrap}>
-                <Ionicons name="pricetags" size={22} color="#ffffff" />
-              </View>
-              <View style={styles.promoBannerTextWrap}>
-                <Text style={styles.promoBannerTitle} numberOfLines={1}>
-                  {promoVoucher.name}
-                  {Number(promoVoucher.discount_amount) > 0 ? ` — ${formatDiscount(promoVoucher.discount_amount)}` : ''}
-                </Text>
-                {promoVoucher.description && (
-                  <Text style={styles.promoBannerSubtitle} numberOfLines={2}>{promoVoucher.description}</Text>
-                )}
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#ffffff" />
-            </LinearGradient>
-          </Pressable>
-        )}
 
         {/* ===== Menu utama (5 ikon custom) ===== */}
         <View style={styles.quickMenuGrid}>
           {QUICK_MENU.map((menu) => {
             const { Icon } = menu;
             return (
-              <Pressable
+              <PressableScale
                 key={menu.key}
-
                 style={styles.quickMenuItem}
                 onPress={() => router.push(menu.route as never)}
+                accessibilityRole="button"
+                accessibilityLabel={menu.label}
               >
                 <View style={styles.quickMenuIconWrap}>
-                  <Icon size={34} color={colors.textPrimary} accentColor={colors.accent} />
+                  <Icon size={28} color={colors.textPrimary} accentColor={colors.accent} />
                 </View>
                 <Text style={styles.quickMenuLabel}>{menu.label}</Text>
-              </Pressable>
+              </PressableScale>
             );
           })}
         </View>
@@ -692,7 +691,7 @@ export default function HomeScreen() {
                   },
                 } as never);
                 return (
-                  <Pressable key={item.id} style={styles.featuredProductCard} onPress={openFull}>
+                  <PressableScale key={item.id} style={styles.featuredProductCard} onPress={openFull} accessibilityRole="button">
                     {item.image && (
                       <Image
                         source={{ uri: item.image }}
@@ -704,11 +703,11 @@ export default function HomeScreen() {
                       {item.title && <Text style={styles.featuredProductTitle} numberOfLines={1}>{item.title}</Text>}
                       {item.subtitle && <Text style={styles.featuredProductSubtitle} numberOfLines={1}>{item.subtitle}</Text>}
                       <Pressable style={styles.featuredProductBtn} onPress={openFull}>
-                        <Text style={styles.featuredProductBtnText}>SEE MORE</Text>
-                        <Ionicons name="chevron-forward" size={14} color="#ffffff" />
+                        <Text style={styles.featuredProductBtnText}>Selengkapnya</Text>
+                        <Ionicons name="arrow-forward" size={14} color="#ffffff" />
                       </Pressable>
                     </View>
-                  </Pressable>
+                  </PressableScale>
                 );
               })}
             </ScrollView>
@@ -733,7 +732,7 @@ export default function HomeScreen() {
               <View style={styles.comingSoonBox}>
                 <Ionicons name="camera-outline" size={26} color={colors.textMuted} />
                 <Text style={styles.comingSoonTitle}>Belum Ada Foto</Text>
-                <Text style={styles.comingSoonText}>Foto progress instalasi mobil Anda akan muncul di sini setelah admin toko mengirimkannya.</Text>
+                <Text style={styles.comingSoonText}>Foto progress instalasi mobilmu akan muncul di sini setelah admin toko mengirimkannya.</Text>
               </View>
             ) : (
               <ScrollView
@@ -742,7 +741,7 @@ export default function HomeScreen() {
                 contentContainerStyle={styles.caseRow}
               >
                 {galleryPhotos.map((photo) => (
-                  <Pressable key={photo.id} style={styles.caseCard} onPress={() => router.push('/account/my-gallery' as never)}>
+                  <PressableScale key={photo.id} style={styles.caseCard} onPress={() => router.push('/account/my-gallery' as never)} accessibilityRole="button">
                     <Image
                       source={{ uri: photo.url }}
                       style={styles.caseImage}
@@ -751,7 +750,7 @@ export default function HomeScreen() {
                     <Text style={styles.caseTitle} numberOfLines={2}>
                       {photo.label}
                     </Text>
-                  </Pressable>
+                  </PressableScale>
                 ))}
               </ScrollView>
             )}
@@ -815,7 +814,7 @@ function createStyles(colors: typeof darkColors, screenWidth: number, carouselHe
     backgroundColor: colors.bg,
   },
   scrollContent: {
-    paddingBottom: spacing.xxl,
+    paddingBottom: 40,
   },
   heroWrapper: {
     position: 'relative',
@@ -830,7 +829,7 @@ function createStyles(colors: typeof darkColors, screenWidth: number, carouselHe
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: 'transparent',
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: 24,
     paddingBottom: spacing.sm,
   },
   brandTextRow: {
@@ -850,32 +849,37 @@ function createStyles(colors: typeof darkColors, screenWidth: number, carouselHe
     marginTop: 2,
   },
   notifBtn: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.16)',
   },
   notifBadge: {
     position: 'absolute',
-    top: 4,
-    right: 4,
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
+    top: 2,
+    right: 2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
     backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 3,
+    paddingHorizontal: 4,
   },
   notifBadgeText: {
-    fontSize: 9,
+    fontSize: 12,
     fontWeight: '800',
     color: colors.textPrimary,
     lineHeight: 12,
   },
   carouselWrapper: {
-    marginBottom: spacing.sm,
+    marginBottom: 20,
     position: 'relative',
+    overflow: 'hidden',
+    borderBottomLeftRadius: 36,
+    borderBottomRightRadius: 36,
   },
   carouselSlide: {
     width: screenWidth,
@@ -898,38 +902,41 @@ function createStyles(colors: typeof darkColors, screenWidth: number, carouselHe
     bottom: 0,
     left: 0,
     right: 0,
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.lg,
+    paddingHorizontal: 24,
+    paddingBottom: 48,
   },
   carouselTitle: {
-    fontSize: fontSize.xl,
+    fontSize: 28,
+    lineHeight: 34,
     fontWeight: '800',
-    color: colors.textPrimary,
+    letterSpacing: -0.7,
+    color: '#ffffff',
   },
   carouselSubtitle: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    marginTop: 4,
+    fontSize: 15,
+    lineHeight: 22,
+    color: 'rgba(255,255,255,0.85)',
+    marginTop: 6,
   },
   dotsRow: {
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: spacing.sm,
+    bottom: 20,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 5,
+    gap: 6,
   },
   dot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: colors.border,
+    backgroundColor: 'rgba(255,255,255,0.45)',
   },
   dotActive: {
-    width: 18,
-    backgroundColor: colors.accent,
+    width: 22,
+    backgroundColor: '#ffffff',
   },
   categoryRowAbsolute: {
     position: 'absolute',
@@ -938,73 +945,48 @@ function createStyles(colors: typeof darkColors, screenWidth: number, carouselHe
     zIndex: 10,
   },
   categoryRow: {
-    paddingHorizontal: spacing.md,
-    gap: spacing.sm,
+    paddingHorizontal: 24,
+    gap: 8,
   },
   categoryChip: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
+    height: 38,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderRadius: 19,
   },
   categoryChipText: {
-    fontSize: fontSize.sm,
+    fontSize: 13,
     // SENGAJA hardcode putih — chip ini menimpa foto carousel.
     color: '#ffffff',
-    fontWeight: '600',
+    fontWeight: '700',
   },
-  promoBannerWrap: {
-    paddingHorizontal: spacing.md,
-    marginTop: spacing.md,
-  },
-  promoBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    // Shadow supaya makin "menonjol" dibanding elemen datar lain di sekitarnya.
-    shadowColor: colors.accent,
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
-  promoBannerIconWrap: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.25)',
-    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-  },
-  promoBannerTextWrap: { flex: 1, gap: 2 },
-  promoBannerTitle: { fontSize: fontSize.sm, fontWeight: '800', color: '#ffffff' },
-  promoBannerSubtitle: { fontSize: fontSize.xs, color: 'rgba(255,255,255,0.9)', lineHeight: 15 },
   quickMenuGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 4,
   },
   quickMenuItem: {
     width: '20%',
     alignItems: 'center',
     marginBottom: spacing.md,
-    gap: spacing.xs,
+    gap: 8,
   },
   quickMenuIconWrap: {
-    width: 52,
-    height: 52,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: colors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
   },
   quickMenuLabel: {
-    // Dinaikkan dari 10.5 — di bawah itu label 2-baris seperti "Booking
-    // Instalasi"/"Ajukan Penawaran" mepet ambang keterbacaan di kolom
-    // selebar 20% layar.
-    fontSize: 11,
-    lineHeight: 13,
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: '600',
     color: colors.textSecondary,
     textAlign: 'center',
   },
@@ -1012,31 +994,32 @@ function createStyles(colors: typeof darkColors, screenWidth: number, carouselHe
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    marginTop: spacing.md,
-    marginBottom: spacing.sm,
+    paddingHorizontal: 24,
+    marginTop: 20,
+    marginBottom: 14,
   },
   sectionTitle: {
-    fontSize: fontSize.lg,
-    fontWeight: '700',
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '800',
+    letterSpacing: -0.5,
     color: colors.textPrimary,
   },
   sectionMore: {
-    fontSize: fontSize.sm,
-    color: colors.gold,
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.accent,
   },
   featuredProductRow: {
-    paddingHorizontal: spacing.md,
-    gap: spacing.sm,
+    paddingHorizontal: 24,
+    gap: 14,
   },
   featuredProductCard: {
     // Landscape (rasio 3:2) tapi tidak full-width — full-width kemarin
     // kartunya jadi terlalu besar/tinggi.
-    width: screenWidth * 0.58,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
+    width: screenWidth * 0.64,
+    borderRadius: 28,
+    backgroundColor: colors.surfaceElevated,
     overflow: 'hidden',
   },
   featuredProductImage: {
@@ -1047,33 +1030,33 @@ function createStyles(colors: typeof darkColors, screenWidth: number, carouselHe
     backgroundColor: colors.bg,
   },
   featuredProductInfo: {
-    padding: spacing.md,
-    gap: 4,
+    padding: 16,
+    gap: 2,
   },
   featuredProductTitle: {
-    fontSize: fontSize.base,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: -0.3,
     color: colors.textPrimary,
   },
   featuredProductSubtitle: {
-    fontSize: fontSize.sm,
+    fontSize: 13,
     color: colors.textSecondary,
   },
   featuredProductBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    marginTop: spacing.sm,
-    paddingVertical: 10,
-    borderRadius: radius.pill,
+    gap: 6,
+    marginTop: 12,
+    height: 42,
+    borderRadius: 21,
     backgroundColor: colors.accent,
   },
   featuredProductBtnText: {
-    fontSize: fontSize.xs,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '800',
     color: '#ffffff',
-    letterSpacing: 0.5,
   },
   emptyText: {
     fontSize: fontSize.sm,
@@ -1081,43 +1064,43 @@ function createStyles(colors: typeof darkColors, screenWidth: number, carouselHe
     paddingHorizontal: spacing.md,
   },
   caseRow: {
-    paddingHorizontal: spacing.md,
-    gap: spacing.md,
+    paddingHorizontal: 24,
+    gap: 14,
   },
   caseCard: {
-    width: 180,
+    width: 190,
   },
   caseImage: {
-    width: 180,
-    height: 120,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface,
-    marginBottom: spacing.xs,
+    width: 190,
+    height: 130,
+    borderRadius: 24,
+    backgroundColor: colors.surfaceElevated,
+    marginBottom: 10,
   },
   caseTitle: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    fontWeight: '600',
+    fontSize: 14,
+    lineHeight: 19,
+    color: colors.textPrimary,
+    fontWeight: '700',
+    paddingHorizontal: 4,
   },
   comingSoonBox: {
-    marginHorizontal: spacing.md,
-    paddingVertical: spacing.xl,
-    paddingHorizontal: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderStyle: 'dashed',
-    borderRadius: radius.lg,
+    marginHorizontal: 24,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    borderRadius: 28,
     alignItems: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.surface,
+    gap: 6,
+    backgroundColor: colors.surfaceElevated,
   },
   comingSoonTitle: {
-    fontSize: fontSize.base,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '800',
     color: colors.textPrimary,
   },
   comingSoonText: {
-    fontSize: fontSize.sm,
+    fontSize: 14,
+    lineHeight: 21,
     color: colors.textSecondary,
     textAlign: 'center',
   },
@@ -1154,67 +1137,49 @@ function createStyles(colors: typeof darkColors, screenWidth: number, carouselHe
     color: colors.textPrimary,
     lineHeight: 20,
   },
-  progressCard: {
-    marginHorizontal: spacing.md,
-    marginBottom: spacing.md,
-    padding: spacing.md,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  progressCardHeader: {
+  // Bagian C, "Klaim Garansi & Maintenance PPF" (2026-10-01).
+  maintenanceBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
+    gap: 14,
+    marginHorizontal: 24,
+    marginBottom: spacing.md,
+    padding: 16,
+    borderRadius: 28,
+    backgroundColor: colors.accentSoft,
   },
-  progressIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.accent,
+  maintenanceIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: colors.bg,
   },
-  progressCardTitle: {
-    fontSize: fontSize.sm,
-    fontWeight: '800',
-    color: colors.textPrimary,
+  maintenanceBannerTitle: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
+  maintenanceBannerText: { fontSize: 13, lineHeight: 18, color: colors.textSecondary, marginTop: 2 },
+  progressCard: {
+    marginHorizontal: 24,
+    marginBottom: spacing.md,
+    padding: 20,
+    gap: 16,
+    borderRadius: 28,
+    backgroundColor: colors.surfaceElevated,
   },
-  progressCardSubtitle: {
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
-    marginTop: 1,
-  },
-  progressTrackLabel: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 2,
-  },
-  progressBarRow: {
-    flexDirection: 'row',
-    gap: 4,
-    marginBottom: 6,
-  },
-  progressBarSegmentWrap: {
-    flex: 1,
-  },
-  progressBarSegment: {
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: colors.border,
-  },
-  progressBarSegmentActive: {
-    backgroundColor: colors.accent,
-  },
-  progressStageLabel: {
-    fontSize: fontSize.xs,
-    fontWeight: '600',
-    color: colors.gold,
-  },
+  progressCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  progressIconWrap: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
+  progressHeaderText: { flex: 1, gap: 2 },
+  progressCardTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3, color: colors.textPrimary },
+  progressCardSubtitle: { fontSize: 13, color: colors.textSecondary },
+  progressArrow: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
+  progressStageBox: { gap: 2, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 20, backgroundColor: colors.bg },
+  progressStageCaption: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
+  progressStageLabel: { fontSize: 16, lineHeight: 22, fontWeight: '800', color: colors.textPrimary },
+  progressTrack: { gap: 8 },
+  progressTrackLabel: { fontSize: 11, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase', color: colors.textMuted },
+  progressBarRow: { flexDirection: 'row', gap: 5 },
+  progressBarSegmentWrap: { flex: 1 },
+  progressBarSegment: { height: 6, borderRadius: 3, backgroundColor: colors.borderStrong },
+  progressBarSegmentActive: { backgroundColor: colors.accent },
   });
 }

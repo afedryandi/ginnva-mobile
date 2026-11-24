@@ -16,6 +16,7 @@
 
 import { Platform } from 'react-native';
 import * as storage from './storage';
+import { saveInstallAttribution } from './lead-attribution';
 
 const CHECKED_FLAG_KEY = 'ginnva_install_referrer_checked';
 const PENDING_CODE_KEY = 'ginnva_pending_referral_code';
@@ -55,6 +56,8 @@ export async function checkInstallReferrerOnce(): Promise<void> {
     await new Promise<void>((resolve) => {
       PlayInstallReferrer.getInstallReferrerInfo((info, error) => {
         if (!error && info?.installReferrer) {
+          // Atribusi kampanye (utm_*, gclid/fbclid) untuk lead dari aplikasi; independen dari kode referral.
+          saveInstallAttribution(info.installReferrer).catch(() => {});
           const code = parseReferralCode(info.installReferrer);
           if (code) {
             storage.setItem(PENDING_CODE_KEY, code).catch(() => {});

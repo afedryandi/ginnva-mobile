@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, FlatList, StyleSheet, useWindowDimensions, Linking, ActivityIndicator, RefreshControl } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, TextInput, Pressable, FlatList, StyleSheet, useWindowDimensions, Linking, ActivityIndicator, RefreshControl, KeyboardAvoidingView } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -74,14 +74,30 @@ export default function AssetScanScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
+  const [total, setTotal] = useState(0);
+  const [denied, setDenied] = useState(false);
+  // Hanya respons permintaan terbaru yang dipakai: ketikan/filter yang berganti cepat tidak boleh ditimpa respons lama yang telat.
+  const latestRequest = useRef(0);
+
   const fetchAssets = useCallback((query: string, mine: boolean) => {
+    const requestId = ++latestRequest.current;
     setSearchError(null);
+    setDenied(false);
     const params = new URLSearchParams({ search: query });
     if (mine) params.set('assigned_to_me', '1');
 
-    return staffApiFetch<{ data: AssetListItem[] }>(`/api/staff/assets?${params.toString()}`)
-      .then((res) => setAssets(res.data))
+    return staffApiFetch<{ data: AssetListItem[]; total?: number }>(`/api/staff/assets?${params.toString()}`)
+      .then((res) => {
+        if (requestId !== latestRequest.current) return;
+        setAssets(res.data);
+        setTotal(res.total ?? res.data.length);
+      })
       .catch((err) => {
+        if (requestId !== latestRequest.current) return;
+        if (err instanceof ApiError && err.status === 403) {
+          setDenied(true);
+          return;
+        }
         setSearchError(err instanceof ApiError ? err.message : 'Gagal memuat daftar aset.');
       });
   }, []);
@@ -107,7 +123,8 @@ export default function AssetScanScreen() {
   };
 
   return (
-    <SafeAreaView style={[styles.container, mode === 'search' && { backgroundColor: colors.bg }]} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={[styles.container, mode === 'search' && { backgroundColor: colors.bg }]} edges={['top', 'left', 'right', 'bottom']}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <StatusBar style={mode === 'scan' ? 'light' : theme === 'dark' ? 'light' : 'dark'} />
       <View style={[styles.header, mode === 'search' && styles.headerLight]}>
         <Pressable onPress={() => router.back()} style={styles.sideButton}>
@@ -150,6 +167,13 @@ export default function AssetScanScreen() {
             <View style={styles.centerState}>
               <ActivityIndicator color={colors.accent} />
             </View>
+          ) : denied ? (
+            <View style={styles.centerState}>
+              <Ionicons name="lock-closed-outline" size={32} color={colors.textMuted} />
+              <Text style={styles.centerStateText}>
+                Akun ini belum diberi akses ke menu Aset Tetap. Minta admin mencentang menu Aset Tetap di Hak Akses.
+              </Text>
+            </View>
           ) : searchError ? (
             <View style={styles.centerState}>
               <Ionicons name="alert-circle" size={32} color={colors.danger} />
@@ -158,7 +182,7 @@ export default function AssetScanScreen() {
           ) : assets.length === 0 ? (
             <View style={styles.centerState}>
               <Text style={styles.centerStateText}>
-                {mineOnly ? 'Tidak ada aset yang jadi tanggung jawab Anda saat ini.' : 'Tidak ada aset ditemukan.'}
+                {mineOnly ? 'Belum ada aset yang jadi tanggung jawab akun ini.' : 'Tidak ada aset ditemukan.'}
               </Text>
             </View>
           ) : (
@@ -167,6 +191,13 @@ export default function AssetScanScreen() {
               keyExtractor={(item) => String(item.id)}
               contentContainerStyle={styles.listContent}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
+              ListFooterComponent={
+                total > assets.length ? (
+                  <Text style={styles.footerNote}>
+                    Menampilkan {assets.length} dari {total} aset. Ketik nama atau kode di kolom cari untuk menemukan yang lain.
+                  </Text>
+                ) : null
+              }
               renderItem={({ item }) => (
                 <Pressable
                   style={styles.row}
@@ -202,7 +233,7 @@ export default function AssetScanScreen() {
             <Text style={styles.permissionText}>
               {permission && !permission.canAskAgain
                 ? 'Izin kamera ditolak permanen. Aktifkan lewat Pengaturan untuk memindai QR aset.'
-                : 'Izin kamera diperlukan untuk memindai QR aset.'}
+                : 'Aplikasi butuh izin kamera untuk memindai QR aset.'}
             </Text>
             <Pressable
               style={styles.retryButton}
@@ -240,6 +271,7 @@ export default function AssetScanScreen() {
         )}
       </View>
       )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -291,6 +323,7 @@ function createStyles(colors: typeof darkColors, scanFrameSize: number) {
     centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.xl },
     centerStateText: { fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center' },
     listContent: { padding: spacing.md, gap: spacing.xs },
+    footerNote: { fontSize: fontSize.xs, color: colors.textMuted, textAlign: 'center', paddingVertical: spacing.md },
     row: {
       flexDirection: 'row',
       alignItems: 'center',

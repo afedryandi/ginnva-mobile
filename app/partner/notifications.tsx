@@ -16,6 +16,7 @@ import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
 import { hapticLight } from '@/lib/haptics';
+import { setBadgeCount } from '@/lib/notifications';
 
 interface PartnerNotification {
   id: number;
@@ -47,6 +48,9 @@ export default function PartnerNotificationsScreen() {
   const [items, setItems] = useState<PartnerNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [lastPage, setLastPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [markingAll, setMarkingAll] = useState(false);
@@ -59,6 +63,9 @@ export default function PartnerNotificationsScreen() {
       const res = await staffApiFetch<NotifResponse>('/api/partner/notifications');
       setItems(res.data);
       setUnreadCount(res.unread_count);
+      setBadgeCount(res.unread_count);
+      setCurrentPage(res.meta.current_page);
+      setLastPage(res.meta.last_page);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Gagal memuat notifikasi.');
     } finally {
@@ -66,6 +73,25 @@ export default function PartnerNotificationsScreen() {
       setRefreshing(false);
     }
   }, []);
+
+  // Backend paginate(30) -- audit Riwayat Notifikasi 2026-09-30, sama bug class
+  // yang sebelumnya ditemukan & diperbaiki di account/notifications.tsx (Customer):
+  // tanpa ini, notifikasi lebih dari 30 (90 hari terakhir) tidak akan pernah bisa
+  // dilihat sama sekali karena meta pagination-nya diambil tapi tidak pernah dipakai.
+  const loadMore = useCallback(async () => {
+    if (loadingMore || loading || currentPage >= lastPage) return;
+    setLoadingMore(true);
+    try {
+      const res = await staffApiFetch<NotifResponse>(`/api/partner/notifications?page=${currentPage + 1}`);
+      setItems((prev) => [...prev, ...res.data]);
+      setCurrentPage(res.meta.current_page);
+      setLastPage(res.meta.last_page);
+    } catch {
+      // Silent -- user masih bisa scroll ulang untuk coba lagi.
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, loading, currentPage, lastPage]);
 
   useEffect(() => {
     fetchNotifications();
@@ -75,7 +101,11 @@ export default function PartnerNotificationsScreen() {
     if (item.is_read) return;
     hapticLight();
     setItems((prev) => prev.map((n) => (n.id === item.id ? { ...n, is_read: true } : n)));
-    setUnreadCount((c) => Math.max(0, c - 1));
+    setUnreadCount((c) => {
+      const next = Math.max(0, c - 1);
+      setBadgeCount(next);
+      return next;
+    });
     staffApiFetch(`/api/partner/notifications/${item.id}/read`, { method: 'POST' }).catch(() => {});
   };
 
@@ -87,6 +117,7 @@ export default function PartnerNotificationsScreen() {
       await staffApiFetch('/api/partner/notifications/read-all', { method: 'POST' });
       setItems((prev) => prev.map((n) => ({ ...n, is_read: true })));
       setUnreadCount(0);
+      setBadgeCount(0);
     } catch {
       // silent
     } finally {
@@ -114,7 +145,7 @@ export default function PartnerNotificationsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.sideButton}>
@@ -170,6 +201,15 @@ export default function PartnerNotificationsScreen() {
             </View>
           }
           contentContainerStyle={items.length === 0 ? styles.emptyContainer : undefined}
+          onEndReachedThreshold={0.4}
+          onEndReached={loadMore}
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={styles.footerLoading}>
+                <ActivityIndicator color={colors.accent} size="small" />
+              </View>
+            ) : null
+          }
         />
       )}
     </SafeAreaView>
@@ -231,6 +271,7 @@ function createStyles(colors: typeof darkColors) {
   itemTime: { fontSize: fontSize.xs, color: colors.textMuted, flexShrink: 0 },
   itemBody: { fontSize: fontSize.sm, color: colors.textSecondary, lineHeight: 19 },
   emptyContainer: { flex: 1 },
+  footerLoading: { paddingVertical: spacing.md, alignItems: 'center' },
   emptyTitle: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary, marginTop: spacing.sm },
   emptyText: { fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center', lineHeight: 20 },
   });

@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, ActivityIndicator, Alert, RefreshControl } from 'react-native';
+import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, ActivityIndicator, Alert, RefreshControl, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { Button } from '@/components/ui/Button';
+import DateField, { toDateKey, todayKey } from '@/components/ui/DateField';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
@@ -28,7 +29,7 @@ interface Store {
 
 interface ActivityLogEntry {
   id: number;
-  event: 'created' | 'updated' | 'deleted' | null;
+  event: 'created' | 'updated' | 'deleted' | 'maintenance' | null;
   description: string;
   causer: { id: number; name: string } | null;
   created_at: string;
@@ -45,7 +46,44 @@ interface AssetData {
   purchase_date: string | null;
   purchase_cost: string | null;
   notes: string | null;
+  next_maintenance_date: string | null;
+  maintenance_interval_days: number | null;
+  last_maintenance_date: string | null;
+  disposed_at: string | null;
   activities: ActivityLogEntry[];
+}
+
+interface Holder {
+  id: number;
+  name: string;
+}
+
+interface TransferEntry {
+  id: number;
+  from_user: string | null;
+  to_user: string | null;
+  from_store: string | null;
+  to_store: string | null;
+  condition: 'baik' | 'perlu_perhatian' | 'rusak';
+  reason: string;
+  performed_by: string | null;
+  created_at: string;
+}
+
+type Condition = TransferEntry['condition'];
+
+const CONDITION_LABEL: Record<Condition, string> = {
+  baik: 'Baik',
+  perlu_perhatian: 'Perlu Perhatian',
+  rusak: 'Rusak',
+};
+
+interface ShowResponse {
+  data: AssetData;
+  stores: Store[];
+  can_modify?: boolean;
+  transfers?: TransferEntry[];
+  holders?: Holder[];
 }
 
 function formatDateTime(dateString: string): string {
@@ -66,10 +104,17 @@ function formatDate(dateString: string): string {
   });
 }
 
+// Tanggal (YYYY-MM-DD) ditambah n hari, untuk jadwal servis berikutnya.
+function addDays(key: string, days: number): string {
+  const [y, m, d] = key.split('-').map(Number);
+  return toDateKey(new Date(y, m - 1, d + days));
+}
+
 function eventLabel(event: ActivityLogEntry['event']): string {
   if (event === 'created') return 'Dibuat';
   if (event === 'updated') return 'Diubah';
   if (event === 'deleted') return 'Dihapus';
+  if (event === 'maintenance') return 'Servis';
   return '—';
 }
 
@@ -98,22 +143,47 @@ export default function AssetDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Akun yang hanya boleh melihat aset tidak diberi tombol ubah/serah terima (server juga menolak).
+  const [canModify, setCanModify] = useState(false);
+  const [holders, setHolders] = useState<Holder[]>([]);
+  const [transfers, setTransfers] = useState<TransferEntry[]>([]);
 
-  const [editing, setEditing] = useState(false);
+  // Serah Terima: pemegang dan (akses penuh) toko tujuan, kondisi fisik, dan alasan.
+  const [trOpen, setTrOpen] = useState(false);
+  const [trUserId, setTrUserId] = useState<number | null>(null);
+  const [trStoreId, setTrStoreId] = useState<number | null>(null);
+  const [trCondition, setTrCondition] = useState<Condition | null>(null);
+  const [trReason, setTrReason] = useState('');
+  const [trSubmitting, setTrSubmitting] = useState(false);
+  const [trError, setTrError] = useState<string | null>(null);
+
+  // Catat Servis: tanggal servis dan jadwal berikutnya (terisi dari interval aset bila ada; boleh dikosongkan).
+  const [mtOpen, setMtOpen] = useState(false);
+  const [mtDate, setMtDate] = useState('');
+  const [mtNext, setMtNext] = useState('');
+  const [mtNote, setMtNote] = useState('');
+  const [mtSubmitting, setMtSubmitting] = useState(false);
+  const [mtError, setMtError] = useState<string | null>(null);  const [editing, setEditing] = useState(false);
   const [formStatus, setFormStatus] = useState<AssetStatus>('aktif');
-  const [formStoreId, setFormStoreId] = useState<number | null>(null);
   const [formNotes, setFormNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   const fetchAsset = useCallback(() => {
     setError(null);
-    return staffApiFetch<{ data: AssetData; stores: Store[] }>(`/api/staff/assets/${encodeURIComponent(code)}`)
+    return staffApiFetch<ShowResponse>(`/api/staff/assets/${encodeURIComponent(code)}`)
       .then((res) => {
         setAsset(res.data);
         setStores(res.stores);
+        setCanModify(res.can_modify === true);
+        setHolders(res.holders ?? []);
+        setTransfers(res.transfers ?? []);
       })
       .catch((err) => {
+        if (err instanceof ApiError && err.status === 403) {
+          setError('Akun ini belum diberi akses ke menu Aset Tetap. Minta admin mencentang menu Aset Tetap di Hak Akses.');
+          return;
+        }
         setError(err instanceof ApiError ? err.message : 'Aset tidak ditemukan atau koneksi bermasalah.');
       });
   }, [code]);
@@ -132,8 +202,8 @@ export default function AssetDetailScreen() {
   const openEdit = () => {
     if (!asset) return;
     setFormStatus(asset.status);
-    setFormStoreId(asset.store?.id ?? null);
-    setFormNotes('');
+    // Catatan lama ditampilkan supaya mengubahnya disengaja, bukan menimpa tanpa sadar.
+    setFormNotes(asset.notes ?? '');
     setFormError(null);
     setEditing(true);
   };
@@ -146,8 +216,7 @@ export default function AssetDetailScreen() {
       method: 'POST',
       body: JSON.stringify({
         status: formStatus,
-        store_id: formStoreId,
-        notes: formNotes.trim() || undefined,
+        notes: formNotes.trim(),
       }),
     })
       .then((res) => {
@@ -158,13 +227,100 @@ export default function AssetDetailScreen() {
       })
       .catch((err) => {
         hapticError();
-        setFormError(err instanceof ApiError ? err.message : 'Gagal menyimpan perubahan. Periksa koneksi internet Anda.');
+        setFormError(err instanceof ApiError ? err.message : 'Gagal menyimpan perubahan. Periksa koneksi internet.');
       })
       .finally(() => setSubmitting(false));
   };
 
+  const openTransfer = () => {
+    if (!asset) return;
+    setTrUserId(asset.assignee?.id ?? null);
+    setTrStoreId(null);
+    setTrCondition(null);
+    setTrReason('');
+    setTrError(null);
+    setTrOpen(true);
+  };
+
+  const openMaintenance = () => {
+    if (!asset) return;
+    const today = todayKey();
+    setMtDate(today);
+    setMtNext(asset.maintenance_interval_days ? addDays(today, asset.maintenance_interval_days) : '');
+    setMtNote('');
+    setMtError(null);
+    setMtOpen(true);
+  };
+
+  const handleMaintenance = () => {
+    if (!mtDate) {
+      setMtError('Pilih tanggal servis.');
+      return;
+    }
+    if (mtNext && mtNext < mtDate) {
+      setMtError('Jadwal berikutnya tidak boleh lebih awal dari tanggal servis.');
+      return;
+    }
+
+    setMtSubmitting(true);
+    setMtError(null);
+
+    staffApiFetch<{ message: string; data: AssetData }>(`/api/staff/assets/${encodeURIComponent(code)}/maintenance`, {
+      method: 'POST',
+      body: JSON.stringify({ date: mtDate, next_date: mtNext || null, note: mtNote.trim() || undefined }),
+    })
+      .then((res) => {
+        hapticSuccess();
+        setAsset(res.data);
+        setMtOpen(false);
+        Alert.alert('Berhasil', res.message);
+      })
+      .catch((err) => {
+        hapticError();
+        setMtError(err instanceof ApiError ? err.message : 'Gagal mencatat servis. Periksa koneksi internet.');
+      })
+      .finally(() => setMtSubmitting(false));
+  };
+
+  const handleTransfer = () => {
+    if (!trCondition) {
+      setTrError('Pilih kondisi fisik aset saat ini.');
+      return;
+    }
+    if (trReason.trim() === '') {
+      setTrError('Isi alasan serah terima (mis. rotasi tugas, pindah toko).');
+      return;
+    }
+
+    setTrSubmitting(true);
+    setTrError(null);
+
+    staffApiFetch<{ message: string; data: AssetData; transfers: TransferEntry[] }>(`/api/staff/assets/${encodeURIComponent(code)}/transfer`, {
+      method: 'POST',
+      body: JSON.stringify({
+        to_user_id: trUserId,
+        to_store_id: trStoreId,
+        condition_at_transfer: trCondition,
+        reason: trReason.trim(),
+      }),
+    })
+      .then((res) => {
+        hapticSuccess();
+        setAsset(res.data);
+        setTransfers(res.transfers);
+        setTrOpen(false);
+        Alert.alert('Berhasil', res.message);
+      })
+      .catch((err) => {
+        hapticError();
+        setTrError(err instanceof ApiError ? err.message : 'Gagal mencatat serah terima. Periksa koneksi internet.');
+      })
+      .finally(() => setTrSubmitting(false));
+  };
+
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.sideButton}>
@@ -223,6 +379,23 @@ export default function AssetDetailScreen() {
               <Ionicons name="location-outline" size={16} color={colors.textMuted} />
               <Text style={styles.infoText}>{asset.store?.name ?? 'Kantor Pusat / belum ditentukan'}</Text>
             </View>
+            {asset.next_maintenance_date && (
+              <View style={styles.infoRow}>
+                <Ionicons name="build-outline" size={16} color={new Date(asset.next_maintenance_date) < new Date(new Date().toDateString()) ? colors.danger : colors.textMuted} />
+                <Text style={[styles.infoText, new Date(asset.next_maintenance_date) < new Date(new Date().toDateString()) && { color: colors.danger }]}>
+                  Maintenance berikutnya: {formatDate(asset.next_maintenance_date)}
+                </Text>
+              </View>
+            )}
+            {(asset.last_maintenance_date || asset.maintenance_interval_days) && (
+              <View style={styles.infoRow}>
+                <Ionicons name="construct-outline" size={16} color={colors.textMuted} />
+                <Text style={styles.infoText}>
+                  {asset.last_maintenance_date ? `Servis terakhir: ${formatDate(asset.last_maintenance_date)}` : 'Belum pernah dicatat servis'}
+                  {asset.maintenance_interval_days ? ` · tiap ${asset.maintenance_interval_days} hari` : ''}
+                </Text>
+              </View>
+            )}
             {asset.notes && (
               <View style={styles.infoRow}>
                 <Ionicons name="document-text-outline" size={16} color={colors.textMuted} />
@@ -245,11 +418,14 @@ export default function AssetDetailScreen() {
 
           {editing ? (
             <View style={styles.card}>
-              <Text style={styles.formTitle}>Ubah Status & Lokasi</Text>
+              <Text style={styles.formTitle}>Ubah Status & Catatan</Text>
 
               <Text style={styles.fieldLabel}>Status</Text>
               <View style={styles.chipRow}>
-                {(Object.keys(STATUS_LABEL) as AssetStatus[]).map((s) => (
+                {(Object.keys(STATUS_LABEL) as AssetStatus[])
+                  // "Dijual" hanya lewat Lepas Aset di panel (supaya jurnalnya tercatat); tampil hanya bila aset memang sudah berstatus itu.
+                  .filter((s) => s !== 'dijual' || asset.status === 'dijual')
+                  .map((s) => (
                   <Pressable
                     key={s}
                     style={[styles.chip, formStatus === s && styles.chipActive]}
@@ -262,33 +438,11 @@ export default function AssetDetailScreen() {
                 ))}
               </View>
 
-              {isFullAccess && (
-                <>
-                  <Text style={styles.fieldLabel}>Lokasi (Toko)</Text>
-                  <View style={styles.chipRow}>
-                    <Pressable
-                      style={[styles.chip, formStoreId === null && styles.chipActive]}
-                      onPress={() => setFormStoreId(null)}
-                    >
-                      <Text style={[styles.chipText, formStoreId === null && styles.chipTextActive]}>Kantor Pusat</Text>
-                    </Pressable>
-                    {stores.map((s) => (
-                      <Pressable
-                        key={s.id}
-                        style={[styles.chip, formStoreId === s.id && styles.chipActive]}
-                        onPress={() => setFormStoreId(s.id)}
-                      >
-                        <Text style={[styles.chipText, formStoreId === s.id && styles.chipTextActive]}>{s.name}</Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                </>
-              )}
 
-              <Text style={styles.fieldLabel}>Catatan (opsional)</Text>
+              <Text style={styles.fieldLabel}>Catatan</Text>
               <TextInput
                 style={styles.input}
-                placeholder="Mis. alasan pindah/rusak"
+                placeholder="Mis. alasan rusak/diperbaiki"
                 placeholderTextColor={colors.textMuted}
                 value={formNotes}
                 onChangeText={setFormNotes}
@@ -303,8 +457,139 @@ export default function AssetDetailScreen() {
                 <Button label={submitting ? 'Menyimpan...' : 'Simpan'} onPress={handleSubmit} loading={submitting} style={{ flex: 1 }} />
               </View>
             </View>
+          ) : trOpen ? (
+            <View style={styles.card}>
+              <Text style={styles.formTitle}>Serah Terima</Text>
+              <Text style={styles.helperInline}>
+                Dicatat sebagai riwayat serah terima: siapa menyerahkan ke siapa, kondisi fisik, dan alasannya.
+              </Text>
+
+              <Text style={styles.fieldLabel}>Diserahkan ke</Text>
+              <View style={styles.chipRow}>
+                <Pressable style={[styles.chip, trUserId === null && styles.chipActive]} onPress={() => setTrUserId(null)}>
+                  <Text style={[styles.chipText, trUserId === null && styles.chipTextActive]}>Tanpa pemegang</Text>
+                </Pressable>
+                {holders.map((h) => (
+                  <Pressable key={h.id} style={[styles.chip, trUserId === h.id && styles.chipActive]} onPress={() => setTrUserId(h.id)}>
+                    <Text style={[styles.chipText, trUserId === h.id && styles.chipTextActive]}>{h.name}</Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              {isFullAccess && (
+                <>
+                  <Text style={styles.fieldLabel}>Pindah ke toko</Text>
+                  <View style={styles.chipRow}>
+                    <Pressable style={[styles.chip, trStoreId === null && styles.chipActive]} onPress={() => setTrStoreId(null)}>
+                      <Text style={[styles.chipText, trStoreId === null && styles.chipTextActive]}>Tidak berubah</Text>
+                    </Pressable>
+                    {stores.map((s) => (
+                      <Pressable key={s.id} style={[styles.chip, trStoreId === s.id && styles.chipActive]} onPress={() => setTrStoreId(s.id)}>
+                        <Text style={[styles.chipText, trStoreId === s.id && styles.chipTextActive]}>{s.name}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
+              )}
+
+              <Text style={styles.fieldLabel}>Kondisi fisik saat ini</Text>
+              <View style={styles.chipRow}>
+                {(Object.keys(CONDITION_LABEL) as Condition[]).map((c) => (
+                  <Pressable key={c} style={[styles.chip, trCondition === c && styles.chipActive]} onPress={() => setTrCondition(c)}>
+                    <Text style={[styles.chipText, trCondition === c && styles.chipTextActive]}>{CONDITION_LABEL[c]}</Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <Text style={styles.fieldLabel}>Alasan</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Mis. rotasi tugas, pindah toko"
+                placeholderTextColor={colors.textMuted}
+                value={trReason}
+                onChangeText={setTrReason}
+              />
+
+              {trError && <Text style={styles.errorText}>{trError}</Text>}
+              <View style={styles.formActions}>
+                <Pressable style={styles.cancelButton} onPress={() => { setTrOpen(false); setTrError(null); }} disabled={trSubmitting}>
+                  <Text style={styles.cancelButtonText}>Batal</Text>
+                </Pressable>
+                <Button label={trSubmitting ? 'Menyimpan...' : 'Catat Serah Terima'} onPress={handleTransfer} loading={trSubmitting} style={{ flex: 1 }} />
+              </View>
+            </View>
+          ) : mtOpen ? (
+            <View style={styles.card}>
+              <Text style={styles.formTitle}>Catat Servis</Text>
+
+              <Text style={styles.fieldLabel}>Tanggal servis</Text>
+              <DateField
+                value={mtDate}
+                onChange={(v) => {
+                  setMtDate(v);
+                  if (v && asset.maintenance_interval_days) setMtNext(addDays(v, asset.maintenance_interval_days));
+                }}
+                placeholder="Pilih tanggal"
+                maxDate={todayKey()}
+                colors={colors}
+              />
+
+              <Text style={styles.fieldLabel}>
+                {asset.maintenance_interval_days ? `Jadwal berikutnya (otomatis +${asset.maintenance_interval_days} hari, boleh diubah)` : 'Jadwal berikutnya (opsional)'}
+              </Text>
+              <DateField value={mtNext} onChange={setMtNext} placeholder="Tidak ada jadwal berikutnya" minDate={mtDate || undefined} allowClear colors={colors} />
+
+              <Text style={styles.fieldLabel}>Catatan servis (opsional)</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Mis. ganti oli, kalibrasi"
+                placeholderTextColor={colors.textMuted}
+                value={mtNote}
+                onChangeText={setMtNote}
+              />
+
+              {mtError && <Text style={styles.errorText}>{mtError}</Text>}
+              <View style={styles.formActions}>
+                <Pressable style={styles.cancelButton} onPress={() => { setMtOpen(false); setMtError(null); }} disabled={mtSubmitting}>
+                  <Text style={styles.cancelButtonText}>Batal</Text>
+                </Pressable>
+                <Button label={mtSubmitting ? 'Menyimpan...' : 'Catat Servis'} onPress={handleMaintenance} loading={mtSubmitting} style={{ flex: 1 }} />
+              </View>
+            </View>
+          ) : canModify && !asset.disposed_at ? (
+            <View style={{ gap: spacing.sm }}>
+              <Button label="Serah Terima" onPress={openTransfer} />
+              <Button label="Catat Servis" variant="outline" onPress={openMaintenance} />
+              <Button label="Ubah Status / Catatan" variant="outline" onPress={openEdit} />
+            </View>
           ) : (
-            <Button label="Ubah Status / Lokasi" onPress={openEdit} />
+            <Text style={styles.emptyHistoryText}>
+              {asset.disposed_at
+                ? 'Aset ini sudah dilepas (dijual atau dibuang), jadi tidak bisa diubah dari aplikasi.'
+                : 'Akun ini hanya bisa melihat aset. Minta admin membuka izin Ubah untuk serah terima dan perubahan status.'}
+            </Text>
+          )}
+          {transfers.length > 0 && (
+            <>
+              <Text style={styles.historyTitle}>Serah Terima Terakhir</Text>
+              {transfers.map((t) => (
+                <View key={t.id} style={styles.historyRow}>
+                  <Ionicons name="swap-horizontal-outline" size={20} color={colors.textMuted} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.historyText}>
+                      {t.from_user ?? 'Tanpa pemegang'} → {t.to_user ?? 'Tanpa pemegang'}
+                    </Text>
+                    {t.to_store !== t.from_store && (
+                      <Text style={styles.historyNote}>
+                        Lokasi: {t.from_store ?? 'Kantor Pusat'} → {t.to_store ?? 'Kantor Pusat'}
+                      </Text>
+                    )}
+                    <Text style={styles.historyNote}>Kondisi: {CONDITION_LABEL[t.condition]} — {t.reason}</Text>
+                    <Text style={styles.historyDate}>{t.performed_by ?? 'Sistem'} · {formatDateTime(t.created_at)}</Text>
+                  </View>
+                </View>
+              ))}
+            </>
           )}
 
           <Text style={styles.historyTitle}>Riwayat Perubahan</Text>
@@ -326,6 +611,7 @@ export default function AssetDetailScreen() {
           )}
         </ScrollView>
       )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -400,6 +686,7 @@ function createStyles(colors: typeof darkColors) {
     cancelButton: { paddingHorizontal: spacing.lg, alignItems: 'center', justifyContent: 'center' },
     cancelButtonText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
     historyTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary, marginTop: spacing.sm },
+    helperInline: { fontSize: fontSize.xs, color: colors.textMuted, marginBottom: spacing.sm },
     emptyHistoryText: { fontSize: fontSize.sm, color: colors.textMuted },
     historyRow: {
       flexDirection: 'row',

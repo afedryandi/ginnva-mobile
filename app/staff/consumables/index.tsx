@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, FlatList, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, TextInput, Pressable, FlatList, StyleSheet, ActivityIndicator, RefreshControl, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
@@ -16,7 +16,23 @@ interface ConsumableListItem {
   unit: string;
   current_stock: string;
   reorder_point: string | null;
+  is_low_stock?: boolean;
 }
+
+type FilterMode = 'all' | 'low';
+
+interface ListResponse {
+  data: ConsumableListItem[];
+  total?: number;
+  limit?: number;
+  summary?: { all: number; low: number };
+  can_modify?: boolean;
+}
+
+const FILTERS: { key: FilterMode; label: string }[] = [
+  { key: 'all', label: 'Semua' },
+  { key: 'low', label: 'Menipis' },
+];
 
 // Barang Habis Pakai (lakban, lap, cutter, dll) — sama pola dengan Bahan
 // Baku: tidak ada kode fisik per unit, jadi dicari lewat nama/kode, bukan
@@ -25,45 +41,84 @@ export default function ConsumablesSearchScreen() {
   const { theme, colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
+  // Dibuka dari kartu "Stok perlu perhatian" di Beranda dengan ?filter=low.
+  const params = useLocalSearchParams<{ filter?: string }>();
   const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<FilterMode>(params.filter === 'low' ? 'low' : 'all');
   const [items, setItems] = useState<ConsumableListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [denied, setDenied] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState<ListResponse['summary']>(undefined);
+  const [canModify, setCanModify] = useState(true);
 
-  const fetchItems = useCallback((query: string) => {
+  // Hanya respons permintaan terbaru yang dipakai: ketikan/filter yang berganti cepat tidak boleh ditimpa respons lama yang telat.
+  const latestRequest = useRef(0);
+
+  const fetchItems = useCallback((query: string, mode: FilterMode) => {
+    const requestId = ++latestRequest.current;
     setError(null);
-    return staffApiFetch<{ data: ConsumableListItem[] }>(`/api/staff/consumables?search=${encodeURIComponent(query)}`)
-      .then((res) => setItems(res.data))
+    setDenied(false);
+    return staffApiFetch<ListResponse>(`/api/staff/consumables?search=${encodeURIComponent(query)}${mode !== 'all' ? `&filter=${mode}` : ''}`)
+      .then((res) => {
+        if (requestId !== latestRequest.current) return;
+        setItems(res.data);
+        setTotal(res.total ?? res.data.length);
+        setSummary(res.summary);
+        setCanModify(res.can_modify !== false);
+      })
       .catch((err) => {
+        if (requestId !== latestRequest.current) return;
+        if (err instanceof ApiError && err.status === 403) {
+          setDenied(true);
+          return;
+        }
         setError(err instanceof ApiError ? err.message : 'Gagal memuat daftar barang.');
       });
   }, []);
 
   useEffect(() => {
     setLoading(true);
-    const timeout = setTimeout(() => fetchItems(search).finally(() => setLoading(false)), 300);
+    const timeout = setTimeout(() => fetchItems(search, filter).finally(() => setLoading(false)), 300);
     return () => clearTimeout(timeout);
-  }, [search, fetchItems]);
+  }, [search, filter, fetchItems]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchItems(search);
+    await fetchItems(search, filter);
     setRefreshing(false);
-  }, [fetchItems, search]);
+  }, [fetchItems, search, filter]);
 
   const isLowStock = (item: ConsumableListItem) =>
-    item.reorder_point !== null && parseFloat(item.current_stock) <= parseFloat(item.reorder_point);
+    item.is_low_stock ?? (item.reorder_point !== null && parseFloat(item.current_stock) <= parseFloat(item.reorder_point));
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.sideButton}>
           <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
         </Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>Barang Habis Pakai</Text>
-        <View style={styles.sideButton} />
+        <View style={styles.headerActions}>
+          <Pressable onPress={() => router.push('/staff/stock/scan' as never)} style={styles.sideButton} accessibilityLabel="Scan label stok">
+            <Ionicons name="qr-code-outline" size={22} color={colors.accent} />
+          </Pressable>
+          <Pressable onPress={() => router.push('/staff/consumables/history' as never)} style={styles.sideButton} accessibilityLabel="Riwayat barang habis pakai">
+            <Ionicons name="time-outline" size={22} color={colors.accent} />
+          </Pressable>
+          <Pressable onPress={() => router.push('/staff/stock/card' as never)} style={styles.sideButton} accessibilityLabel="Rekap stok per periode">
+            <Ionicons name="stats-chart-outline" size={22} color={colors.accent} />
+          </Pressable>
+          {canModify ? (
+            <Pressable onPress={() => router.push({ pathname: '/staff/stock/count', params: { type: 'consumables' } } as never)} style={styles.sideButton} accessibilityLabel="Hitung stok sekaligus">
+              <Ionicons name="clipboard-outline" size={22} color={colors.accent} />
+            </Pressable>
+          ) : null}
+        </View>
       </View>
 
       <View style={styles.searchWrap}>
@@ -77,9 +132,31 @@ export default function ConsumablesSearchScreen() {
         />
       </View>
 
+      <View style={styles.chipRow}>
+        {FILTERS.map((f) => (
+          <Pressable key={f.key} style={[styles.chip, filter === f.key && styles.chipActive]} onPress={() => setFilter(f.key)} accessibilityRole="button">
+            <Text style={[styles.chipText, filter === f.key && styles.chipTextActive]}>
+              {f.label}
+              {summary && summary[f.key] > 0 ? ` (${summary[f.key]})` : ''}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {!canModify && !denied && (
+        <Text style={styles.readOnlyNote}>Akun ini hanya bisa melihat stok, tidak bisa mencatat barang masuk/keluar.</Text>
+      )}
+
       {loading ? (
         <View style={styles.centerState}>
           <ActivityIndicator color={colors.accent} />
+        </View>
+      ) : denied ? (
+        <View style={styles.centerState}>
+          <Ionicons name="lock-closed-outline" size={32} color={colors.textMuted} />
+          <Text style={styles.centerStateText}>
+            Akun ini belum diberi akses ke menu Barang Habis Pakai. Minta admin mencentang menu Barang Habis Pakai di Hak Akses.
+          </Text>
         </View>
       ) : error ? (
         <View style={styles.centerState}>
@@ -96,6 +173,13 @@ export default function ConsumablesSearchScreen() {
           keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.listContent}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
+          ListFooterComponent={
+            total > items.length ? (
+              <Text style={styles.footerNote}>
+                Menampilkan {items.length} dari {total} barang. Ketik nama atau kode di kolom cari untuk menemukan yang lain.
+              </Text>
+            ) : null
+          }
           renderItem={({ item }) => (
             <Pressable
               style={styles.row}
@@ -107,6 +191,11 @@ export default function ConsumablesSearchScreen() {
                   <Text style={styles.rowCategory}>
                     {[item.code, item.category].filter(Boolean).join(' · ')}
                   </Text>
+                )}
+                {isLowStock(item) && (
+                  <View style={styles.lowBadge}>
+                    <Text style={styles.lowBadgeText}>Stok Menipis</Text>
+                  </View>
                 )}
               </View>
               {/* Pill+ikon — disatukan dengan pola status di modul lain
@@ -126,6 +215,7 @@ export default function ConsumablesSearchScreen() {
           )}
         />
       )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -144,6 +234,7 @@ function createStyles(colors: typeof darkColors) {
       backgroundColor: colors.bg,
     },
     sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+    headerActions: { flexDirection: 'row' },
     headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
     searchWrap: {
       flexDirection: 'row',
@@ -175,6 +266,15 @@ function createStyles(colors: typeof darkColors) {
     rowName: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
     rowCategory: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
     rowStock: { fontSize: fontSize.sm, fontWeight: '700' },
+    lowBadge: { alignSelf: 'flex-start', marginTop: 4, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm, backgroundColor: colors.danger + '22' },
+    lowBadgeText: { fontSize: fontSize.xs, fontWeight: '700', color: colors.danger },
+    chipRow: { flexDirection: 'row', gap: spacing.xs, paddingHorizontal: spacing.md, paddingTop: spacing.sm },
+    chip: { minHeight: 34, paddingHorizontal: spacing.md, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+    chipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+    chipText: { fontSize: fontSize.xs, fontWeight: '600', color: colors.textSecondary },
+    chipTextActive: { color: '#ffffff' },
+    readOnlyNote: { fontSize: fontSize.xs, color: colors.textMuted, paddingHorizontal: spacing.md, paddingTop: spacing.sm },
+    footerNote: { fontSize: fontSize.xs, color: colors.textMuted, textAlign: 'center', paddingVertical: spacing.md },
     stockBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: radius.pill },
     stockOk: { backgroundColor: colors.successBg },
     stockDanger: { backgroundColor: colors.dangerBg },

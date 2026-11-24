@@ -1,8 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
-  Text,
-  TextInput,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,9 +9,13 @@ import {
   useWindowDimensions,
   Platform,
   Linking,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import { AppText as Text, AppTextInput as TextInput } from '@/components/ui/AppText';
+import { PressableScale } from '@/components/ui/PressableScale';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
@@ -25,7 +27,7 @@ import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'ex
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { Button } from '@/components/ui/Button';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { darkColors, spacing } from '@/constants/theme';
 import { apiFetch, ApiError, API_BASE_URL, getToken } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { useAppTheme } from '@/lib/theme-context';
@@ -212,66 +214,47 @@ function WarrantyResultCard({
       }}
     >
       <View style={styles.resultCard}>
-        <View style={styles.resultHeader}>
-          <View>
-            <Text style={styles.resultCaption}>
-              NOMOR SERTIFIKAT{productLabel ? ` — ${productLabel}` : ''}
-            </Text>
-            <Text style={styles.resultCode}>{warranty.warranty_code}</Text>
-          </View>
+        <View style={styles.resultTop}>
           <View style={[styles.statusBadge, { backgroundColor: statusMeta.bg }]}>
             <Ionicons name={statusMeta.icon} size={14} color={statusMeta.color} />
             <Text style={[styles.statusText, { color: statusMeta.color }]}>
               {statusMeta.label}
             </Text>
           </View>
+          {productLabel ? (
+            <View style={styles.productChip}>
+              <Text style={styles.productChipText}>{productLabel}</Text>
+            </View>
+          ) : null}
         </View>
 
-        <View style={styles.divider} />
+        <View style={styles.codeBox}>
+          <Text style={styles.resultCaption}>Nomor sertifikat</Text>
+          <Text style={styles.resultCode} selectable>{warranty.warranty_code}</Text>
+        </View>
 
-        <View style={styles.fieldRow}>
-          <Text style={styles.fieldLabel}>Nama Pemilik</Text>
-          <Text style={styles.fieldValue}>{warranty.customer_name}</Text>
+        <View style={styles.infoList}>
+          <InfoRow icon="person-outline" label="Nama Pemilik" value={warranty.customer_name} styles={styles} colors={colors} />
+          <InfoRow icon="shield-checkmark-outline" label="Produk Terpasang" value={warranty.product_series} accent styles={styles} colors={colors} />
+          <InfoRow icon="car-sport-outline" label="Kendaraan" value={`${warranty.car_type} (${warranty.car_plate})`} styles={styles} colors={colors} />
+          {warranty.vin ? <InfoRow icon="barcode-outline" label="VIN (No. Rangka)" value={warranty.vin} styles={styles} colors={colors} /> : null}
+          <InfoRow icon="storefront-outline" label="Dealer Pelaksana" value={warranty.dealer_name} styles={styles} colors={colors} />
         </View>
-        <View style={styles.fieldRow}>
-          <Text style={styles.fieldLabel}>Produk Terpasang</Text>
-          <Text style={[styles.fieldValue, { color: colors.accent }]}>
-            {warranty.product_series}
-          </Text>
-        </View>
-        <View style={styles.fieldRow}>
-          <Text style={styles.fieldLabel}>Kendaraan</Text>
-          <Text style={styles.fieldValue}>
-            {warranty.car_type} ({warranty.car_plate})
-          </Text>
-        </View>
-        {warranty.vin ? (
-          <View style={styles.fieldRow}>
-            <Text style={styles.fieldLabel}>VIN (No. Rangka)</Text>
-            <Text style={styles.fieldValue}>{warranty.vin}</Text>
-          </View>
-        ) : null}
 
-        <View style={styles.fieldRow}>
-          <Text style={styles.fieldLabel}>Dealer Pelaksana</Text>
-          <Text style={styles.fieldValue}>{warranty.dealer_name}</Text>
-        </View>
-        <View style={styles.fieldRowSplit}>
-          <View style={styles.fieldHalf}>
+        <View style={styles.dateRow}>
+          <View style={styles.dateTile}>
             <Text style={styles.fieldLabel}>Tgl. Pemasangan</Text>
             <Text style={styles.fieldValue}>{formatDate(warranty.installation_date)}</Text>
           </View>
-          <View style={styles.fieldHalf}>
-            <Text style={styles.fieldLabel}>Masa Berlaku Hingga</Text>
-            <Text style={[styles.fieldValue, { color: colors.danger }]}>
-              {formatDate(warranty.expiry_date)}
-            </Text>
+          <View style={styles.dateTile}>
+            <Text style={styles.fieldLabel}>Berlaku Hingga</Text>
+            <Text style={[styles.fieldValue, { color: colors.danger }]}>{formatDate(warranty.expiry_date)}</Text>
           </View>
         </View>
 
         {warranty.status === 'active' && warranty.remaining_days > 0 && (
           <View style={styles.remainingBox}>
-            <Ionicons name="calendar-outline" size={16} color={colors.accent} />
+            <Ionicons name="time-outline" size={18} color={colors.accent} />
             <Text style={styles.remainingText}>
               Sisa {warranty.remaining_days} hari masa garansi
             </Text>
@@ -280,32 +263,33 @@ function WarrantyResultCard({
 
         {/* Tombol hubungkan ke akun — muncul kalau login & warranty belum ada pemilik */}
         {isLoggedIn && !warranty.has_owner && !claimSuccess && !warranty.masked && (
-          <Pressable
+          <PressableScale
             style={[styles.claimButton, claiming && styles.downloadButtonDisabled]}
             onPress={handleClaim}
             disabled={claiming}
+            accessibilityRole="button"
           >
             {claiming ? (
               <ActivityIndicator color="#ffffff" />
             ) : (
               <>
-                <Ionicons name="link-outline" size={18} color="#ffffff" />
+                <Ionicons name="link-outline" size={20} color="#ffffff" />
                 <Text style={styles.downloadButtonText}>Hubungkan ke Akun Saya</Text>
               </>
             )}
-          </Pressable>
+          </PressableScale>
         )}
         {claimError && <Text style={styles.downloadErrorText}>{claimError}</Text>}
         {claimSuccess && (
           <View style={styles.claimSuccessBox}>
-            <Ionicons name="checkmark-circle" size={16} color={colors.success} />
-            <Text style={styles.claimSuccessText}>Garansi berhasil dihubungkan ke akun Anda!</Text>
+            <Ionicons name="checkmark-circle" size={18} color={colors.success} />
+            <Text style={styles.claimSuccessText}>Garansi berhasil dihubungkan ke akunmu!</Text>
           </View>
         )}
 
         {warranty.status === 'pending_review' && (
           <Text style={styles.noteText}>
-            Pendaftaran garansi Anda sedang diverifikasi oleh tim admin. Sertifikat
+            Pendaftaran garansimu sedang diverifikasi oleh tim admin. Sertifikat
             resmi akan tersedia untuk diunduh setelah disetujui.
           </Text>
         )}
@@ -325,20 +309,21 @@ function WarrantyResultCard({
         )}
 
         {warranty.review_status === 'approved' && !warranty.masked && (
-          <Pressable
+          <PressableScale
             style={[styles.downloadButton, downloading && styles.downloadButtonDisabled]}
             onPress={handleDownload}
             disabled={downloading}
+            accessibilityRole="button"
           >
             {downloading ? (
               <ActivityIndicator color="#ffffff" />
             ) : (
               <>
-                <Ionicons name="download-outline" size={18} color="#ffffff" />
+                <Ionicons name="download-outline" size={20} color="#ffffff" />
                 <Text style={styles.downloadButtonText}>Unduh Garansi</Text>
               </>
             )}
-          </Pressable>
+          </PressableScale>
         )}
 
         {/* Hasil dari pencarian via nomor telepon disamarkan
@@ -350,7 +335,7 @@ function WarrantyResultCard({
             Hasil pencarian lewat nomor telepon disamarkan sebagian.
             Untuk melihat data lengkap & mengunduh sertifikat, cari
             dengan nomor E-Warranty/plat nomor/VIN yang tertera di
-            kendaraan/sertifikat, atau login ke akun Anda (garansi
+            kendaraan/sertifikat, atau login ke akunmu (garansi
             yang sudah dihubungkan otomatis muncul lengkap di
             "Garansi Saya").
           </Text>
@@ -359,6 +344,28 @@ function WarrantyResultCard({
         {downloadError && <Text style={styles.downloadErrorText}>{downloadError}</Text>}
       </View>
     </Animated.View>
+  );
+}
+
+// Satu baris info berikon (pemilik, produk, kendaraan, dealer).
+function InfoRow({ icon, label, value, accent, styles, colors }: {
+  icon: React.ComponentProps<typeof Ionicons>['name'];
+  label: string;
+  value: string;
+  accent?: boolean;
+  styles: Styles;
+  colors: typeof darkColors;
+}) {
+  return (
+    <View style={styles.infoRow}>
+      <View style={styles.infoIcon}>
+        <Ionicons name={icon} size={18} color={colors.accent} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.fieldLabel}>{label}</Text>
+        <Text style={[styles.fieldValue, accent && { color: colors.accent }]}>{value}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -385,6 +392,7 @@ export default function WarrantyCheckScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanLocked, setScanLocked] = useState(false);
   const [cameraError, setCameraError] = useState(false);
+  const [fieldFocused, setFieldFocused] = useState(false);
 
   const runSearch = (rawCode: string) => {
     const trimmed = rawCode.trim();
@@ -408,7 +416,7 @@ export default function WarrantyCheckScreen() {
         setError(
           err instanceof ApiError
             ? err.message
-            : 'Terjadi kesalahan koneksi. Periksa internet Anda dan coba lagi.'
+            : 'Terjadi kesalahan koneksi. Periksa internetmu dan coba lagi.'
         );
       })
       .finally(() => setLoading(false));
@@ -464,78 +472,78 @@ export default function WarrantyCheckScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-      <View style={styles.header}>
+
+      <LinearGradient pointerEvents="none" colors={[colors.accentSoft, 'transparent']} start={{ x: 1, y: 0 }} end={{ x: 0.2, y: 1 }} style={styles.glow} />
+
+      <View style={styles.topRow}>
         {router.canGoBack() ? (
-          <Pressable onPress={() => router.back()} style={styles.sideButton}>
-            <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+          <Pressable onPress={() => router.back()} style={styles.backButton} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kembali">
+            <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
           </Pressable>
-        ) : (
-          <View style={styles.sideButton} />
-        )}
-        <Text style={styles.headerTitle} numberOfLines={1}>Cek Garansi</Text>
-        <View style={styles.sideButton} />
+        ) : null}
+        <Text style={styles.topTitle} numberOfLines={1}>Cek Garansi</Text>
       </View>
 
       {/* ===== Toggle Manual / Scan ===== */}
-      <View style={styles.modeToggle}>
-        <Pressable
-          style={[styles.modeButton, mode === 'manual' && styles.modeButtonActive]}
-          onPress={() => setMode('manual')}
-        >
-          <Ionicons
-            name="create-outline"
-            size={16}
-            color={mode === 'manual' ? '#ffffff' : colors.textSecondary}
-          />
-          <Text style={[styles.modeButtonText, mode === 'manual' && styles.modeButtonTextActive]}>
-            Input Manual
-          </Text>
-        </Pressable>
-        <Pressable
-          style={[styles.modeButton, mode === 'scan' && styles.modeButtonActive]}
-          onPress={switchToScan}
-        >
-          <Ionicons
-            name="scan-outline"
-            size={16}
-            color={mode === 'scan' ? '#ffffff' : colors.textSecondary}
-          />
-          <Text style={[styles.modeButtonText, mode === 'scan' && styles.modeButtonTextActive]}>
-            Scan QR/Barcode
-          </Text>
-        </Pressable>
+      <View style={styles.modeWrap}>
+        <View style={styles.modeToggle}>
+          <Pressable
+            style={[styles.modeButton, mode === 'manual' && styles.modeButtonActive]}
+            onPress={() => setMode('manual')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: mode === 'manual' }}
+          >
+            <Ionicons name="create-outline" size={16} color={mode === 'manual' ? '#ffffff' : colors.textSecondary} />
+            <Text style={[styles.modeButtonText, mode === 'manual' && styles.modeButtonTextActive]}>Input Manual</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.modeButton, mode === 'scan' && styles.modeButtonActive]}
+            onPress={switchToScan}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: mode === 'scan' }}
+          >
+            <Ionicons name="scan-outline" size={16} color={mode === 'scan' ? '#ffffff' : colors.textSecondary} />
+            <Text style={[styles.modeButtonText, mode === 'scan' && styles.modeButtonTextActive]}>Scan QR/Barcode</Text>
+          </Pressable>
+        </View>
       </View>
 
       {mode === 'scan' ? (
         <View style={styles.scannerWrap}>
           {!permission?.granted ? (
             <View style={styles.permissionState}>
-              <Ionicons name="camera-outline" size={32} color={colors.textMuted} />
+              <View style={styles.permissionIcon}>
+                <Ionicons name="camera-outline" size={30} color="#ffffff" />
+              </View>
               <Text style={styles.permissionText}>
                 {permission && !permission.canAskAgain
                   ? 'Izin kamera ditolak permanen. Aktifkan lewat Pengaturan untuk memindai kode garansi.'
                   : 'Izin kamera diperlukan untuk memindai kode garansi.'}
               </Text>
-              <Pressable
+              <PressableScale
                 style={styles.retryButton}
                 onPress={permission && !permission.canAskAgain ? Linking.openSettings : switchToScan}
+                accessibilityRole="button"
               >
                 <Text style={styles.retryText}>
                   {permission && !permission.canAskAgain ? 'Buka Pengaturan' : 'Izinkan Kamera'}
                 </Text>
-              </Pressable>
+              </PressableScale>
             </View>
           ) : cameraError ? (
             <View style={styles.permissionState}>
-              <Ionicons name="alert-circle-outline" size={32} color={colors.danger} />
+              <View style={styles.permissionIcon}>
+                <Ionicons name="alert-circle-outline" size={30} color="#ffffff" />
+              </View>
               <Text style={styles.permissionText}>
                 Kamera gagal dibuka. Coba restart aplikasi atau periksa izin kamera di pengaturan.
               </Text>
-              <Pressable style={styles.retryButton} onPress={() => setCameraError(false)}>
+              <PressableScale style={styles.retryButton} onPress={() => setCameraError(false)} accessibilityRole="button">
                 <Text style={styles.retryText}>Coba Lagi</Text>
-              </Pressable>
+              </PressableScale>
             </View>
           ) : (
             <>
@@ -551,9 +559,11 @@ export default function WarrantyCheckScreen() {
               <View style={styles.scanFrameContainer} pointerEvents="none">
                 <View style={styles.scanFrame} />
               </View>
-              <Text style={styles.scanHint}>
-                Arahkan kamera ke kode QR/barcode pada stiker garansi
-              </Text>
+              <View style={styles.scanHintWrap} pointerEvents="none">
+                <Text style={styles.scanHint}>
+                  Arahkan kamera ke kode QR/barcode pada stiker garansi
+                </Text>
+              </View>
             </>
           )}
         </View>
@@ -561,6 +571,7 @@ export default function WarrantyCheckScreen() {
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
           <Text style={styles.intro}>
             Masukkan nomor E-Warranty atau plat nomor kendaraan, atau ketuk
@@ -568,16 +579,21 @@ export default function WarrantyCheckScreen() {
           </Text>
 
           <View style={styles.searchRow}>
-            <TextInput
-              style={styles.input}
-              placeholder="Masukkan kode garansi Anda"
-              placeholderTextColor={colors.textMuted}
-              value={code}
-              onChangeText={setCode}
-              autoCapitalize="characters"
-              onSubmitEditing={handleSearch}
-              returnKeyType="search"
-            />
+            <View style={[styles.field, fieldFocused && styles.fieldFocused]}>
+              <Ionicons name="search-outline" size={20} color={fieldFocused ? colors.accent : colors.textMuted} />
+              <TextInput
+                style={styles.input}
+                placeholder="Masukkan kode garansimu"
+                placeholderTextColor={colors.textMuted}
+                value={code}
+                onChangeText={setCode}
+                autoCapitalize="characters"
+                onSubmitEditing={handleSearch}
+                returnKeyType="search"
+                onFocus={() => setFieldFocused(true)}
+                onBlur={() => setFieldFocused(false)}
+              />
+            </View>
             <Button label="Cari" onPress={handleSearch} loading={loading} style={styles.searchButton} />
           </View>
 
@@ -590,7 +606,7 @@ export default function WarrantyCheckScreen() {
 
           {hasSearched && !loading && error && (
             <View style={styles.errorCard}>
-              <Ionicons name="alert-circle" size={20} color={colors.danger} />
+              <Ionicons name="alert-circle-outline" size={20} color={colors.danger} />
               <Text style={styles.errorText}>{error}</Text>
             </View>
           )}
@@ -628,7 +644,9 @@ export default function WarrantyCheckScreen() {
 
           {!hasSearched && (
             <View style={styles.placeholder}>
-              <Ionicons name="shield-checkmark-outline" size={36} color={colors.textMuted} />
+              <View style={styles.placeholderIcon}>
+                <Ionicons name="shield-checkmark-outline" size={30} color={colors.accent} />
+              </View>
               <Text style={styles.placeholderText}>
                 Hasil pencarian data garansi akan muncul di sini.
               </Text>
@@ -636,335 +654,88 @@ export default function WarrantyCheckScreen() {
           )}
         </ScrollView>
       )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 function createStyles(colors: typeof darkColors, scanFrameSize: number) {
   return StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.bg,
-  },
-  sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-  scrollContent: {
-    padding: spacing.md,
-    paddingBottom: spacing.xxl,
-  },
-  modeToggle: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.xs,
-  },
-  modeButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-    height: 40,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  modeButtonActive: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
-  },
-  modeButtonText: {
-    fontSize: fontSize.sm,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  modeButtonTextActive: {
-    color: '#ffffff',
-  },
-  scannerWrap: {
-    flex: 1,
-    margin: spacing.md,
-    borderRadius: radius.lg,
-    overflow: 'hidden',
-    backgroundColor: '#000000',
-  },
-  camera: {
-    flex: 1,
-  },
-  scanFrameContainer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingBottom: 40, // slight upward offset so hint text has room below
-  },
-  scanFrame: {
-    width: scanFrameSize,
-    height: scanFrameSize,
-    borderWidth: 2,
-    borderColor: '#ffffff',
-    borderRadius: radius.lg,
-  },
-  scanHint: {
-    position: 'absolute',
-    bottom: spacing.lg,
-    left: spacing.lg,
-    right: spacing.lg,
-    textAlign: 'center',
-    color: '#ffffff',
-    fontSize: fontSize.sm,
-    fontWeight: '600',
-  },
-  permissionState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    padding: spacing.xl,
-  },
-  permissionText: {
-    fontSize: fontSize.sm,
-    color: '#ffffff',
-    textAlign: 'center',
-  },
-  intro: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    lineHeight: 20,
-    marginBottom: spacing.md,
-  },
-  searchRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
-  },
-  input: {
-    flex: 1,
-    height: 48,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-  },
-  searchButton: {
-    paddingHorizontal: spacing.lg,
-  },
-  centerState: {
-    alignItems: 'center',
-    paddingVertical: spacing.xl,
-    gap: spacing.sm,
-  },
-  centerStateText: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-  },
-  errorCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    backgroundColor: colors.dangerBg,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-  },
-  errorText: {
-    flex: 1,
-    fontSize: fontSize.sm,
-    color: colors.danger,
-  },
-  multiResultNote: {
-    fontSize: fontSize.xs,
-    fontWeight: '700',
-    color: colors.textSecondary,
-  },
-  resultCard: {
-    gap: 0,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  resultHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  resultCaption: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  resultCode: {
-    fontSize: fontSize.lg,
-    fontWeight: '800',
-    color: colors.textPrimary,
-    marginTop: 2,
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
-  },
-  statusText: {
-    fontSize: fontSize.xs,
-    fontWeight: '700',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: colors.border,
-    marginVertical: spacing.md,
-  },
-  fieldRow: {
-    marginBottom: spacing.sm,
-  },
-  fieldRowSplit: {
-    flexDirection: 'row',
-    gap: spacing.md,
-    marginBottom: spacing.sm,
-  },
-  fieldHalf: {
-    flex: 1,
-  },
-  fieldLabel: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    marginBottom: 2,
-  },
-  fieldValue: {
-    fontSize: fontSize.sm,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  remainingBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.accentSoft,
-    borderRadius: radius.md,
-    padding: spacing.sm,
-    marginTop: spacing.xs,
-  },
-  remainingText: {
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-    fontWeight: '600',
-  },
-  noteText: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    marginTop: spacing.sm,
-    lineHeight: 19,
-  },
-  downloadButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.accent,
-    borderRadius: radius.pill,
-    height: 46,
-    marginTop: spacing.md,
-  },
-  downloadButtonDisabled: {
-    opacity: 0.7,
-  },
-  downloadButtonText: {
-    color: '#ffffff',
-    fontSize: fontSize.sm,
-    fontWeight: '700',
-  },
-  downloadErrorText: {
-    fontSize: fontSize.xs,
-    color: colors.danger,
-    textAlign: 'center',
-    marginTop: spacing.sm,
-  },
-  claimButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.textMuted,
-    borderRadius: radius.pill,
-    height: 46,
-    marginTop: spacing.sm,
-  },
-  claimSuccessBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.successBg,
-    borderRadius: radius.md,
-    padding: spacing.sm,
-    marginTop: spacing.sm,
-  },
-  claimSuccessText: {
-    flex: 1,
-    fontSize: fontSize.sm,
-    color: colors.success,
-    fontWeight: '600',
-  },
-  techSection: {
-    backgroundColor: colors.accentSoft,
-    borderRadius: radius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.sm,
-    gap: 0,
-  },
-  techSectionTitle: {
-    fontSize: fontSize.xs,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    letterSpacing: 0.5,
-    marginBottom: spacing.sm,
-  },
-  fieldSub: {
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
-    marginTop: 1,
-  },
-  placeholder: {
-    alignItems: 'center',
-    paddingVertical: spacing.xxl,
-    gap: spacing.sm,
-  },
-  placeholderText: {
-    fontSize: fontSize.sm,
-    color: colors.textMuted,
-    textAlign: 'center',
-  },
-  retryButton: {
-    marginTop: spacing.xs,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.accent,
-    borderRadius: radius.pill,
-  },
-  retryText: {
-    color: '#ffffff',
-    fontSize: fontSize.sm,
-    fontWeight: '600',
-  },
+    container: { flex: 1, backgroundColor: colors.bg },
+    glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 280 },
+
+    topRow: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 44, paddingHorizontal: 24, paddingTop: spacing.md, paddingBottom: spacing.sm },
+    backButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceElevated },
+    topTitle: { flex: 1, fontSize: 22, fontWeight: '800', letterSpacing: -0.5, color: colors.textPrimary },
+
+    // Pilihan cara mencari: satu pil abu muda berisi dua segmen; yang dipilih merah.
+    modeWrap: { paddingHorizontal: 24, paddingBottom: spacing.sm },
+    modeToggle: { flexDirection: 'row', padding: 4, borderRadius: 24, backgroundColor: colors.surfaceElevated },
+    modeButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, height: 40, borderRadius: 20 },
+    modeButtonActive: { backgroundColor: colors.accent },
+    modeButtonText: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
+    modeButtonTextActive: { color: '#ffffff', fontWeight: '800' },
+
+    scrollContent: { paddingHorizontal: 24, paddingTop: spacing.xs, paddingBottom: 56 },
+    intro: { fontSize: 14, lineHeight: 21, color: colors.textSecondary, marginBottom: 18 },
+    searchRow: { flexDirection: 'row', gap: 10, marginBottom: 22 },
+    field: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, height: 56, paddingHorizontal: 18, borderRadius: 28, borderWidth: 1.5, borderColor: 'transparent', backgroundColor: colors.surfaceElevated },
+    fieldFocused: { borderColor: colors.accent, backgroundColor: colors.bg },
+    input: { flex: 1, height: 54, fontSize: 15, fontWeight: '600', color: colors.textPrimary, padding: 0 },
+    searchButton: { height: 56, borderRadius: 28, paddingHorizontal: 24 },
+
+    // Pemindai: sudut besar dan bingkai bidik merah merek.
+    scannerWrap: { flex: 1, marginHorizontal: 24, marginBottom: 24, borderRadius: 32, overflow: 'hidden', backgroundColor: '#000000' },
+    camera: { flex: 1 },
+    scanFrameContainer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', paddingBottom: 40 },
+    scanFrame: { width: scanFrameSize, height: scanFrameSize, borderWidth: 3, borderColor: colors.accent, borderRadius: 28 },
+    scanHintWrap: { position: 'absolute', bottom: 20, left: 20, right: 20, alignItems: 'center' },
+    scanHint: { textAlign: 'center', color: '#ffffff', fontSize: 13, fontWeight: '700', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, overflow: 'hidden', backgroundColor: 'rgba(0,0,0,0.55)' },
+    permissionState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, padding: 32 },
+    permissionIcon: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.15)' },
+    permissionText: { fontSize: 14, lineHeight: 21, color: '#ffffff', textAlign: 'center' },
+    retryButton: { height: 48, paddingHorizontal: 28, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent },
+    retryText: { color: '#ffffff', fontSize: 14, fontWeight: '800' },
+
+    centerState: { alignItems: 'center', paddingVertical: spacing.xl, gap: 10 },
+    centerStateText: { fontSize: 14, color: colors.textSecondary },
+    errorCard: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 16, borderRadius: 20, backgroundColor: colors.dangerBg },
+    errorText: { flex: 1, fontSize: 13, lineHeight: 19, fontWeight: '600', color: colors.danger },
+    multiResultNote: { fontSize: 13, fontWeight: '700', color: colors.textSecondary, marginLeft: 4 },
+
+    // Kartu hasil.
+    resultCard: { gap: 16, padding: 20, borderRadius: 32, backgroundColor: colors.surfaceElevated },
+    resultTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+    statusBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 30, paddingHorizontal: 12, borderRadius: 15 },
+    statusText: { fontSize: 12, fontWeight: '800' },
+    productChip: { height: 28, paddingHorizontal: 12, borderRadius: 14, justifyContent: 'center', backgroundColor: colors.accentSoft },
+    productChipText: { fontSize: 12, fontWeight: '800', color: colors.accent },
+    codeBox: { alignItems: 'center', gap: 4, paddingVertical: 16, borderRadius: 22, backgroundColor: colors.bg },
+    resultCaption: { fontSize: 11, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase', color: colors.textMuted },
+    resultCode: { fontSize: 24, fontWeight: '800', letterSpacing: 2, color: colors.accent },
+
+    infoList: { gap: 12 },
+    infoRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+    infoIcon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
+    fieldLabel: { fontSize: 12, color: colors.textMuted },
+    fieldValue: { fontSize: 15, fontWeight: '700', color: colors.textPrimary, marginTop: 2 },
+    dateRow: { flexDirection: 'row', gap: 10 },
+    dateTile: { flex: 1, padding: 14, borderRadius: 20, backgroundColor: colors.bg },
+
+    remainingBox: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: 20, backgroundColor: colors.accentSoft },
+    remainingText: { flex: 1, fontSize: 14, fontWeight: '800', color: colors.textPrimary },
+    noteText: { fontSize: 13, lineHeight: 20, color: colors.textSecondary },
+
+    downloadButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 54, borderRadius: 27, backgroundColor: colors.accent },
+    claimButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 54, borderRadius: 27, backgroundColor: colors.textPrimary },
+    downloadButtonDisabled: { opacity: 0.7 },
+    downloadButtonText: { color: '#ffffff', fontSize: 15, fontWeight: '800' },
+    downloadErrorText: { fontSize: 12, lineHeight: 18, fontWeight: '600', color: colors.danger, textAlign: 'center' },
+    claimSuccessBox: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: 18, backgroundColor: colors.successBg },
+    claimSuccessText: { flex: 1, fontSize: 13, fontWeight: '700', color: colors.success },
+
+    placeholder: { alignItems: 'center', paddingVertical: 48, gap: 14 },
+    placeholderIcon: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+    placeholderText: { fontSize: 14, lineHeight: 21, color: colors.textMuted, textAlign: 'center' },
   });
 }

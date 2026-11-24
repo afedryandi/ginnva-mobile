@@ -1,12 +1,14 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { Button } from '@/components/ui/Button';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { PressableScale } from '@/components/ui/PressableScale';
+import { FadeInUp } from '@/components/ui/FadeInUp';
+import { darkColors, spacing } from '@/constants/theme';
 import { useAppTheme } from '@/lib/theme-context';
 
 const PRODUCT_IMAGES: Record<string, number> = {
@@ -234,17 +236,21 @@ function FaqAccordionItem({ item, colors }: { item: FaqItem; colors: typeof dark
   const [open, setOpen] = useState(false);
   const faqStyles = useMemo(() => createFaqStyles(colors), [colors]);
   return (
-    <Pressable style={faqStyles.item} onPress={() => setOpen((v) => !v)}>
+    <PressableScale
+      style={[faqStyles.item, open && faqStyles.itemOpen]}
+      onPress={() => setOpen((v) => !v)}
+      scaleTo={0.99}
+      accessibilityRole="button"
+      accessibilityState={{ expanded: open }}
+    >
       <View style={faqStyles.qRow}>
         <Text style={faqStyles.question}>{item.q}</Text>
-        <Ionicons
-          name={open ? 'chevron-up' : 'chevron-down'}
-          size={18}
-          color={colors.textMuted}
-        />
+        <View style={[faqStyles.chevron, open && faqStyles.chevronOpen]}>
+          <Ionicons name={open ? 'remove' : 'add'} size={18} color={open ? '#ffffff' : colors.textSecondary} />
+        </View>
       </View>
       {open && <Text style={faqStyles.answer}>{item.a}</Text>}
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -256,125 +262,130 @@ export default function ProductDetailScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
 
+  const backButton = router.canGoBack() ? (
+    <Pressable onPress={() => router.back()} style={styles.backButton} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kembali">
+      <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+    </Pressable>
+  ) : null;
+
   if (!detail) {
     return (
-      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <View style={[styles.container, { paddingTop: insets.top }]}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-        <View style={styles.header}>
-          {router.canGoBack() ? (
-            <Pressable onPress={() => router.back()} style={styles.sideButton}>
-              <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
-            </Pressable>
-          ) : (
-            <View style={styles.sideButton} />
-          )}
-          <Text style={styles.headerTitle} numberOfLines={1}>Produk</Text>
-          <View style={styles.sideButton} />
-        </View>
+        <View style={styles.plainTop}>{backButton}</View>
         <View style={styles.centerState}>
-          <Ionicons name="alert-circle-outline" size={32} color={colors.textMuted} />
+          <View style={styles.centerIcon}>
+            <Ionicons name="alert-circle-outline" size={30} color={colors.accent} />
+          </View>
           <Text style={styles.centerStateText}>Kategori produk tidak ditemukan.</Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-      <View style={styles.header}>
-        {router.canGoBack() ? (
-          <Pressable onPress={() => router.back()} style={styles.sideButton}>
-            <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
-          </Pressable>
-        ) : (
-          <View style={styles.sideButton} />
-        )}
-        <Text style={styles.headerTitle} numberOfLines={1}>{detail.title}</Text>
-        <View style={styles.sideButton} />
-      </View>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* CTA dipindah keluar ScrollView jadi footer menempel (lihat di
-            bawah) — supaya selalu terlihat, tidak perlu scroll sampai
-            habis melewati tabel spesifikasi + FAQ yang bisa panjang. */}
+    <View style={styles.container}>
+      {/* Foto penuh di atas: ikon status selalu terang karena latar foto gelap. */}
+      <StatusBar style="light" />
 
-        {/* Hero image */}
-        <Image
-          source={PRODUCT_IMAGES[category] ?? require('@/assets/images/car-window-film.webp')}
-          style={styles.heroImage}
-          contentFit="cover"
-        />
-
-        {/* Intro */}
-        <View style={styles.introBlock}>
-          <Text style={styles.subTitle}>{detail.subTitle}</Text>
-          <Text style={styles.enTitle}>{detail.enTitle}</Text>
-          <Text style={styles.description}>{detail.description}</Text>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.hero}>
+          <Image
+            source={PRODUCT_IMAGES[category] ?? require('@/assets/images/car-window-film.webp')}
+            style={StyleSheet.absoluteFillObject}
+            contentFit="cover"
+          />
+          <LinearGradient
+            colors={['rgba(0,0,0,0.45)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.25)']}
+            locations={[0, 0.45, 1]}
+            style={StyleSheet.absoluteFillObject}
+          />
+          {detail.comingSoon && (
+            <View style={[styles.heroBadge, { top: insets.top + 12 }]}>
+              <Ionicons name="time-outline" size={13} color="#ffffff" />
+              <Text style={styles.heroBadgeText}>Segera Hadir</Text>
+            </View>
+          )}
         </View>
 
-        {/* Coming Soon badge */}
-        {detail.comingSoon && (
-          <View style={styles.comingSoonBox}>
-            <Ionicons name="time-outline" size={22} color={colors.textMuted} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.comingSoonTitle}>Segera Hadir di Indonesia</Text>
-              <Text style={styles.comingSoonText}>
-                Produk ini sedang dalam persiapan. Hubungi kami untuk informasi ketersediaan lebih lanjut.
-              </Text>
-            </View>
-          </View>
-        )}
+        {/* Isi menimpa foto dengan sudut atas membulat */}
+        <View style={styles.sheet}>
+          <FadeInUp>
+            <Text style={styles.subTitle}>{detail.subTitle}</Text>
+            <Text style={styles.enTitle}>{detail.enTitle}</Text>
+            <Text style={styles.description}>{detail.description}</Text>
+          </FadeInUp>
 
-        {/* Tabel Spesifikasi */}
-        {detail.specs && detail.specs.length > 0 && (
-          <>
-            <View style={styles.sectionHeader}>
+          {detail.comingSoon && (
+            <View style={styles.comingSoonBox}>
+              <View style={styles.comingSoonIcon}>
+                <Ionicons name="time-outline" size={22} color={colors.accent} />
+              </View>
+              <View style={styles.comingSoonBody}>
+                <Text style={styles.comingSoonTitle}>Segera Hadir di Indonesia</Text>
+                <Text style={styles.comingSoonText}>
+                  Produk ini sedang dalam persiapan. Hubungi kami untuk informasi ketersediaan lebih lanjut.
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* Spesifikasi: satu kartu per seri */}
+          {detail.specs && detail.specs.length > 0 && (
+            <View style={styles.section}>
               <Text style={styles.sectionTitle}>Spesifikasi Teknis</Text>
-            </View>
-            <View style={styles.specsCard}>
-              {detail.specs.map((row, i) => (
-                <View
-                  key={row.label}
-                  style={[
-                    styles.specRow,
-                    i !== (detail.specs as SpecRow[]).length - 1 && styles.specRowBorder,
-                  ]}
-                >
-                  <Text style={styles.specLabel}>{row.label}</Text>
-                  <View style={styles.specGrid}>
-                    {row.values.map((v) => (
-                      <View key={v.caption} style={styles.specItem}>
-                        <Text style={styles.specCaption}>{v.caption}</Text>
-                        <Text style={styles.specValue}>{v.value}</Text>
-                      </View>
-                    ))}
+              {detail.specs.map((row) => {
+                // Garansi tampil sebagai lencana di kepala kartu; sisanya jadi
+                // kotak-kotak kecil supaya angka mudah dipindai.
+                const warranty = row.values.find((v) => v.caption === 'Garansi');
+                const rest = row.values.filter((v) => v.caption !== 'Garansi');
+                return (
+                  <View key={row.label} style={styles.specCard}>
+                    <View style={styles.specHead}>
+                      <Text style={styles.specLabel} numberOfLines={2}>{row.label}</Text>
+                      {warranty ? (
+                        <View style={styles.warrantyPill}>
+                          <Ionicons name="shield-checkmark-outline" size={14} color={colors.accent} />
+                          <Text style={styles.warrantyText}>{warranty.value}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <View style={styles.specGrid}>
+                      {rest.map((v) => (
+                        <View key={v.caption} style={styles.specTile}>
+                          <Text style={styles.specCaption}>{v.caption}</Text>
+                          <Text style={styles.specValue}>{v.value}</Text>
+                        </View>
+                      ))}
+                    </View>
                   </View>
-                </View>
-              ))}
+                );
+              })}
             </View>
-          </>
-        )}
+          )}
 
-        {/* FAQ */}
-        {detail.faqs.length > 0 && (
-          <>
-            <View style={styles.sectionHeader}>
+          {/* FAQ */}
+          {detail.faqs.length > 0 && (
+            <View style={styles.section}>
               <Text style={styles.sectionTitle}>Pertanyaan Umum</Text>
-            </View>
-            <View style={styles.faqCard}>
               {detail.faqs.map((item) => (
                 <FaqAccordionItem key={item.q} item={item} colors={colors} />
               ))}
             </View>
-          </>
-        )}
-
+          )}
+        </View>
       </ScrollView>
+
+      {/* Tombol kembali mengambang di atas foto */}
+      <View style={[styles.floatingTop, { top: insets.top + 8 }]} pointerEvents="box-none">
+        {backButton}
+      </View>
 
       {/* CTA — footer menempel di luar ScrollView, selalu terlihat */}
       <View style={[styles.ctaBlock, { paddingBottom: insets.bottom > 0 ? insets.bottom : spacing.md }]}>
-        <Button
-          label={detail.comingSoon ? 'Daftarkan Minat Saya' : 'Ajukan Penawaran'}
+        <PressableScale
+          style={styles.ctaButton}
+          accessibilityRole="button"
           onPress={() => {
             if (detail.comingSoon) {
               // Produk belum dijual — arahkan ke form /inquiry (tersimpan
@@ -382,7 +393,7 @@ export default function ProductDetailScreen() {
               // WhatsApp langsung — supaya minat customer benar-benar
               // tercatat di sistem, bukan cuma jadi chat yang gampang
               // hilang. Nama produk dikirim lewat param supaya form bisa
-              // prefill catatan (ProductInquiry tidak punya kolom produk
+              // menampilkannya (ProductInquiry tidak punya kolom produk
               // sendiri, cuma customer_name/contact/message bebas).
               router.push({
                 pathname: '/inquiry',
@@ -392,201 +403,71 @@ export default function ProductDetailScreen() {
               router.push('/quotation' as never);
             }
           }}
-        />
+        >
+          <Text style={styles.ctaText}>{detail.comingSoon ? 'Daftarkan Minat Saya' : 'Ajukan Penawaran'}</Text>
+          <Ionicons name="arrow-forward" size={18} color="#ffffff" />
+        </PressableScale>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
 // ─── STYLES ──────────────────────────────────────────────────────────────────
 function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
-    container: {
-      flex: 1,
-      backgroundColor: colors.bg,
-    },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: spacing.sm,
-      paddingVertical: spacing.sm,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-      backgroundColor: colors.bg,
-    },
-    sideButton: {
-      width: 40,
-      height: 40,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    headerTitle: {
-      fontSize: fontSize.lg,
-      fontWeight: '700',
-      color: colors.textPrimary,
-      flex: 1,
-      textAlign: 'center',
-    },
-    scrollContent: {
-      paddingBottom: spacing.xxl,
-    },
-    centerState: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: spacing.sm,
-      paddingHorizontal: spacing.xl,
-    },
-    centerStateText: {
-      fontSize: fontSize.sm,
-      color: colors.textSecondary,
-      textAlign: 'center',
-    },
-    heroImage: {
-      width: '100%',
-      height: 220,
-      backgroundColor: colors.surface,
-    },
-    introBlock: {
-      paddingHorizontal: spacing.md,
-      paddingTop: spacing.md,
-      gap: spacing.xs,
-    },
-    subTitle: {
-      fontSize: fontSize.xs,
-      fontWeight: '700',
-      color: colors.accent,
-      letterSpacing: 0.8,
-    },
-    enTitle: {
-      fontSize: fontSize.xl,
-      fontWeight: '800',
-      color: colors.textPrimary,
-    },
-    description: {
-      fontSize: fontSize.sm,
-      color: colors.textSecondary,
-      lineHeight: 22,
-      marginTop: spacing.xs,
-    },
-    comingSoonBox: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: spacing.sm,
-      marginHorizontal: spacing.md,
-      marginTop: spacing.lg,
-      padding: spacing.md,
-      borderWidth: 1.5,
-      borderStyle: 'dashed',
-      borderColor: colors.border,
-      borderRadius: radius.lg,
-      backgroundColor: colors.surface,
-    },
-    comingSoonTitle: {
-      fontSize: fontSize.sm,
-      fontWeight: '700',
-      color: colors.textPrimary,
-      marginBottom: 2,
-    },
-    comingSoonText: {
-      fontSize: fontSize.sm,
-      color: colors.textSecondary,
-      lineHeight: 20,
-    },
-    sectionHeader: {
-      paddingHorizontal: spacing.md,
-      marginTop: spacing.lg,
-      marginBottom: spacing.sm,
-    },
-    sectionTitle: {
-      fontSize: fontSize.lg,
-      fontWeight: '700',
-      color: colors.textPrimary,
-    },
-    specsCard: {
-      marginHorizontal: spacing.md,
-      borderRadius: radius.lg,
-      overflow: 'hidden',
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
-    specRow: {
-      padding: spacing.md,
-    },
-    specRowBorder: {
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-    },
-    specLabel: {
-      fontSize: fontSize.sm,
-      fontWeight: '700',
-      color: colors.textPrimary,
-      marginBottom: spacing.sm,
-    },
-    specGrid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: spacing.sm,
-      rowGap: spacing.md,
-    },
-    specItem: {
-      width: '46%',
-    },
-    specCaption: {
-      fontSize: fontSize.xs,
-      color: colors.textMuted,
-    },
-    specValue: {
-      fontSize: fontSize.sm,
-      fontWeight: '700',
-      color: colors.accent,
-      marginTop: 2,
-    },
-    faqCard: {
-      marginHorizontal: spacing.md,
-      borderRadius: radius.lg,
-      overflow: 'hidden',
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
-    ctaBlock: {
-      paddingHorizontal: spacing.md,
-      paddingTop: spacing.sm,
-      borderTopWidth: 1,
-      borderTopColor: colors.border,
-      backgroundColor: colors.bg,
-    },
+    container: { flex: 1, backgroundColor: colors.bg },
+    scrollContent: { paddingBottom: 32 },
+
+    plainTop: { minHeight: 44, paddingHorizontal: 24, paddingTop: spacing.md },
+    centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 32, paddingBottom: 80 },
+    centerIcon: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+    centerStateText: { fontSize: 14, lineHeight: 21, color: colors.textSecondary, textAlign: 'center' },
+
+    backButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceElevated },
+    floatingTop: { position: 'absolute', left: 24 },
+
+    hero: { height: 300, backgroundColor: colors.surfaceElevated },
+    heroBadge: { position: 'absolute', right: 24, flexDirection: 'row', alignItems: 'center', gap: 6, height: 30, paddingHorizontal: 12, borderRadius: 15, backgroundColor: 'rgba(0,0,0,0.5)' },
+    heroBadgeText: { fontSize: 12, fontWeight: '800', color: '#ffffff' },
+
+    sheet: { marginTop: -32, paddingHorizontal: 24, paddingTop: 28, paddingBottom: 8, borderTopLeftRadius: 32, borderTopRightRadius: 32, backgroundColor: colors.bg, gap: 8 },
+    subTitle: { fontSize: 12, fontWeight: '800', letterSpacing: 0.9, color: colors.accent },
+    enTitle: { fontSize: 30, lineHeight: 38, fontWeight: '800', letterSpacing: -0.8, color: colors.textPrimary, marginTop: 4 },
+    description: { fontSize: 15, lineHeight: 24, color: colors.textSecondary, marginTop: 8 },
+
+    comingSoonBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 14, marginTop: 16, padding: 18, borderRadius: 24, backgroundColor: colors.surfaceElevated },
+    comingSoonIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+    comingSoonBody: { flex: 1, gap: 2 },
+    comingSoonTitle: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
+    comingSoonText: { fontSize: 14, lineHeight: 21, color: colors.textSecondary },
+
+    section: { gap: 12, marginTop: 24 },
+    sectionTitle: { fontSize: 20, lineHeight: 26, fontWeight: '800', letterSpacing: -0.4, color: colors.textPrimary },
+
+    specCard: { gap: 16, padding: 18, borderRadius: 28, backgroundColor: colors.surfaceElevated },
+    specHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+    specLabel: { flex: 1, fontSize: 18, lineHeight: 24, fontWeight: '800', letterSpacing: -0.4, color: colors.textPrimary },
+    warrantyPill: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 30, paddingHorizontal: 12, borderRadius: 15, backgroundColor: colors.accentSoft },
+    warrantyText: { fontSize: 12, fontWeight: '800', color: colors.accent },
+    specGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    specTile: { flexGrow: 1, flexBasis: '30%', minWidth: 96, gap: 2, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 18, backgroundColor: colors.bg },
+    specCaption: { fontSize: 11, fontWeight: '700', color: colors.textMuted },
+    specValue: { fontSize: 14, lineHeight: 20, fontWeight: '800', color: colors.textPrimary },
+
+    ctaBlock: { paddingHorizontal: 24, paddingTop: 12, backgroundColor: colors.bg },
+    ctaButton: { flexDirection: 'row', gap: 8, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent },
+    ctaText: { fontSize: 16, fontWeight: '800', color: '#ffffff' },
   });
 }
 
 function createFaqStyles(colors: typeof darkColors) {
   return StyleSheet.create({
-    item: {
-      paddingVertical: spacing.md,
-      paddingHorizontal: spacing.md,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-    },
-    qRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: spacing.sm,
-    },
-    question: {
-      flex: 1,
-      fontSize: fontSize.sm,
-      fontWeight: '600',
-      color: colors.textPrimary,
-    },
-    answer: {
-      fontSize: fontSize.sm,
-      color: colors.textSecondary,
-      marginTop: spacing.sm,
-      lineHeight: 20,
-    },
+    item: { padding: 18, borderRadius: 24, backgroundColor: colors.surfaceElevated },
+    itemOpen: { backgroundColor: colors.accentSoft },
+    qRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+    question: { flex: 1, fontSize: 15, lineHeight: 21, fontWeight: '700', color: colors.textPrimary },
+    chevron: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
+    chevronOpen: { backgroundColor: colors.accent },
+    answer: { fontSize: 14, lineHeight: 22, color: colors.textSecondary, marginTop: 12 },
   });
 }

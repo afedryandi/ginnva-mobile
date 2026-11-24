@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -19,7 +18,10 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import * as Location from 'expo-location';
-import { Button } from '@/components/ui/Button';
+import { LinearGradient } from 'expo-linear-gradient';
+import { AuthField } from '@/components/auth/AuthShell';
+import { AppTextInput as TextInput } from '@/components/ui/AppText';
+import { PressableScale } from '@/components/ui/PressableScale';
 import { PickerModal } from '@/components/ui/PickerModal';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
@@ -27,6 +29,7 @@ import { toWhatsAppNumber } from '@/lib/phone';
 import { useFadeIn } from '@/lib/useFadeIn';
 import { useAppTheme } from '@/lib/theme-context';
 import { hapticLight, hapticMedium, hapticSuccess, hapticError } from '@/lib/haptics';
+import { getLeadAttribution, LeadAttribution } from '@/lib/lead-attribution';
 
 interface VehicleOption {
   id: number;
@@ -47,7 +50,20 @@ interface ProductOption {
 // selalu, tidak ada larangan nama sama), keduanya tampil identik,
 // customer tidak bisa bedakan. Sama pola dengan web (QuoteForm.tsx).
 // Ditemukan lewat testing manual 2026-09-01.
+// Ketebalan PPF (mil) dari tabel spesifikasi di ginnva-web app/ppf/page.tsx;
+// mikron = mil x 25.4 (konversi).
+const PPF_THICKNESS: { match: RegExp; label: string }[] = [
+  { match: /M8-M/i, label: '7.5 mil / ±190 µm' },
+  { match: /M10/i, label: '8.8 mil / ±224 µm' },
+  { match: /H10/i, label: '7.8 mil / ±198 µm' },
+  { match: /EV7/i, label: '7.5 mil / ±190 µm' },
+];
+
 function productOptionLabel(p: ProductOption): string {
+  if (p.product_type === 'ppf') {
+    const t = PPF_THICKNESS.find((x) => x.match.test(p.name));
+    return t ? `${p.name} — ${t.label}` : p.name;
+  }
   if (p.product_type !== 'window_film' || !p.position) return p.name;
 
   const positionLabel = p.position === 'front' ? 'Kaca Depan' : 'Kaca Samping & Belakang';
@@ -124,7 +140,6 @@ export default function QuotationScreen() {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
-  const [licensePlate, setLicensePlate] = useState('');
   const [message, setMessage] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
@@ -137,7 +152,18 @@ export default function QuotationScreen() {
   useEffect(() => {
     loadOptions();
     apiFetch<{ data: StoreOption[] }>('/api/stores', { skipAuth: true })
-      .then((res) => setStores(res.data))
+      .then((res) => {
+        // Ginnva House ditaruh paling atas (diminta user 2026-09-25, sama
+        // perubahan di ginnva-web/app/dealers, tab Toko & form Booking) —
+        // sisa urutan dari API tetap dipertahankan (stable sort).
+        const sorted = [...res.data].sort((a, b) => {
+          const aIsDefault = a.name === 'Ginnva House';
+          const bIsDefault = b.name === 'Ginnva House';
+          if (aIsDefault === bIsDefault) return 0;
+          return aIsDefault ? -1 : 1;
+        });
+        setStores(sorted);
+      })
       .catch(() => {});
   }, []);
 
@@ -195,7 +221,7 @@ export default function QuotationScreen() {
         setLoadError(
           err instanceof ApiError
             ? err.message
-            : 'Gagal memuat data formulir. Periksa koneksi internet Anda.'
+            : 'Gagal memuat data formulir. Periksa koneksi internetmu.'
         );
         setPhase('error');
       });
@@ -293,7 +319,7 @@ export default function QuotationScreen() {
   const stepValid = [
     step0Valid,
     selectedProductIds.length > 0,
-    selectedStoreId !== null && customerName.trim().length > 0 && customerPhone.trim().length > 0 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail.trim()),
+    selectedStoreId !== null && customerName.trim().length > 0 && customerPhone.trim().length > 0 && (customerEmail.trim().length === 0 || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail.trim())),
     true,
   ];
 
@@ -336,6 +362,11 @@ export default function QuotationScreen() {
     })
   ).current;
 
+  const [attribution, setAttribution] = useState<LeadAttribution | undefined>(undefined);
+  useEffect(() => {
+    getLeadAttribution().then(setAttribution);
+  }, []);
+
   const handleSubmit = () => {
     if (!isFormValid) return;
 
@@ -353,9 +384,9 @@ export default function QuotationScreen() {
           customer_name: customerName.trim(),
           customer_phone: customerPhone.trim(),
           customer_email: customerEmail.trim() || undefined,
-          license_plate: licensePlate.trim() || undefined,
           message: message.trim() || undefined,
           items: selectedProductIds.map((id) => ({ film_product_id: id })),
+          attribution,
         }),
       }
     )
@@ -369,7 +400,7 @@ export default function QuotationScreen() {
         setSubmitError(
           err instanceof ApiError
             ? err.message
-            : 'Gagal mengirim permintaan. Periksa koneksi internet Anda dan coba lagi.'
+            : 'Gagal mengirim permintaan. Periksa koneksi internetmu dan coba lagi.'
         );
       })
       .finally(() => setSubmitting(false));
@@ -389,25 +420,24 @@ export default function QuotationScreen() {
     });
   };
 
-  const HeaderBar = () => (
-    <View style={styles.header}>
-      {router.canGoBack() ? (
-        <Pressable onPress={() => router.back()} style={styles.sideButton}>
-          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
-        </Pressable>
-      ) : (
-        <View style={styles.sideButton} />
-      )}
-      <Text style={styles.headerTitle} numberOfLines={1}>Ajukan Penawaran</Text>
-      <View style={styles.sideButton} />
-    </View>
+  const glow = (
+    <LinearGradient pointerEvents="none" colors={[colors.accentSoft, 'transparent']} start={{ x: 1, y: 0 }} end={{ x: 0.2, y: 1 }} style={styles.glow} />
+  );
+
+  const backButton = router.canGoBack() ? (
+    <Pressable onPress={() => router.back()} style={styles.backButton} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kembali">
+      <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+    </Pressable>
+  ) : (
+    <View style={styles.backSpacer} />
   );
 
   if (phase === 'loading') {
     return (
       <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-        <HeaderBar />
+        {glow}
+        <View style={styles.topRow}>{backButton}</View>
         <View style={styles.centerState}>
           <ActivityIndicator color={colors.accent} />
         </View>
@@ -419,13 +449,16 @@ export default function QuotationScreen() {
     return (
       <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-        <HeaderBar />
+        {glow}
+        <View style={styles.topRow}>{backButton}</View>
         <View style={styles.centerState}>
-          <Ionicons name="cloud-offline-outline" size={32} color={colors.textMuted} />
+          <View style={styles.centerIcon}>
+            <Ionicons name="cloud-offline-outline" size={30} color={colors.accent} />
+          </View>
           <Text style={styles.centerStateText}>{loadError}</Text>
-          <Pressable style={styles.retryButton} onPress={loadOptions}>
+          <PressableScale style={styles.retryButton} onPress={loadOptions} accessibilityRole="button">
             <Text style={styles.retryText}>Coba Lagi</Text>
-          </Pressable>
+          </PressableScale>
         </View>
       </SafeAreaView>
     );
@@ -435,68 +468,126 @@ export default function QuotationScreen() {
     return (
       <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-        <HeaderBar />
-        <Animated.ScrollView contentContainerStyle={styles.centerState} style={{ opacity: successOpacity }}>
-          <View style={styles.successIconWrap}>
-            <Ionicons name="checkmark" size={36} color="#ffffff" />
+        {glow}
+        <View style={styles.topRow}>{backButton}</View>
+        <Animated.ScrollView
+          contentContainerStyle={styles.successContent}
+          style={{ opacity: successOpacity }}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.successRing}>
+            <View style={styles.successIconWrap}>
+              <Ionicons name="checkmark" size={38} color="#ffffff" />
+            </View>
           </View>
           <Text style={styles.successTitle}>Permintaan Terkirim</Text>
-          <Text style={styles.centerStateText}>
-            Nomor referensi Anda: {'\n'}
-            <Text style={styles.quotationNumber}>{quotationNumber}</Text>
-          </Text>
           <Text style={styles.successNote}>
-            Tim sales kami akan segera menghubungi Anda lewat nomor telepon yang
-            didaftarkan untuk membahas detail dan harga.{'\n\n'}
-            Email konfirmasi telah dikirim ke {customerEmail}.
-          </Text>
-          <Text style={styles.successNextStep}>
-            💡 Setelah tim kami menghubungi Anda dan harga disepakati, Anda bisa melanjutkan dengan membuat booking jadwal instalasi di menu <Text style={styles.successNextStepBold}>Booking</Text>.
+            Tim sales kami akan segera menghubungimu lewat nomor telepon yang didaftarkan untuk membahas detail dan harga.
+            {customerEmail.trim().length > 0 ? ` Email konfirmasi telah dikirim ke ${customerEmail.trim()}.` : ''}
           </Text>
 
-          <Button
-            label="Share ke WhatsApp"
-            onPress={handleShareWhatsApp}
-            style={styles.successButton}
-          />
-          {/* SEBELUMNYA tombol ini selalu buka daftar toko generik,
-              customer harus cari lagi toko yang baru saja dipilih —
-              padahal sistem sudah tahu persis toko & nomornya. Sekarang
-              langsung buka WhatsApp toko itu kalau nomornya ada; fallback
-              ke daftar toko generik cuma kalau toko itu belum punya nomor
-              telepon tercatat. */}
-          <Button
-            label={selectedStore?.phone ? `Hubungi ${selectedStore.name}` : 'Hubungi Toko Terdekat'}
-            variant="outline"
-            onPress={() => {
-              if (selectedStore?.phone) {
-                Linking.openURL(`https://wa.me/${toWhatsAppNumber(selectedStore.phone)}`);
-              } else {
-                router.push('/(tabs)/stores' as never);
-              }
-            }}
-            style={styles.successButton}
-          />
-          <Button
-            label="Kembali ke Beranda"
-            variant="ghost"
-            onPress={() => router.replace('/(tabs)' as never)}
-            style={styles.successButton}
-          />
+          <View style={styles.refCard}>
+            <Text style={styles.refLabel}>Nomor referensi</Text>
+            <Text style={styles.quotationNumber} selectable>{quotationNumber}</Text>
+          </View>
+
+          <View style={styles.nextStep}>
+            <Ionicons name="calendar-outline" size={18} color={colors.accent} />
+            <Text style={styles.nextStepText}>
+              Setelah harga disepakati, lanjutkan dengan membuat jadwal instalasi di menu <Text style={styles.nextStepBold}>Booking</Text>.
+            </Text>
+          </View>
+
+          <View style={styles.successActions}>
+            <PressableScale style={styles.primaryButton} onPress={handleShareWhatsApp} accessibilityRole="button">
+              <Ionicons name="share-social-outline" size={19} color="#ffffff" />
+              <Text style={styles.primaryButtonText}>Bagikan ke WhatsApp</Text>
+            </PressableScale>
+            {/* Langsung buka WhatsApp toko yang dipilih kalau nomornya ada;
+                cadangannya daftar toko jika toko belum punya nomor. */}
+            <PressableScale
+              style={styles.secondaryButton}
+              onPress={() => {
+                if (selectedStore?.phone) {
+                  Linking.openURL(`https://wa.me/${toWhatsAppNumber(selectedStore.phone)}`);
+                } else {
+                  router.push('/(tabs)/stores' as never);
+                }
+              }}
+              accessibilityRole="button"
+            >
+              <Ionicons name="chatbubble-ellipses-outline" size={19} color={colors.textPrimary} />
+              <Text style={styles.secondaryButtonText}>
+                {selectedStore?.phone ? `Hubungi ${selectedStore.name}` : 'Hubungi Toko Terdekat'}
+              </Text>
+            </PressableScale>
+            <Pressable style={styles.ghostButton} onPress={() => router.replace('/(tabs)' as never)} accessibilityRole="button">
+              <Text style={styles.ghostButtonText}>Kembali ke Beranda</Text>
+            </Pressable>
+          </View>
         </Animated.ScrollView>
       </SafeAreaView>
     );
   }
 
+  const stepCopy = [
+    { title: 'Kendaraan', subtitle: 'Pilih kendaraanmu. Tim sales kami akan menghubungimu untuk membahas harga dan jadwal pemasangan.' },
+    { title: 'Produk', subtitle: 'Pilih satu atau lebih produk yang kamu minati.' },
+    { title: 'Toko & Kontak', subtitle: 'Pilih toko tujuan dan isi kontak yang bisa kami hubungi.' },
+    { title: 'Ringkasan', subtitle: 'Periksa kembali sebelum permintaan dikirim.' },
+  ][stepIndex];
+
+  const selectRow = (opts: {
+    icon: React.ComponentProps<typeof Ionicons>['name'];
+    hint: string;
+    value: string | null;
+    placeholder: string;
+    onPress: () => void;
+    disabled?: boolean;
+  }) => (
+    <PressableScale
+      style={[styles.selectRow, opts.disabled && styles.selectRowDisabled, opts.value ? styles.selectRowFilled : null]}
+      onPress={opts.disabled ? undefined : opts.onPress}
+      accessibilityRole="button"
+    >
+      <View style={[styles.selectIcon, opts.value ? styles.selectIconFilled : null]}>
+        <Ionicons name={opts.icon} size={20} color={opts.value ? colors.accent : colors.textMuted} />
+      </View>
+      <View style={styles.selectTextWrap}>
+        <Text style={styles.selectHint}>{opts.hint}</Text>
+        <Text style={[styles.selectValue, !opts.value && styles.selectPlaceholder]} numberOfLines={1}>
+          {opts.value ?? opts.placeholder}
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+    </PressableScale>
+  );
+
+  const summaryItems: { label: string; value: string }[] = [
+    { label: 'Merek', value: selectedBrand || '-' },
+    { label: 'Tipe', value: selectedModel || '-' },
+    ...(selectedVariant ? [{ label: 'Varian', value: selectedVariant }] : []),
+    { label: 'Toko', value: selectedStoreLabel || '-' },
+    { label: 'Produk', value: selectedProducts.map((p) => productOptionLabel(p)).join(', ') || '-' },
+    { label: 'Nama', value: customerName || '-' },
+    { label: 'Telepon', value: customerPhone || '-' },
+    ...(customerEmail.trim().length > 0 ? [{ label: 'Email', value: customerEmail }] : []),
+  ];
+
+  const emailValue = customerEmail.trim();
+  const emailInvalid = emailValue.length > 0 && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue);
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-      <HeaderBar />
+      {glow}
 
-      {/* ===== Progress dots — step yang sudah dilewati bisa ditap untuk
-          lompat balik langsung (mis. dari Ringkasan mau ubah Kendaraan),
-          step yang belum tercapai tidak bisa ditap (mencegah lompat maju
-          melewati validasi). ===== */}
+      <View style={styles.topRow}>
+        {backButton}
+        <Text style={styles.topCounter}>Langkah {stepIndex + 1} dari {TOTAL_STEPS}</Text>
+      </View>
+
+      {/* Bilah kemajuan: langkah yang sudah dilewati bisa diketuk untuk kembali. */}
       <View style={styles.progressRow}>
         {STEP_TITLES.map((title, i) => (
           <Pressable
@@ -504,370 +595,208 @@ export default function QuotationScreen() {
             style={styles.progressItem}
             disabled={i >= stepIndex}
             onPress={() => animateTo(i)}
+            hitSlop={{ top: 10, bottom: 10 }}
+            accessibilityRole="button"
+            accessibilityLabel={`Kembali ke ${title}`}
           >
-            <View
-              style={[
-                styles.progressDot,
-                i === stepIndex && styles.progressDotActive,
-                i < stepIndex && styles.progressDotDone,
-              ]}
-            >
-              {i < stepIndex ? (
-                <Ionicons name="checkmark" size={12} color="#ffffff" />
-              ) : (
-                <Text
-                  style={[
-                    styles.progressDotText,
-                    i === stepIndex && styles.progressDotTextActive,
-                  ]}
-                >
-                  {i + 1}
-                </Text>
-              )}
-            </View>
-            <Text
-              style={[
-                styles.progressLabel,
-                i === stepIndex && styles.progressLabelActive,
-              ]}
-              numberOfLines={1}
-            >
-              {title}
-            </Text>
-            {i < STEP_TITLES.length - 1 && (
-              <View
-                style={[styles.progressLine, i < stepIndex && styles.progressLineDone]}
-              />
-            )}
+            <View style={[styles.progressBar, i <= stepIndex && styles.progressBarActive]} />
           </Pressable>
         ))}
       </View>
 
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-      <Animated.View
-        style={[styles.flex, { transform: [{ translateX: slideAnim }] }]}
-        {...panResponder.panHandlers}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          {stepIndex === 0 && (
-            <View>
-              <Text style={styles.intro}>
-                Pilih kendaraan Anda. Ini bukan kalkulator harga otomatis — tim
-                sales kami akan menghubungi Anda untuk membahas harga dan
-                jadwal pemasangan.
-              </Text>
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <Animated.View style={[styles.flex, { transform: [{ translateX: slideAnim }] }]} {...panResponder.panHandlers}>
+          <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <Text style={styles.title}>{stepCopy.title}</Text>
+            <Text style={styles.subtitle}>{stepCopy.subtitle}</Text>
 
-              {/* Picker row — Merek */}
-              <Text style={styles.sectionLabel}>Kendaraan Anda</Text>
-              <Pressable style={styles.pickerRow} onPress={() => setBrandPickerOpen(true)}>
-                <View style={styles.pickerRowLeft}>
-                  <Ionicons name="car-outline" size={20} color={selectedBrand ? colors.accent : colors.textMuted} />
-                  <View>
-                    <Text style={styles.pickerRowHint}>Merek Mobil</Text>
-                    <Text style={[styles.pickerRowValue, !selectedBrand && styles.pickerRowPlaceholder]}>
-                      {selectedBrand ?? 'Pilih merek...'}
-                    </Text>
+            {stepIndex === 0 && (
+              <View style={styles.stack}>
+                {selectRow({ icon: 'car-outline', hint: 'Merek Mobil', value: selectedBrand, placeholder: 'Pilih merek...', onPress: () => setBrandPickerOpen(true) })}
+                {selectRow({
+                  icon: 'list-outline',
+                  hint: 'Tipe Mobil',
+                  value: selectedModel,
+                  placeholder: selectedBrand ? 'Pilih tipe...' : 'Pilih merek dulu',
+                  onPress: () => setModelPickerOpen(true),
+                  disabled: !selectedBrand,
+                })}
+                {selectedModel && hasVariants
+                  ? selectRow({ icon: 'options-outline', hint: 'Varian', value: selectedVariant, placeholder: 'Pilih varian...', onPress: () => setVariantPickerOpen(true) })
+                  : null}
+
+                <PickerModal
+                  visible={brandPickerOpen}
+                  title="Pilih Merek Mobil"
+                  options={brands as string[]}
+                  selected={selectedBrand}
+                  onSelect={handleSelectBrand}
+                  onClose={() => setBrandPickerOpen(false)}
+                  searchPlaceholder="Cari merek..."
+                />
+                <PickerModal
+                  visible={modelPickerOpen}
+                  title="Pilih Tipe Mobil"
+                  options={modelsForBrand}
+                  selected={selectedModel}
+                  onSelect={handleSelectModel}
+                  onClose={() => setModelPickerOpen(false)}
+                  searchPlaceholder="Cari tipe..."
+                />
+                <PickerModal
+                  visible={variantPickerOpen}
+                  title="Pilih Varian"
+                  options={variantsForModel}
+                  selected={selectedVariant}
+                  onSelect={handleSelectVariant}
+                  onClose={() => setVariantPickerOpen(false)}
+                  searchPlaceholder="Cari varian..."
+                />
+              </View>
+            )}
+
+            {stepIndex === 1 && (
+              <View style={styles.stack}>
+                {Object.entries(groupedProducts).map(([type, items]) => (
+                  <View key={type} style={styles.productGroup}>
+                    <Text style={styles.groupTitle}>{PRODUCT_TYPE_LABEL[type] || type}</Text>
+                    {items.map((p) => {
+                      const selected = selectedProductIds.includes(p.id);
+                      return (
+                        <PressableScale
+                          key={p.id}
+                          style={[styles.productRow, selected && styles.productRowActive]}
+                          onPress={() => toggleProduct(p.id)}
+                          accessibilityRole="checkbox"
+                          accessibilityState={{ checked: selected }}
+                        >
+                          <View style={[styles.checkCircle, selected && styles.checkCircleActive]}>
+                            {selected ? <Ionicons name="checkmark" size={15} color="#ffffff" /> : null}
+                          </View>
+                          <Text style={styles.productRowText}>{productOptionLabel(p)}</Text>
+                        </PressableScale>
+                      );
+                    })}
                   </View>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-              </Pressable>
+                ))}
 
-              {/* Picker row — Tipe */}
-              <Pressable
-                style={[styles.pickerRow, !selectedBrand && styles.pickerRowDisabled]}
-                onPress={() => selectedBrand && setModelPickerOpen(true)}
-              >
-                <View style={styles.pickerRowLeft}>
-                  <Ionicons name="list-outline" size={20} color={selectedModel ? colors.accent : colors.textMuted} />
-                  <View>
-                    <Text style={styles.pickerRowHint}>Tipe Mobil</Text>
-                    <Text style={[styles.pickerRowValue, !selectedModel && styles.pickerRowPlaceholder]}>
-                      {selectedModel ?? (selectedBrand ? 'Pilih tipe...' : 'Pilih merek dulu')}
-                    </Text>
-                  </View>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-              </Pressable>
+                <PressableScale style={styles.notYetSoldNote} onPress={() => router.push('/inquiry' as never)} accessibilityRole="button">
+                  <Ionicons name="information-circle-outline" size={20} color={colors.accent} />
+                  <Text style={styles.notYetSoldText}>
+                    Tertarik Color Change Film? Produk ini belum tersedia untuk dijual di Indonesia. Ketuk untuk daftar minat dan dapat info begitu tersedia.
+                  </Text>
+                </PressableScale>
+              </View>
+            )}
 
-              {/* Picker row — Varian (hanya jika ada) */}
-              {selectedModel && hasVariants && (
-                <Pressable
-                  style={styles.pickerRow}
-                  onPress={() => setVariantPickerOpen(true)}
-                >
-                  <View style={styles.pickerRowLeft}>
-                    <Ionicons name="options-outline" size={20} color={selectedVariant ? colors.accent : colors.textMuted} />
-                    <View>
-                      <Text style={styles.pickerRowHint}>Varian</Text>
-                      <Text style={[styles.pickerRowValue, !selectedVariant && styles.pickerRowPlaceholder]}>
-                        {selectedVariant ?? 'Pilih varian...'}
-                      </Text>
+            {stepIndex === 2 && (
+              <View style={styles.stack}>
+                {selectRow({ icon: 'storefront-outline', hint: 'Toko / Dealer *', value: selectedStoreLabel, placeholder: 'Pilih toko terdekat...', onPress: () => setStorePickerOpen(true) })}
+                <PickerModal
+                  visible={storePickerOpen}
+                  title="Pilih Toko Tujuan"
+                  options={storeOptions}
+                  selected={selectedStoreLabel}
+                  onSelect={handleSelectStore}
+                  onClose={() => setStorePickerOpen(false)}
+                  searchPlaceholder="Cari toko atau kota..."
+                />
+
+                <AuthField label="Nama Lengkap *" icon="person-outline">
+                  {(input) => (
+                    <TextInput {...input} placeholder="Namamu" placeholderTextColor={colors.textMuted} value={customerName} onChangeText={setCustomerName} />
+                  )}
+                </AuthField>
+                <AuthField label="Nomor Telepon / WhatsApp *" icon="call-outline">
+                  {(input) => (
+                    <TextInput {...input} placeholder="08xxxxxxxxxx" placeholderTextColor={colors.textMuted} value={customerPhone} onChangeText={setCustomerPhone} keyboardType="phone-pad" />
+                  )}
+                </AuthField>
+                <AuthField label="Email (opsional)" icon="mail-outline" error={emailInvalid ? 'Format email belum benar.' : undefined}>
+                  {(input) => (
+                    <TextInput {...input} placeholder="nama@email.com" placeholderTextColor={colors.textMuted} value={customerEmail} onChangeText={setCustomerEmail} keyboardType="email-address" autoCapitalize="none" />
+                  )}
+                </AuthField>
+              </View>
+            )}
+
+            {stepIndex === 3 && (
+              <View style={styles.stack}>
+                <View style={styles.summaryCard}>
+                  {summaryItems.map((item, i) => (
+                    <View key={item.label} style={[styles.summaryRow, i > 0 && styles.summaryRowBorder]}>
+                      <Text style={styles.summaryLabel}>{item.label}</Text>
+                      <Text style={styles.summaryValue}>{item.value}</Text>
                     </View>
-                  </View>
-                  <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-                </Pressable>
-              )}
+                  ))}
+                </View>
 
-              {/* Modals */}
-              <PickerModal
-                visible={brandPickerOpen}
-                title="Pilih Merek Mobil"
-                options={brands as string[]}
-                selected={selectedBrand}
-                onSelect={handleSelectBrand}
-                onClose={() => setBrandPickerOpen(false)}
-                searchPlaceholder="Cari merek..."
-              />
-              <PickerModal
-                visible={modelPickerOpen}
-                title="Pilih Tipe Mobil"
-                options={modelsForBrand}
-                selected={selectedModel}
-                onSelect={handleSelectModel}
-                onClose={() => setModelPickerOpen(false)}
-                searchPlaceholder="Cari tipe..."
-              />
-              <PickerModal
-                visible={variantPickerOpen}
-                title="Pilih Varian"
-                options={variantsForModel}
-                selected={selectedVariant}
-                onSelect={handleSelectVariant}
-                onClose={() => setVariantPickerOpen(false)}
-                searchPlaceholder="Cari varian..."
-              />
-            </View>
-          )}
+                <AuthField label="Catatan Tambahan (opsional)" icon="create-outline" multiline>
+                  {(input) => (
+                    <TextInput
+                      {...input}
+                      style={input.style}
+                      placeholder="Mis. preferensi warna, jadwal pemasangan, dsb."
+                      placeholderTextColor={colors.textMuted}
+                      value={message}
+                      onChangeText={setMessage}
+                      multiline
+                    />
+                  )}
+                </AuthField>
 
-          {stepIndex === 1 && (
-            <View>
-              <Text style={styles.sectionLabel}>Produk yang Diminati</Text>
-              {Object.entries(groupedProducts).map(([type, items]) => (
-                <View key={type} style={styles.productGroup}>
-                  <Text style={styles.productGroupTitle}>
-                    {PRODUCT_TYPE_LABEL[type] || type}
-                  </Text>
-                  {items.map((p) => {
-                    const selected = selectedProductIds.includes(p.id);
-                    return (
-                      <Pressable
-                        key={p.id}
-                        style={[styles.productRow, selected && styles.productRowActive]}
-                        onPress={() => toggleProduct(p.id)}
-                      >
-                        <Ionicons
-                          name={selected ? 'checkbox' : 'square-outline'}
-                          size={20}
-                          color={selected ? colors.accent : colors.textMuted}
-                        />
-                        <Text style={styles.productRowText}>{productOptionLabel(p)}</Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              ))}
-
-              <Pressable
-                style={styles.notYetSoldNote}
-                onPress={() => router.push('/inquiry' as never)}
-              >
-                <Ionicons
-                  name="information-circle-outline"
-                  size={16}
-                  color={colors.textSecondary}
-                />
-                <Text style={styles.notYetSoldText}>
-                  Tertarik Color Change Film? Produk ini belum tersedia untuk
-                  dijual di Indonesia. Ketuk untuk daftar minat dan dapat info
-                  begitu tersedia.
-                </Text>
-              </Pressable>
-            </View>
-          )}
-
-          {stepIndex === 2 && (
-            <View>
-              <Text style={styles.sectionLabel}>Toko Tujuan</Text>
-              <Pressable style={styles.pickerRow} onPress={() => setStorePickerOpen(true)}>
-                <View style={styles.pickerRowLeft}>
-                  <Ionicons name="storefront-outline" size={20} color={selectedStoreId ? colors.accent : colors.textMuted} />
-                  <View>
-                    <Text style={styles.pickerRowHint}>Toko/Dealer *</Text>
-                    <Text style={[styles.pickerRowValue, !selectedStoreId && styles.pickerRowPlaceholder]}>
-                      {selectedStoreLabel ?? 'Pilih toko terdekat...'}
-                    </Text>
-                  </View>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-              </Pressable>
-              <PickerModal
-                visible={storePickerOpen}
-                title="Pilih Toko Tujuan"
-                options={storeOptions}
-                selected={selectedStoreLabel}
-                onSelect={handleSelectStore}
-                onClose={() => setStorePickerOpen(false)}
-                searchPlaceholder="Cari toko atau kota..."
-              />
-
-              <Text style={styles.sectionLabel}>Data Kontak</Text>
-              <View style={styles.formCard}>
-                <Text style={styles.fieldLabel}>Nama Lengkap *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Nama Anda"
-                  placeholderTextColor={colors.textMuted}
-                  value={customerName}
-                  onChangeText={setCustomerName}
-                />
-                <Text style={styles.fieldLabel}>Nomor Telepon / WhatsApp *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="08xxxxxxxxxx"
-                  placeholderTextColor={colors.textMuted}
-                  value={customerPhone}
-                  onChangeText={setCustomerPhone}
-                  keyboardType="phone-pad"
-                />
-                <Text style={styles.fieldLabel}>Email *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="nama@email.com"
-                  placeholderTextColor={colors.textMuted}
-                  value={customerEmail}
-                  onChangeText={setCustomerEmail}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                />
-                <Text style={styles.fieldLabel}>Plat Nomor (opsional)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="B 1234 ABC"
-                  placeholderTextColor={colors.textMuted}
-                  value={licensePlate}
-                  onChangeText={setLicensePlate}
-                  autoCapitalize="characters"
-                />
-              </View>
-            </View>
-          )}
-
-          {stepIndex === 3 && (
-            <View>
-              <Text style={styles.sectionLabel}>Catatan Tambahan (opsional)</Text>
-              <View style={styles.formCard}>
-                <TextInput
-                  style={[styles.input, styles.textArea]}
-                  placeholder="Mis. preferensi warna, jadwal pemasangan, dsb."
-                  placeholderTextColor={colors.textMuted}
-                  value={message}
-                  onChangeText={setMessage}
-                  multiline
-                  numberOfLines={3}
-                />
-              </View>
-
-              <Text style={styles.sectionLabel}>Ringkasan</Text>
-              <View style={styles.formCard}>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Merek</Text>
-                  <Text style={styles.summaryValue}>{selectedBrand || '-'}</Text>
-                </View>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Tipe</Text>
-                  <Text style={styles.summaryValue}>{selectedModel || '-'}</Text>
-                </View>
-                {selectedVariant && (
-                  <View style={styles.summaryRow}>
-                    <Text style={styles.summaryLabel}>Varian</Text>
-                    <Text style={styles.summaryValue}>{selectedVariant}</Text>
-                  </View>
-                )}
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Toko</Text>
-                  <Text style={styles.summaryValue}>{selectedStoreLabel || '-'}</Text>
-                </View>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Produk</Text>
-                  <Text style={styles.summaryValue}>
-                    {selectedProducts.map((p) => productOptionLabel(p)).join(', ') || '-'}
-                  </Text>
-                </View>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Nama</Text>
-                  <Text style={styles.summaryValue}>{customerName || '-'}</Text>
-                </View>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Telepon</Text>
-                  <Text style={styles.summaryValue}>{customerPhone || '-'}</Text>
-                </View>
-                {customerEmail.trim().length > 0 && (
-                  <View style={styles.summaryRow}>
-                    <Text style={styles.summaryLabel}>Email</Text>
-                    <Text style={styles.summaryValue}>{customerEmail}</Text>
-                  </View>
-                )}
-                {licensePlate.trim().length > 0 && (
-                  <View style={styles.summaryRow}>
-                    <Text style={styles.summaryLabel}>Plat Nomor</Text>
-                    <Text style={styles.summaryValue}>{licensePlate}</Text>
+                {submitError && (
+                  <View style={styles.submitErrorBox}>
+                    <Ionicons name="alert-circle" size={18} color={colors.danger} />
+                    <Text style={styles.submitErrorText}>{submitError}</Text>
                   </View>
                 )}
               </View>
-
-              {submitError && (
-                <View style={styles.submitErrorBox}>
-                  <Ionicons name="alert-circle" size={16} color={colors.danger} />
-                  <Text style={styles.submitErrorText}>{submitError}</Text>
-                </View>
-              )}
-            </View>
-          )}
-        </ScrollView>
-      </Animated.View>
+            )}
+          </ScrollView>
+        </Animated.View>
       </KeyboardAvoidingView>
 
-      {/* ===== Navigasi bawah ===== */}
       {!stepValid[stepIndex] && (
         <Text style={styles.stepHint}>
-          {stepIndex === 0 && 'Pilih merek, tipe, dan varian (jika ada) kendaraan Anda.'}
+          {stepIndex === 0 && 'Pilih merek, tipe, dan varian (jika ada) kendaraanmu.'}
           {stepIndex === 1 && 'Pilih minimal satu produk yang diminati.'}
-          {stepIndex === 2 && 'Lengkapi toko tujuan, nama, nomor telepon, dan email yang valid.'}
+          {stepIndex === 2 && 'Lengkapi toko tujuan, nama, dan nomor telepon (email boleh kosong, tapi harus valid kalau diisi).'}
         </Text>
       )}
       <View style={[styles.navRow, { paddingBottom: insets.bottom > 0 ? insets.bottom : spacing.md }]}>
         {stepIndex > 0 ? (
-          <Button
-            label="Kembali"
-            variant="outline"
-            onPress={goBack}
-            style={styles.navButtonHalf}
-          />
-        ) : (
-          <View style={styles.navButtonHalf} />
-        )}
+          <PressableScale style={styles.navBack} onPress={goBack} accessibilityRole="button">
+            <Text style={styles.navBackText}>Kembali</Text>
+          </PressableScale>
+        ) : null}
 
         {stepIndex < TOTAL_STEPS - 1 ? (
-          <Button
-            label="Lanjut"
+          <PressableScale
+            style={[styles.navNext, !stepValid[stepIndex] && styles.navDisabled]}
             onPress={goNext}
             disabled={!stepValid[stepIndex]}
-            style={styles.navButtonHalf}
-          />
+            accessibilityRole="button"
+          >
+            <Text style={styles.navNextText}>Lanjut</Text>
+            <Ionicons name="arrow-forward" size={18} color="#ffffff" />
+          </PressableScale>
         ) : (
-          <Button
-            label="Kirim Permintaan"
+          <PressableScale
+            style={[styles.navNext, (!isFormValid || submitting) && styles.navDisabled]}
             onPress={handleSubmit}
-            disabled={!isFormValid}
-            loading={submitting}
-            style={styles.navButtonHalf}
-          />
+            disabled={!isFormValid || submitting}
+            accessibilityRole="button"
+          >
+            {submitting ? (
+              <ActivityIndicator color="#ffffff" />
+            ) : (
+              <>
+                <Text style={styles.navNextText}>Kirim Permintaan</Text>
+                <Ionicons name="paper-plane-outline" size={18} color="#ffffff" />
+              </>
+            )}
+          </PressableScale>
         )}
       </View>
     </SafeAreaView>
@@ -876,323 +805,87 @@ export default function QuotationScreen() {
 
 function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.bg,
-  },
-  sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-  flex: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: spacing.md,
-    paddingBottom: spacing.xxl,
-  },
-  centerState: {
-    flexGrow: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.xxl,
-  },
-  centerStateText: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    textAlign: 'center',
-  },
-  retryButton: {
-    marginTop: spacing.xs,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.accent,
-    borderRadius: radius.pill,
-  },
-  retryText: {
-    color: '#ffffff',
-    fontSize: fontSize.sm,
-    fontWeight: '600',
-  },
-  intro: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    lineHeight: 20,
-    marginBottom: spacing.lg,
-  },
-  sectionLabel: {
-    fontSize: fontSize.base,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginBottom: spacing.sm,
-    marginTop: spacing.sm,
-  },
-  productGroup: {
-    marginBottom: spacing.md,
-  },
-  productGroupTitle: {
-    fontSize: fontSize.xs,
-    fontWeight: '700',
-    color: colors.textMuted,
-    letterSpacing: 0.5,
-    marginBottom: spacing.xs,
-  },
-  productRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radius.md,
-  },
-  productRowActive: {
-    backgroundColor: colors.surface,
-  },
-  productRowText: {
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-  },
-  notYetSoldNote: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.xs,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  notYetSoldText: {
-    flex: 1,
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
-    lineHeight: 17,
-  },
-  formCard: {
-    marginBottom: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  fieldLabel: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    marginBottom: spacing.xs,
-    marginTop: spacing.sm,
-  },
-  input: {
-    height: 44,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-  },
-  textArea: {
-    height: 80,
-    paddingTop: spacing.sm,
-    textAlignVertical: 'top',
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  summaryLabel: {
-    fontSize: fontSize.sm,
-    color: colors.textMuted,
-  },
-  summaryValue: {
-    flex: 1,
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-    fontWeight: '600',
-    textAlign: 'right',
-  },
-  submitErrorBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.dangerBg,
-    borderRadius: radius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  submitErrorText: {
-    flex: 1,
-    fontSize: fontSize.sm,
-    color: colors.danger,
-  },
-  navRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.bg,
-  },
-  stepHint: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    textAlign: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.xs,
-    backgroundColor: colors.bg,
-  },
-  navButtonHalf: {
-    flex: 1,
-  },
-  progressRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.md,
-  },
-  progressItem: {
-    flex: 1,
-    alignItems: 'center',
-    position: 'relative',
-  },
-  progressDot: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  progressDotActive: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
-  },
-  progressDotDone: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
-  },
-  progressDotText: {
-    fontSize: fontSize.xs,
-    fontWeight: '700',
-    color: colors.textMuted,
-  },
-  progressDotTextActive: {
-    color: '#ffffff',
-  },
-  progressLabel: {
-    fontSize: 10,
-    color: colors.textMuted,
-    marginTop: spacing.xs,
-  },
-  progressLabelActive: {
-    color: colors.textPrimary,
-    fontWeight: '700',
-  },
-  progressLine: {
-    position: 'absolute',
-    top: 11,
-    left: '60%',
-    right: '-40%',
-    height: 2,
-    backgroundColor: colors.border,
-  },
-  progressLineDone: {
-    backgroundColor: colors.accent,
-  },
-  successIconWrap: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.sm,
-  },
-  successTitle: {
-    fontSize: fontSize.xl,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  quotationNumber: {
-    fontWeight: '800',
-    color: colors.accent,
-    fontSize: fontSize.base,
-  },
-  successNote: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginTop: spacing.sm,
-    lineHeight: 19,
-  },
-  successNextStep: {
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginTop: spacing.md,
-    lineHeight: 18,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  successNextStepBold: {
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  successButton: {
-    marginTop: spacing.sm,
-    width: '100%',
-  },
-  pickerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    marginBottom: spacing.sm,
-  },
-  pickerRowDisabled: {
-    opacity: 0.45,
-  },
-  pickerRowLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    flex: 1,
-  },
-  pickerRowHint: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    marginBottom: 2,
-  },
-  pickerRowValue: {
-    fontSize: fontSize.sm,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  pickerRowPlaceholder: {
-    fontWeight: '400',
-    color: colors.textMuted,
-  },
+    container: { flex: 1, backgroundColor: colors.bg },
+    flex: { flex: 1 },
+    glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 300 },
+
+    topRow: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 44, paddingHorizontal: 24, paddingTop: spacing.md, paddingBottom: spacing.sm },
+    backButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceElevated },
+    backSpacer: { width: 44, height: 44 },
+    topCounter: { flex: 1, fontSize: 13, fontWeight: '700', color: colors.textMuted, textAlign: 'right' },
+
+    progressRow: { flexDirection: 'row', gap: 6, paddingHorizontal: 24, paddingBottom: spacing.sm },
+    progressItem: { flex: 1 },
+    progressBar: { height: 5, borderRadius: 3, backgroundColor: colors.borderStrong },
+    progressBarActive: { backgroundColor: colors.accent },
+
+    scrollContent: { paddingHorizontal: 24, paddingTop: spacing.md, paddingBottom: 40, gap: 8 },
+    title: { fontSize: 30, lineHeight: 38, fontWeight: '800', letterSpacing: -0.8, color: colors.textPrimary },
+    subtitle: { fontSize: 14, lineHeight: 21, color: colors.textSecondary, marginBottom: spacing.md },
+    stack: { gap: 14 },
+
+    centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 32, paddingBottom: 80 },
+    centerIcon: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+    centerStateText: { fontSize: 14, lineHeight: 21, color: colors.textSecondary, textAlign: 'center' },
+    retryButton: { height: 52, paddingHorizontal: 32, borderRadius: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent, marginTop: 6 },
+    retryText: { color: '#ffffff', fontSize: 15, fontWeight: '800' },
+
+    selectRow: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14, borderRadius: 24, borderWidth: 1.5, borderColor: 'transparent', backgroundColor: colors.surfaceElevated },
+    selectRowFilled: { borderColor: colors.accentSoft },
+    selectRowDisabled: { opacity: 0.45 },
+    selectIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
+    selectIconFilled: { backgroundColor: colors.accentSoft },
+    selectTextWrap: { flex: 1, gap: 2 },
+    selectHint: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
+    selectValue: { fontSize: 16, fontWeight: '800', color: colors.textPrimary },
+    selectPlaceholder: { fontWeight: '500', color: colors.textMuted },
+
+    productGroup: { gap: 8 },
+    groupTitle: { fontSize: 12, fontWeight: '800', letterSpacing: 0.8, textTransform: 'uppercase', color: colors.textMuted, marginLeft: 4, marginTop: 4 },
+    productRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, paddingHorizontal: 16, borderRadius: 22, borderWidth: 1.5, borderColor: 'transparent', backgroundColor: colors.surfaceElevated },
+    productRowActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
+    checkCircle: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: colors.borderStrong },
+    checkCircleActive: { borderColor: colors.accent, backgroundColor: colors.accent },
+    productRowText: { flex: 1, fontSize: 15, lineHeight: 21, fontWeight: '700', color: colors.textPrimary },
+    notYetSoldNote: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, padding: 16, borderRadius: 22, backgroundColor: colors.surfaceElevated },
+    notYetSoldText: { flex: 1, fontSize: 13, lineHeight: 19, color: colors.textSecondary },
+
+    textArea: { minHeight: 84, paddingTop: 12, textAlignVertical: 'top' },
+
+    summaryCard: { paddingHorizontal: 18, paddingVertical: 6, borderRadius: 28, backgroundColor: colors.surfaceElevated },
+    summaryRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 16, paddingVertical: 13 },
+    summaryRowBorder: { borderTopWidth: 1, borderTopColor: colors.border },
+    summaryLabel: { fontSize: 14, color: colors.textMuted },
+    summaryValue: { flex: 1, fontSize: 14, lineHeight: 20, fontWeight: '700', color: colors.textPrimary, textAlign: 'right' },
+
+    submitErrorBox: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: 20, backgroundColor: colors.dangerBg },
+    submitErrorText: { flex: 1, fontSize: 14, lineHeight: 20, color: colors.danger },
+
+    stepHint: { fontSize: 12, lineHeight: 17, color: colors.textMuted, textAlign: 'center', paddingHorizontal: 32, paddingTop: 8, backgroundColor: colors.bg },
+    navRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 24, paddingTop: 12, backgroundColor: colors.bg },
+    navBack: { height: 56, paddingHorizontal: 26, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceElevated },
+    navBackText: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
+    navNext: { flex: 1, flexDirection: 'row', gap: 8, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent },
+    navNextText: { fontSize: 16, fontWeight: '800', color: '#ffffff' },
+    navDisabled: { opacity: 0.4 },
+
+    successContent: { flexGrow: 1, alignItems: 'center', paddingHorizontal: 24, paddingTop: spacing.lg, paddingBottom: 40, gap: 14 },
+    successRing: { width: 112, height: 112, borderRadius: 56, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft, marginBottom: 6 },
+    successIconWrap: { width: 76, height: 76, borderRadius: 38, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent },
+    successTitle: { fontSize: 28, lineHeight: 36, fontWeight: '800', letterSpacing: -0.7, color: colors.textPrimary, textAlign: 'center' },
+    successNote: { fontSize: 14, lineHeight: 21, color: colors.textSecondary, textAlign: 'center' },
+    refCard: { alignSelf: 'stretch', alignItems: 'center', gap: 4, paddingVertical: 18, borderRadius: 28, backgroundColor: colors.surfaceElevated },
+    refLabel: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
+    quotationNumber: { fontSize: 22, fontWeight: '800', letterSpacing: 0.5, color: colors.accent },
+    nextStep: { alignSelf: 'stretch', flexDirection: 'row', alignItems: 'flex-start', gap: 12, padding: 16, borderRadius: 22, backgroundColor: colors.surfaceElevated },
+    nextStepText: { flex: 1, fontSize: 13, lineHeight: 19, color: colors.textSecondary },
+    nextStepBold: { fontWeight: '800', color: colors.textPrimary },
+    successActions: { alignSelf: 'stretch', gap: 10, marginTop: 6 },
+    primaryButton: { flexDirection: 'row', gap: 8, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent },
+    primaryButtonText: { fontSize: 16, fontWeight: '800', color: '#ffffff' },
+    secondaryButton: { flexDirection: 'row', gap: 8, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceElevated },
+    secondaryButtonText: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
+    ghostButton: { height: 48, alignItems: 'center', justifyContent: 'center' },
+    ghostButtonText: { fontSize: 14, fontWeight: '700', color: colors.textMuted },
   });
 }

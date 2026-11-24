@@ -23,6 +23,8 @@ const DOUBLE_TAP_DELAY_MS = 280;
 interface Props {
   uri: string;
   fallback?: string;
+  /** Gambar di tengah kotaknya (bukan menempel di atas), untuk penampil layar penuh. */
+  centered?: boolean;
 }
 
 function touchDistance(touches: { pageX: number; pageY: number }[]): number {
@@ -30,7 +32,7 @@ function touchDistance(touches: { pageX: number; pageY: number }[]): number {
   return Math.hypot(a.pageX - b.pageX, a.pageY - b.pageY);
 }
 
-export function PinchZoomImage({ uri, fallback }: Props) {
+export function PinchZoomImage({ uri, fallback, centered }: Props) {
   // contentFit="contain" selalu men-center gambar DI DALAM kotaknya
   // sendiri, terlepas dari alignment container-nya — kalau kotaknya
   // dipaksa height:'100%' (memenuhi layar), muncul letterbox kosong di
@@ -93,6 +95,10 @@ export function PinchZoomImage({ uri, fallback }: Props) {
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: (_e, gesture) =>
           Math.abs(gesture.dx) > 2 || Math.abs(gesture.dy) > 2,
+        // Gesture tidak boleh direbut induk (jendela modal, daftar di belakangnya) selama jari masih menyentuh: tanpa ini, cubitan dua jari
+        // bisa diputus di tengah jalan sehingga gambar tidak pernah membesar.
+        onPanResponderTerminationRequest: () => false,
+        onShouldBlockNativeResponder: () => true,
 
         onPanResponderGrant: (e) => {
           const touches = e.nativeEvent.touches;
@@ -158,7 +164,7 @@ export function PinchZoomImage({ uri, fallback }: Props) {
   );
 
   return (
-    <Animated.View style={styles.container} {...panResponder.panHandlers}>
+    <Animated.View style={[styles.container, centered && { justifyContent: 'center' }]} {...panResponder.panHandlers}>
       <AnimatedImage
         source={{ uri: uri || fallback }}
         style={[

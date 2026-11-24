@@ -7,6 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAppTheme } from '@/lib/theme-context';
+import ComingSoon from '@/components/ui/ComingSoon';
 
 // Mirror app/partner/redemptions.tsx — Partner sudah punya layar riwayat
 // penukaran reward, tapi Customer sebelumnya TIDAK, walau endpoint
@@ -31,7 +32,13 @@ const STATUS_LABEL: Record<Redemption['status'], string> = {
   cancelled: 'Dibatalkan',
 };
 
+// GATE COMING SOON (diminta user, 2026-09-30) -- lihat catatan lengkap
+// di app/account/points.tsx (pola sama persis).
 export default function RewardRedemptionsScreen() {
+  return <ComingSoon title="Riwayat Tukar Reward" message="Fitur Poin & Reward sedang kami persiapkan dan akan segera bisa kamu gunakan." icon="gift-outline" />;
+}
+
+function RewardRedemptionsScreenReal() {
   const { theme, colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
@@ -64,7 +71,7 @@ export default function RewardRedemptionsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         {router.canGoBack() ? (

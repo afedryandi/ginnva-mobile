@@ -1,21 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  ScrollView,
-  StyleSheet,
-  Alert,
-  Pressable,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
+import { View, ScrollView, StyleSheet, Alert, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { Button } from '@/components/ui/Button';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { AppText as Text, AppTextInput as TextInput } from '@/components/ui/AppText';
+import { FadeInUp } from '@/components/ui/FadeInUp';
+import { PressableScale } from '@/components/ui/PressableScale';
+import { AuthField, AuthNotice, useAuthSubmitStyle } from '@/components/auth/AuthShell';
+import { darkColors, spacing } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { useAppTheme } from '@/lib/theme-context';
@@ -35,6 +30,8 @@ interface UpdateProfileResponse {
   };
 }
 
+// Tampilan didesain ulang (2026-11-24): kepala dengan avatar besar, kolom isian berikon yang sama dengan layar masuk, dan area hapus akun
+// yang dipisah jelas. Data, validasi, simpan, dan hapus akun tidak berubah.
 export default function EditProfileScreen() {
   const { customer, isLoggedIn, refreshProfile, logout } = useAuth();
   const { theme, colors } = useAppTheme();
@@ -64,6 +61,16 @@ export default function EditProfileScreen() {
   }, [customer]);
 
   const isFormValid = name.trim().length > 0;
+  const submitStyle = useAuthSubmitStyle(isFormValid && !saving);
+
+  const clearError = (key: string) => {
+    if (!fieldErrors[key]) return;
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
 
   const handleSave = () => {
     if (!isFormValid) return;
@@ -98,7 +105,7 @@ export default function EditProfileScreen() {
           setSaveError(
             err instanceof ApiError
               ? err.message
-              : 'Gagal menyimpan. Periksa koneksi internet Anda dan coba lagi.'
+              : 'Gagal menyimpan. Periksa koneksi internetmu dan coba lagi.'
           );
         }
       })
@@ -111,7 +118,7 @@ export default function EditProfileScreen() {
   const handleDeleteAccount = () => {
     Alert.alert(
       'Hapus Akun',
-      'Semua data pribadi (nama, email, nomor WhatsApp) akan dihapus permanen dan tidak bisa dikembalikan. Riwayat booking & garansi tetap tersimpan di toko untuk keperluan layanan purnajual, tapi tidak lagi terhubung ke identitas Anda. Yakin ingin melanjutkan?',
+      'Semua data pribadi (nama, email, nomor WhatsApp) akan dihapus permanen dan tidak bisa dikembalikan. Riwayat booking & garansi tetap tersimpan di toko untuk keperluan layanan purnajual, tapi tidak lagi terhubung ke identitasmu. Yakin ingin melanjutkan?',
       [
         { text: 'Batal', style: 'cancel' },
         {
@@ -137,7 +144,7 @@ export default function EditProfileScreen() {
                         'Gagal Menghapus Akun',
                         err instanceof ApiError
                           ? err.message
-                          : 'Periksa koneksi internet Anda dan coba lagi.'
+                          : 'Periksa koneksi internetmu dan coba lagi.'
                       );
                     } finally {
                       setDeleting(false);
@@ -154,129 +161,107 @@ export default function EditProfileScreen() {
 
   if (!customer) return null;
 
+  const initial = (customer.name || customer.email || '?').charAt(0).toUpperCase();
+
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-      <View style={styles.header}>
-        {router.canGoBack() ? (
-          <Pressable onPress={() => router.back()} style={styles.sideButton}>
-            <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
-          </Pressable>
-        ) : (
-          <View style={styles.sideButton} />
-        )}
-        <Text style={styles.headerTitle} numberOfLines={1}>Edit Profil</Text>
-        <View style={styles.sideButton} />
-      </View>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Info email — read only, tidak bisa diubah */}
-        <View style={styles.emailRow}>
-          <Ionicons name="mail-outline" size={16} color={colors.textSecondary} />
-          <Text style={styles.emailText}>{customer.email}</Text>
-          <Text style={styles.emailNote}>Tidak dapat diubah</Text>
-        </View>
 
-        <View style={styles.form}>
-          {/* Nama */}
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>
-              Nama Lengkap <Text style={styles.required}>*</Text>
-            </Text>
-            <TextInput
-              style={[styles.input, !!fieldErrors.name && styles.inputError]}
-              value={name}
-              onChangeText={(v) => {
-                setName(v);
-                if (fieldErrors.name) {
-                  setFieldErrors((prev) => {
-                    const next = { ...prev };
-                    delete next.name;
-                    return next;
-                  });
-                }
-              }}
-              placeholder="Masukkan nama lengkap Anda"
-              placeholderTextColor={colors.textMuted}
-              autoCapitalize="words"
-              returnKeyType="next"
-            />
-            {!!fieldErrors.name && (
-              <Text style={styles.fieldError}>{fieldErrors.name}</Text>
-            )}
+      <LinearGradient pointerEvents="none" colors={[colors.accentSoft, 'transparent']} start={{ x: 1, y: 0 }} end={{ x: 0.2, y: 1 }} style={styles.glow} />
+
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <View style={styles.topRow}>
+            <Pressable
+              onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/account' as never))}
+              style={styles.backButton}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Kembali"
+            >
+              <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+            </Pressable>
+            <Text style={styles.topTitle}>Edit Profil</Text>
           </View>
 
-          {/* No. WhatsApp */}
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>No. WhatsApp</Text>
-            <View style={styles.phoneInputWrap}>
-              <Text style={styles.phonePrefix}>+62</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  styles.phoneInput,
-                  !!fieldErrors.phone_number && styles.inputError,
-                ]}
-                value={phoneNumber}
-                onChangeText={(v) => {
-                  setPhoneNumber(v);
-                  if (fieldErrors.phone_number) {
-                    setFieldErrors((prev) => {
-                      const next = { ...prev };
-                      delete next.phone_number;
-                      return next;
-                    });
-                  }
-                }}
-                placeholder="81234567890"
-                placeholderTextColor={colors.textMuted}
-                keyboardType="phone-pad"
-                returnKeyType="done"
-              />
+          <FadeInUp style={styles.hero}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{initial}</Text>
             </View>
-            {!!fieldErrors.phone_number && (
-              <Text style={styles.fieldError}>{fieldErrors.phone_number}</Text>
-            )}
-            <Text style={styles.hint}>
-              Digunakan untuk konfirmasi booking & notifikasi garansi
-            </Text>
-          </View>
-        </View>
+            {/* Email hanya-baca: tidak bisa diubah, jadi tampil sebagai kartu terkunci, bukan kolom isian. */}
+            <View style={styles.emailChip}>
+              <Ionicons name="lock-closed-outline" size={14} color={colors.textMuted} />
+              <Text style={styles.emailText} numberOfLines={1}>{customer.email}</Text>
+            </View>
+          </FadeInUp>
 
-        {!!saveError && (
-          <View style={styles.errorBanner}>
-            <Ionicons name="alert-circle-outline" size={16} color={colors.danger} />
-            <Text style={styles.errorBannerText}>{saveError}</Text>
-          </View>
-        )}
+          <FadeInUp delay={80} style={styles.form}>
+            <AuthField label="Nama lengkap" icon="person-outline" error={fieldErrors.name}>
+              {(input) => (
+                <TextInput
+                  {...input}
+                  value={name}
+                  onChangeText={(v) => {
+                    setName(v);
+                    clearError('name');
+                  }}
+                  placeholder="Masukkan nama lengkap"
+                  placeholderTextColor={colors.textMuted}
+                  autoCapitalize="words"
+                  returnKeyType="next"
+                />
+              )}
+            </AuthField>
 
-        <Button
-          label={saving ? 'Menyimpan...' : 'Simpan Perubahan'}
-          onPress={handleSave}
-          disabled={!isFormValid || saving}
-          style={styles.saveButton}
-        />
+            <AuthField
+              label="No. WhatsApp"
+              prefix="+62"
+              hint="Dipakai untuk konfirmasi booking dan notifikasi garansi."
+              error={fieldErrors.phone_number}
+              gap
+            >
+              {(input) => (
+                <TextInput
+                  {...input}
+                  value={phoneNumber}
+                  onChangeText={(v) => {
+                    setPhoneNumber(v.replace(/[^0-9]/g, ''));
+                    clearError('phone_number');
+                  }}
+                  placeholder="81234567890"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="phone-pad"
+                  returnKeyType="done"
+                  onSubmitEditing={handleSave}
+                />
+              )}
+            </AuthField>
 
-        <View style={styles.dangerZone}>
-          <Text style={styles.dangerZoneTitle}>Zona Berbahaya</Text>
-          <Pressable
-            style={styles.deleteAccountBtn}
-            onPress={handleDeleteAccount}
-            disabled={deleting}
-          >
-            <Ionicons name="trash-outline" size={16} color={colors.danger} />
-            <Text style={styles.deleteAccountText}>
-              {deleting ? 'Menghapus...' : 'Hapus Akun'}
-            </Text>
-          </Pressable>
-        </View>
-      </ScrollView>
+            {saveError ? <AuthNotice kind="error" message={saveError} /> : null}
+
+            <Button
+              label={saving ? 'Menyimpan...' : 'Simpan Perubahan'}
+              onPress={handleSave}
+              disabled={!isFormValid || saving}
+              style={submitStyle as never}
+            />
+          </FadeInUp>
+
+          <FadeInUp delay={140} style={styles.dangerCard}>
+            <View style={styles.dangerHead}>
+              <View style={styles.dangerIcon}>
+                <Ionicons name="trash-outline" size={18} color={colors.danger} />
+              </View>
+              <View style={styles.dangerText}>
+                <Text style={styles.dangerTitle}>Hapus akun</Text>
+                <Text style={styles.dangerDesc}>Data pribadi dihapus permanen dan tidak bisa dikembalikan.</Text>
+              </View>
+            </View>
+            <PressableScale style={styles.deleteButton} onPress={handleDeleteAccount} disabled={deleting} accessibilityRole="button">
+              <Text style={styles.deleteText}>{deleting ? 'Menghapus...' : 'Hapus Akun'}</Text>
+            </PressableScale>
+          </FadeInUp>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -284,154 +269,31 @@ export default function EditProfileScreen() {
 
 function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-  flex: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.bg,
-  },
-  sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-  scrollContent: {
-    padding: spacing.md,
-    paddingBottom: spacing.xxl,
-  },
-  emailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    marginBottom: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  emailText: {
-    flex: 1,
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    fontWeight: '600',
-  },
-  emailNote: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-  },
-  form: {
-    gap: spacing.md,
-  },
-  fieldGroup: {
-    gap: spacing.xs,
-  },
-  label: {
-    fontSize: fontSize.sm,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  required: {
-    color: colors.accent,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-    backgroundColor: colors.surface,
-  },
-  inputError: {
-    borderColor: colors.danger,
-  },
-  phoneInputWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    overflow: 'hidden',
-  },
-  phonePrefix: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    fontWeight: '600',
-    backgroundColor: colors.surfaceElevated,
-    borderRightWidth: 1,
-    borderRightColor: colors.border,
-  },
-  phoneInput: {
-    flex: 1,
-    borderWidth: 0,
-    borderRadius: 0,
-  },
-  fieldError: {
-    fontSize: fontSize.xs,
-    color: colors.danger,
-    marginTop: 2,
-  },
-  hint: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-  },
-  errorBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.dangerBg,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    marginTop: spacing.md,
-  },
-  errorBannerText: {
-    flex: 1,
-    fontSize: fontSize.sm,
-    color: colors.danger,
-  },
-  saveButton: {
-    marginTop: spacing.lg,
-  },
-  dangerZone: {
-    marginTop: spacing.xxl,
-    paddingTop: spacing.lg,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  dangerZoneTitle: {
-    fontSize: fontSize.xs,
-    fontWeight: '700',
-    color: colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: spacing.sm,
-  },
-  deleteAccountBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.danger,
-  },
-  deleteAccountText: {
-    fontSize: fontSize.sm,
-    fontWeight: '700',
-    color: colors.danger,
-  },
+    container: { flex: 1, backgroundColor: colors.bg },
+    flex: { flex: 1 },
+    glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 300 },
+    scrollContent: { flexGrow: 1, paddingHorizontal: 24, paddingTop: spacing.md, paddingBottom: spacing.xl },
+
+    topRow: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 44 },
+    backButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceElevated },
+    topTitle: { fontSize: 20, fontWeight: '800', letterSpacing: -0.4, color: colors.textPrimary },
+
+    hero: { alignItems: 'center', marginTop: 28, gap: 12 },
+    avatar: { width: 92, height: 92, borderRadius: 46, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent },
+    // SENGAJA putih tetap: duduk di atas merah pekat yang sama di kedua tema.
+    avatarText: { fontSize: 36, fontWeight: '800', color: '#ffffff' },
+    emailChip: { flexDirection: 'row', alignItems: 'center', gap: 8, maxWidth: '100%', height: 36, paddingHorizontal: 16, borderRadius: 18, backgroundColor: colors.surfaceElevated },
+    emailText: { flexShrink: 1, fontSize: 13, fontWeight: '700', color: colors.textSecondary },
+
+    form: { marginTop: 32 },
+
+    dangerCard: { marginTop: 40, padding: 18, gap: 14, borderRadius: 24, backgroundColor: colors.dangerBg },
+    dangerHead: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+    dangerIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
+    dangerText: { flex: 1, gap: 2 },
+    dangerTitle: { fontSize: 15, fontWeight: '800', color: colors.textPrimary },
+    dangerDesc: { fontSize: 13, lineHeight: 19, color: colors.textSecondary },
+    deleteButton: { height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: colors.danger },
+    deleteText: { fontSize: 14, fontWeight: '800', color: colors.danger },
   });
 }

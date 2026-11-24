@@ -7,6 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
+import ComingSoon from '@/components/ui/ComingSoon';
 
 interface Redemption {
   id: number;
@@ -22,22 +23,37 @@ const STATUS_LABEL: Record<Redemption['status'], string> = {
   cancelled: 'Dibatalkan',
 };
 
+// GATE COMING SOON (diminta user, 2026-09-30) -- lihat catatan lengkap
+// di app/account/points.tsx (pola sama persis).
 export default function PartnerRedemptionsScreen() {
+  return <ComingSoon title="Riwayat Tukar Reward" message="Fitur Poin & Reward sedang kami persiapkan dan akan segera bisa Anda gunakan." icon="gift-outline" />;
+}
+
+function PartnerRedemptionsScreenReal() {
   const { theme, colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [items, setItems] = useState<Redemption[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Pagination (2026-09-26, audit Riwayat Poin Partner) -- backend
+  // sebelumnya tidak ada limit sama sekali, sekarang paginate().
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+
+  interface RedemptionsResponse { data: Redemption[]; current_page: number; has_more: boolean }
 
   const fetchData = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
     try {
-      const res = await staffApiFetch<{ data: Redemption[] }>('/api/partner/redemptions');
+      const res = await staffApiFetch<RedemptionsResponse>('/api/partner/redemptions');
       setItems(res.data);
+      setPage(res.current_page ?? 1);
+      setHasMore(res.has_more ?? false);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Gagal memuat riwayat penukaran.');
     } finally {
@@ -45,6 +61,21 @@ export default function PartnerRedemptionsScreen() {
       setRefreshing(false);
     }
   }, []);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await staffApiFetch<RedemptionsResponse>(`/api/partner/redemptions?page=${page + 1}`);
+      setItems((prev) => [...prev, ...(res.data ?? [])]);
+      setPage(res.current_page ?? page + 1);
+      setHasMore(res.has_more ?? false);
+    } catch {
+      // Diamkan -- riwayat yang sudah tampil tetap valid.
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, page]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -55,7 +86,7 @@ export default function PartnerRedemptionsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.sideButton}>
@@ -98,6 +129,17 @@ export default function PartnerRedemptionsScreen() {
               <Text style={styles.emptyTitle}>Belum Ada Penukaran</Text>
             </View>
           }
+          ListFooterComponent={
+            hasMore ? (
+              <Pressable style={styles.loadMoreBtn} onPress={loadMore} disabled={loadingMore}>
+                {loadingMore ? (
+                  <ActivityIndicator size="small" color={colors.accent} />
+                ) : (
+                  <Text style={styles.loadMoreText}>Muat Riwayat Lebih Lama</Text>
+                )}
+              </Pressable>
+            ) : null
+          }
         />
       )}
     </SafeAreaView>
@@ -130,5 +172,7 @@ function createStyles(colors: typeof darkColors) {
   rowPoints: { fontSize: fontSize.base, fontWeight: '700', color: colors.danger },
   emptyBox: { alignItems: 'center', padding: spacing.xl, gap: spacing.sm, marginTop: spacing.lg },
   emptyTitle: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary },
+  loadMoreBtn: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.md },
+  loadMoreText: { fontSize: fontSize.sm, fontWeight: '700', color: colors.accent },
   });
 }

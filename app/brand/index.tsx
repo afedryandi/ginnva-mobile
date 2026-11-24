@@ -5,7 +5,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { LinearGradient } from 'expo-linear-gradient';
+import { FadeInUp } from '@/components/ui/FadeInUp';
+import { PressableScale } from '@/components/ui/PressableScale';
+import { darkColors, spacing } from '@/constants/theme';
 import { useAppTheme } from '@/lib/theme-context';
 import { PinchZoomImage } from '@/components/ui/PinchZoomImage';
 
@@ -61,15 +64,49 @@ const TIMELINE = [
   { year: '2026', body: 'Ekspansi ke Indonesia (Jakarta), fokus di bidang otomotif.' },
 ];
 
-function StatGrid({ stats, styles }: { stats: { value: string; label: string }[]; styles: ReturnType<typeof createStyles> }) {
+type Styles = ReturnType<typeof createStyles>;
+
+function StatGrid({ stats, styles }: { stats: { value: string; label: string }[]; styles: Styles }) {
   return (
     <View style={styles.statGrid}>
       {stats.map((s) => (
         <View key={s.label} style={styles.statItem}>
-          <Text style={styles.statValue}>{s.value}</Text>
+          <Text style={styles.statValue} adjustsFontSizeToFit numberOfLines={1}>{s.value}</Text>
           <Text style={styles.statLabel}>{s.label}</Text>
         </View>
       ))}
+    </View>
+  );
+}
+
+// Garis waktu vertikal: titik merah per tahun, disambung garis tipis.
+function Timeline({ styles }: { styles: Styles }) {
+  return (
+    <View style={styles.timeline}>
+      {TIMELINE.map((item, idx) => {
+        const last = idx === TIMELINE.length - 1;
+        return (
+          <View key={item.year} style={styles.timelineRow}>
+            <View style={styles.timelineRail}>
+              <View style={styles.timelineDot} />
+              {!last && <View style={styles.timelineLine} />}
+            </View>
+            <View style={[styles.timelineContent, last && styles.timelineContentLast]}>
+              <Text style={styles.timelineYear}>{item.year}</Text>
+              <Text style={styles.timelineBody}>{item.body}</Text>
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function ChinaNote({ styles, colors }: { styles: Styles; colors: typeof darkColors }) {
+  return (
+    <View style={styles.chinaNote}>
+      <Ionicons name="globe-outline" size={15} color={colors.textMuted} />
+      <Text style={styles.chinaNoteText}>Data berikut merupakan informasi dari Ginnva China</Text>
     </View>
   );
 }
@@ -80,49 +117,48 @@ export default function BrandScreen() {
   const [activeTab, setActiveTab] = useState<'indonesia' | 'china'>('indonesia');
   const [zoomedHonor, setZoomedHonor] = useState<{ src: string; caption: string } | null>(null);
 
+  const tabs: { key: 'indonesia' | 'china'; label: string }[] = [
+    { key: 'indonesia', label: 'Ginnva Indonesia' },
+    { key: 'china', label: 'Ginnva China' },
+  ];
+
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-      <View style={styles.header}>
+      <LinearGradient pointerEvents="none" colors={[colors.accentSoft, 'transparent']} start={{ x: 1, y: 0 }} end={{ x: 0.2, y: 1 }} style={styles.glow} />
+
+      <View style={styles.topRow}>
         {router.canGoBack() ? (
-          <Pressable onPress={() => router.back()} style={styles.sideButton}>
-            <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+          <Pressable onPress={() => router.back()} style={styles.backButton} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kembali">
+            <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
           </Pressable>
-        ) : (
-          <View style={styles.sideButton} />
-        )}
-        <Text style={styles.headerTitle} numberOfLines={1}>Tentang Ginnva</Text>
-        <View style={styles.sideButton} />
+        ) : null}
+        <Text style={styles.topTitle} numberOfLines={1}>Tentang Ginnva</Text>
       </View>
 
-      {/* Tab selector */}
+      {/* Pemilih tab berbentuk pil */}
       <View style={styles.tabBar}>
-        <Pressable
-          style={[styles.tabBtn, activeTab === 'indonesia' && styles.tabBtnActive]}
-          onPress={() => setActiveTab('indonesia')}
-        >
-          <Text style={[styles.tabBtnText, activeTab === 'indonesia' && styles.tabBtnTextActive]}>
-            🇮🇩  Ginnva Indonesia
-          </Text>
-        </Pressable>
-        <Pressable
-          style={[styles.tabBtn, activeTab === 'china' && styles.tabBtnActive]}
-          onPress={() => setActiveTab('china')}
-        >
-          <Text style={[styles.tabBtnText, activeTab === 'china' && styles.tabBtnTextActive]}>
-            🇨🇳  Ginnva China
-          </Text>
-        </Pressable>
+        {tabs.map((t) => {
+          const active = activeTab === t.key;
+          return (
+            <Pressable
+              key={t.key}
+              style={[styles.tabBtn, active && styles.tabBtnActive]}
+              onPress={() => setActiveTab(t.key)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+            >
+              <Text style={[styles.tabBtnText, active && styles.tabBtnTextActive]}>{t.label}</Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       {activeTab === 'indonesia' ? (
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <Image
-            source={require('@/assets/images/building-indo.webp')}
-            style={styles.buildingImage}
-            contentFit="cover"
-            transition={300}
-          />
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <FadeInUp>
+            <Image source={require('@/assets/images/building-indo.webp')} style={styles.buildingImage} contentFit="cover" transition={300} />
+          </FadeInUp>
           <View style={styles.content}>
             <Text style={styles.sectionTitle}>Profil Perusahaan</Text>
             <Text style={styles.paragraph}>
@@ -147,6 +183,9 @@ export default function BrandScreen() {
 
             {/* Kotak kepercayaan/penunjukan mitra */}
             <View style={styles.trustBox}>
+              <View style={styles.trustIcon}>
+                <Ionicons name="ribbon-outline" size={22} color={colors.accent} />
+              </View>
               <Text style={styles.trustBoxText}>
                 Sebagai bentuk kepercayaan dan ekspansi global, Shanghai Smith Adhesive
                 New Material Co., Ltd. secara resmi menunjuk{' '}
@@ -157,52 +196,33 @@ export default function BrandScreen() {
               </Text>
             </View>
 
-            {/* ===== Timeline ===== */}
-            <Text style={[styles.sectionTitle, styles.sectionSpacing]}>
-              Perjalanan Pertumbuhan
-            </Text>
-            <View style={styles.timelineCard}>
-              {TIMELINE.map((item, idx) => (
-                <View
-                  key={item.year}
-                  style={[
-                    styles.timelineRow,
-                    idx !== TIMELINE.length - 1 && styles.timelineRowBorder,
-                  ]}
-                >
-                  <Text style={styles.timelineYear}>{item.year}</Text>
-                  <Text style={styles.timelineBody}>{item.body}</Text>
-                </View>
-              ))}
-            </View>
+            <Text style={[styles.sectionTitle, styles.sectionSpacing]}>Perjalanan Pertumbuhan</Text>
+            <Timeline styles={styles} />
 
             {/* CTA Kemitraan */}
-            <Pressable
-              style={styles.partnershipCta}
-              onPress={() => router.push('/partnership' as never)}
-            >
-              <Ionicons name="business-outline" size={22} color="#ffffff" />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.partnershipCtaTitle}>Jadilah Mitra Ginnva</Text>
-                <Text style={styles.partnershipCtaSub}>
-                  Buka peluang dealer / distributor resmi di kota Anda
-                </Text>
+            <PressableScale style={styles.partnershipCta} onPress={() => router.push('/partnership' as never)} accessibilityRole="button">
+              <View style={styles.partnershipIcon}>
+                <Ionicons name="business-outline" size={24} color="#ffffff" />
               </View>
-              <Ionicons name="chevron-forward" size={18} color="#ffffff" />
-            </Pressable>
+              <View style={styles.partnershipBody}>
+                <Text style={styles.partnershipCtaTitle}>Jadilah Mitra Ginnva</Text>
+                <Text style={styles.partnershipCtaSub}>Buka peluang dealer / distributor resmi di kotamu</Text>
+              </View>
+              <Ionicons name="arrow-forward" size={20} color="#ffffff" />
+            </PressableScale>
           </View>
         </ScrollView>
       ) : (
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <Image
-            source={require('@/assets/images/building-china.webp')}
-            style={styles.buildingImage}
-            contentFit="cover"
-            transition={300}
-          />
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <FadeInUp>
+            <Image source={require('@/assets/images/building-china.webp')} style={styles.buildingImage} contentFit="cover" transition={300} />
+          </FadeInUp>
           <View style={styles.content}>
             <Text style={styles.sectionTitle}>Shanghai Smith Adhesive New Material Co., Ltd.</Text>
-            <Text style={styles.mutedLabel}>SSE: 603683</Text>
+            <View style={styles.stockPill}>
+              <Ionicons name="trending-up-outline" size={14} color={colors.accent} />
+              <Text style={styles.stockPillText}>SSE: 603683</Text>
+            </View>
             <Text style={styles.paragraph}>
               Perusahaan material perekat pertama di China yang tercatat di bursa saham,
               berdiri sejak tahun <Text style={styles.bold}>1994</Text> dan resmi terdaftar
@@ -222,30 +242,11 @@ export default function BrandScreen() {
               kolaborasi riset bersama pelanggan industri terkemuka.
             </Text>
 
-            {/* ===== Timeline ===== */}
-            <Text style={[styles.sectionTitle, styles.sectionSpacing]}>
-              Perjalanan Pertumbuhan
-            </Text>
-            <View style={styles.timelineCard}>
-              {TIMELINE.map((item, idx) => (
-                <View
-                  key={item.year}
-                  style={[
-                    styles.timelineRow,
-                    idx !== TIMELINE.length - 1 && styles.timelineRowBorder,
-                  ]}
-                >
-                  <Text style={styles.timelineYear}>{item.year}</Text>
-                  <Text style={styles.timelineBody}>{item.body}</Text>
-                </View>
-              ))}
-            </View>
+            <Text style={[styles.sectionTitle, styles.sectionSpacing]}>Perjalanan Pertumbuhan</Text>
+            <Timeline styles={styles} />
 
-            {/* ===== Kekuatan R&D ===== */}
-            <Text style={[styles.sectionTitle, styles.sectionSpacing]}>
-              Kekuatan Riset &amp; Pengembangan
-            </Text>
-            <Text style={styles.chinaNote}>🇨🇳 Data berikut merupakan informasi dari Ginnva China</Text>
+            <Text style={[styles.sectionTitle, styles.sectionSpacing]}>Kekuatan Riset &amp; Pengembangan</Text>
+            <ChinaNote styles={styles} colors={colors} />
             <Text style={styles.paragraph}>
               Ginnva memiliki kapabilitas di bagian Riset dan Pengembangan (Research &amp;
               Development) yang tangguh, dengan keahlian teknis mendalam yang dibangun
@@ -258,11 +259,8 @@ export default function BrandScreen() {
             </Text>
             <StatGrid stats={RND_STATS} styles={styles} />
 
-            {/* ===== Kekuatan Manufaktur Cerdas ===== */}
-            <Text style={[styles.sectionTitle, styles.sectionSpacing]}>
-              Kekuatan Manufaktur Cerdas
-            </Text>
-            <Text style={styles.chinaNote}>🇨🇳 Data berikut merupakan informasi dari Ginnva China</Text>
+            <Text style={[styles.sectionTitle, styles.sectionSpacing]}>Kekuatan Manufaktur Cerdas</Text>
+            <ChinaNote styles={styles} colors={colors} />
             <Text style={styles.paragraph}>
               Ginnva memiliki 4 basis produksi yang tersebar di Suzhou, Quzhou, Chuzhou,
               dan Neijiang. Fasilitas produksi ini dilengkapi dengan robot dan teknologi
@@ -274,32 +272,18 @@ export default function BrandScreen() {
             </Text>
             <StatGrid stats={MANUFACTURING_STATS} styles={styles} />
 
-            {/* ===== Mitra Utama ===== */}
-            <Text style={[styles.sectionTitle, styles.sectionSpacing]}>
-              Mitra Utama
-            </Text>
-            <Image
-              source={{ uri: `${WEB_ASSET_BASE}/partners.webp` }}
-              style={styles.partnersImage}
-              contentFit="contain"
-              transition={300}
-            />
+            <Text style={[styles.sectionTitle, styles.sectionSpacing]}>Mitra Utama</Text>
+            <View style={styles.partnersCard}>
+              <Image source={{ uri: `${WEB_ASSET_BASE}/partners.webp` }} style={styles.partnersImage} contentFit="contain" transition={300} />
+            </View>
 
-            {/* ===== Penghargaan Perusahaan ===== */}
-            <Text style={[styles.sectionTitle, styles.sectionSpacing]}>
-              Penghargaan Perusahaan
-            </Text>
+            <Text style={[styles.sectionTitle, styles.sectionSpacing]}>Penghargaan Perusahaan</Text>
             <View style={styles.honorGrid}>
               {HONOR_IMAGES.map((item, idx) => (
-                <Pressable key={idx} style={styles.honorItem} onPress={() => setZoomedHonor(item)}>
-                  <Image
-                    source={{ uri: item.src }}
-                    style={styles.honorImage}
-                    contentFit="contain"
-                    transition={300}
-                  />
+                <PressableScale key={idx} style={styles.honorItem} onPress={() => setZoomedHonor(item)} accessibilityRole="button" accessibilityLabel={item.caption}>
+                  <Image source={{ uri: item.src }} style={styles.honorImage} contentFit="contain" transition={300} />
                   <Text style={styles.honorCaption} numberOfLines={4}>{item.caption}</Text>
-                </Pressable>
+                </PressableScale>
               ))}
             </View>
           </View>
@@ -309,14 +293,9 @@ export default function BrandScreen() {
       {/* Lightbox sertifikat — bisa pinch-zoom, supaya teks/detail kecil di
           sertifikat resmi tetap bisa dibaca jelas, bukan cuma dilihat kecil
           di grid. */}
-      <Modal
-        visible={zoomedHonor !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setZoomedHonor(null)}
-      >
+      <Modal visible={zoomedHonor !== null} transparent animationType="fade" onRequestClose={() => setZoomedHonor(null)}>
         <View style={styles.honorModalBackdrop}>
-          <Pressable style={styles.honorModalClose} onPress={() => setZoomedHonor(null)}>
+          <Pressable style={styles.honorModalClose} onPress={() => setZoomedHonor(null)} accessibilityRole="button" accessibilityLabel="Tutup">
             <Ionicons name="close" size={26} color="#ffffff" />
           </Pressable>
           {zoomedHonor && (
@@ -335,219 +314,73 @@ export default function BrandScreen() {
 
 function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.bg,
-  },
-  sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-  tabBar: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.bg,
-  },
-  tabBtn: {
-    flex: 1,
-    paddingVertical: spacing.sm + 2,
-    alignItems: 'center',
-  },
-  tabBtnActive: {
-    borderBottomWidth: 2,
-    borderBottomColor: colors.accent,
-  },
-  tabBtnText: {
-    fontSize: fontSize.sm,
-    fontWeight: '600',
-    color: colors.textMuted,
-  },
-  tabBtnTextActive: {
-    color: colors.accent,
-  },
-  scrollContent: {
-    paddingBottom: spacing.xxl,
-  },
-  buildingImage: {
-    width: '100%',
-    height: 220,
-    marginBottom: spacing.md,
-    backgroundColor: colors.surface,
-  },
-  content: {
-    paddingHorizontal: spacing.md,
-  },
-  mutedLabel: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    marginBottom: spacing.sm,
-    marginTop: -spacing.xs,
-  },
-  bold: {
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  chinaNote: {
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    marginBottom: spacing.sm,
-  },
-  sectionTitle: {
-    fontSize: fontSize.lg,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginBottom: spacing.sm,
-  },
-  sectionSpacing: {
-    marginTop: spacing.lg,
-  },
-  paragraph: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    lineHeight: 21,
-    marginBottom: spacing.sm,
-  },
-  trustBox: {
-    backgroundColor: colors.accentSoft,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    marginTop: spacing.xs,
-  },
-  trustBoxText: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    lineHeight: 21,
-    textAlign: 'center',
-  },
-  statGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: spacing.sm,
-  },
-  statItem: {
-    width: '50%',
-    paddingVertical: spacing.sm,
-  },
-  statValue: {
-    fontSize: fontSize.xxl,
-    fontWeight: '800',
-    color: colors.accent,
-  },
-  statLabel: {
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  timelineCard: {
-    padding: 0,
-    overflow: 'hidden',
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  timelineRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-    padding: spacing.md,
-  },
-  timelineRowBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  timelineYear: {
-    fontSize: fontSize.sm,
-    fontWeight: '800',
-    color: colors.accent,
-    width: 48,
-  },
-  timelineBody: {
-    flex: 1,
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-    lineHeight: 19,
-  },
-  partnersImage: {
-    width: '100%',
-    height: 90,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-  },
-  honorGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-  honorItem: {
-    width: '48%',
-    marginBottom: spacing.lg,
-  },
-  honorImage: {
-    width: '100%',
-    aspectRatio: 3 / 4,
-    backgroundColor: colors.surface,
-    borderRadius: radius.sm,
-  },
-  honorCaption: {
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginTop: spacing.xs,
-    lineHeight: 15,
-  },
-  honorModalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.92)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing.lg,
-  },
-  honorModalClose: {
-    position: 'absolute', top: 48, right: 20, width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center',
-    zIndex: 1,
-  },
-  honorModalImageWrap: {
-    width: '100%',
-    height: '70%',
-  },
-  honorModalCaption: {
-    fontSize: fontSize.sm,
-    color: '#ffffff',
-    textAlign: 'center',
-    marginTop: spacing.md,
-    paddingHorizontal: spacing.md,
-  },
-  partnershipCta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    backgroundColor: colors.accent,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    marginTop: spacing.xl,
-    marginBottom: spacing.lg,
-  },
-  partnershipCtaTitle: {
-    fontSize: fontSize.base,
-    fontWeight: '800',
-    color: '#ffffff',
-  },
-  partnershipCtaSub: {
-    fontSize: fontSize.xs,
-    color: 'rgba(255,255,255,0.8)',
-    marginTop: 2,
-  },
+    container: { flex: 1, backgroundColor: colors.bg },
+    glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 300 },
+
+    topRow: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 44, paddingHorizontal: 24, paddingTop: spacing.md, paddingBottom: spacing.sm },
+    backButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceElevated },
+    topTitle: { flex: 1, fontSize: 24, lineHeight: 30, fontWeight: '800', letterSpacing: -0.6, color: colors.textPrimary },
+
+    tabBar: { flexDirection: 'row', gap: 4, marginHorizontal: 24, marginTop: spacing.sm, marginBottom: spacing.md, padding: 4, borderRadius: 26, backgroundColor: colors.surfaceElevated },
+    tabBtn: { flex: 1, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+    tabBtnActive: { backgroundColor: colors.accent },
+    tabBtnText: { fontSize: 14, fontWeight: '800', color: colors.textMuted },
+    tabBtnTextActive: { color: '#ffffff' },
+
+    scrollContent: { paddingBottom: 48 },
+    buildingImage: { height: 220, marginHorizontal: 24, marginBottom: 24, borderRadius: 28, backgroundColor: colors.surfaceElevated },
+    content: { paddingHorizontal: 24 },
+
+    sectionTitle: { fontSize: 22, lineHeight: 29, fontWeight: '800', letterSpacing: -0.5, color: colors.textPrimary, marginBottom: 10 },
+    sectionSpacing: { marginTop: 36 },
+    paragraph: { fontSize: 15, lineHeight: 24, color: colors.textSecondary, marginBottom: 12 },
+    bold: { fontWeight: '800', color: colors.textPrimary },
+
+    stockPill: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 6, height: 30, paddingHorizontal: 12, borderRadius: 15, backgroundColor: colors.accentSoft, marginBottom: 14 },
+    stockPillText: { fontSize: 12, fontWeight: '800', color: colors.accent },
+    chinaNote: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+    chinaNoteText: { flex: 1, fontSize: 12, color: colors.textMuted },
+
+    trustBox: { gap: 12, padding: 20, borderRadius: 28, backgroundColor: colors.accentSoft, marginTop: 4 },
+    trustIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
+    trustBoxText: { fontSize: 14, lineHeight: 22, color: colors.textSecondary },
+
+    statGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 6 },
+    statItem: { flexGrow: 1, flexBasis: '45%', gap: 4, padding: 18, borderRadius: 24, backgroundColor: colors.surfaceElevated },
+    statValue: { fontSize: 26, lineHeight: 32, fontWeight: '800', letterSpacing: -0.6, color: colors.accent },
+    statLabel: { fontSize: 13, lineHeight: 18, color: colors.textSecondary },
+
+    timeline: { paddingTop: 4 },
+    timelineRow: { flexDirection: 'row', gap: 16 },
+    timelineRail: { width: 14, alignItems: 'center' },
+    timelineDot: { width: 12, height: 12, borderRadius: 6, marginTop: 5, backgroundColor: colors.accent },
+    timelineLine: { flex: 1, width: 2, marginTop: 4, borderRadius: 1, backgroundColor: colors.borderStrong },
+    timelineContent: { flex: 1, gap: 2, paddingBottom: 22 },
+    timelineContentLast: { paddingBottom: 0 },
+    timelineYear: { fontSize: 16, fontWeight: '800', color: colors.textPrimary },
+    timelineBody: { fontSize: 14, lineHeight: 21, color: colors.textSecondary },
+
+    partnersCard: { padding: 16, borderRadius: 24, backgroundColor: '#ffffff' },
+    partnersImage: { width: '100%', height: 90 },
+
+    honorGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 14 },
+    honorItem: { width: '48%', gap: 10, padding: 10, borderRadius: 24, backgroundColor: colors.surfaceElevated },
+    honorImage: { width: '100%', aspectRatio: 3 / 4, borderRadius: 16, backgroundColor: colors.bg },
+    honorCaption: { fontSize: 12, lineHeight: 17, color: colors.textSecondary, textAlign: 'center', paddingHorizontal: 4, paddingBottom: 4 },
+
+    honorModalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
+    honorModalClose: {
+      position: 'absolute', top: 48, right: 20, width: 44, height: 44, borderRadius: 22,
+      backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center',
+      zIndex: 1,
+    },
+    honorModalImageWrap: { width: '100%', height: '70%' },
+    honorModalCaption: { fontSize: 14, lineHeight: 21, color: '#ffffff', textAlign: 'center', marginTop: spacing.md, paddingHorizontal: spacing.md },
+
+    partnershipCta: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 20, borderRadius: 28, backgroundColor: colors.accent, marginTop: 36 },
+    partnershipIcon: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.2)' },
+    partnershipBody: { flex: 1, gap: 2 },
+    partnershipCtaTitle: { fontSize: 17, fontWeight: '800', color: '#ffffff' },
+    partnershipCtaSub: { fontSize: 13, lineHeight: 18, color: 'rgba(255,255,255,0.85)' },
   });
 }

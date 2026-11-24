@@ -191,7 +191,7 @@ export default function PartnerDashboardScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
         <View style={styles.center}>
           <ActivityIndicator color={colors.accent} />
@@ -201,7 +201,7 @@ export default function PartnerDashboardScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       <StatusBar style="light" />
 
       <ScrollView
@@ -286,9 +286,13 @@ export default function PartnerDashboardScreen() {
                   <View style={styles.balanceIconWrap}>
                     <Ionicons name="star" size={22} color={COPPER} />
                   </View>
+                  {/* GATE COMING SOON (diminta user, 2026-09-30) -- angka saldo asli
+                      (profile.points_balance) sengaja TIDAK ditampilkan dulu, sama
+                      alasan dengan (tabs)/account.tsx. profile.points_balance TIDAK
+                      dihapus dari state, tetap terisi diam-diam di background. */}
                   <View style={{ flex: 1 }}>
                     <Text style={styles.balanceLabel}>Poin Reward</Text>
-                    <Text style={styles.balanceValue}>{profile.points_balance.toLocaleString('id-ID')}</Text>
+                    <Text style={styles.balanceValue}>Segera Hadir</Text>
                   </View>
                   <Pressable style={styles.redeemCta} onPress={handleRedeem}>
                     <Text style={styles.redeemCtaText}>Tukar</Text>
@@ -346,7 +350,24 @@ export default function PartnerDashboardScreen() {
                       key={promo.id}
                       style={styles.promoSlide}
                       disabled={!promo.link_url}
-                      onPress={() => promo.link_url && Linking.openURL(promo.link_url)}
+                      onPress={async () => {
+                        if (!promo.link_url) return;
+
+                        // Bug diperbaiki 2026-09-29 (audit Banner/Carousel) -- SEBELUMNYA
+                        // Linking.openURL() dipanggil langsung tanpa penanganan error, sama
+                        // bug class yang sudah diperbaiki di carousel beranda Customer
+                        // (lihat handleCarouselTap di app/(tabs)/index.tsx).
+                        try {
+                          const canOpen = await Linking.canOpenURL(promo.link_url);
+                          if (!canOpen) {
+                            Alert.alert('Tidak Bisa Membuka Link', 'Link pada banner ini tidak valid atau tidak didukung.');
+                            return;
+                          }
+                          await Linking.openURL(promo.link_url);
+                        } catch {
+                          Alert.alert('Gagal Membuka Link', 'Terjadi kesalahan saat membuka link banner ini.');
+                        }
+                      }}
                     >
                       <Image source={{ uri: promo.image ?? undefined }} style={styles.promoImage} contentFit="cover" />
                       {(promo.title || promo.subtitle) && (
@@ -456,7 +477,7 @@ function createStyles(colors: typeof darkColors, promoWidth: number, promoHeight
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1.5, borderColor: '#1a1332',
   },
-  bellBadgeText: { fontSize: 9, fontWeight: '800', color: '#ffffff' },
+  bellBadgeText: { fontSize: 12, fontWeight: '800', color: '#ffffff' },
   heroNameRow: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -1,4 +1,7 @@
+import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 import * as storage from './storage';
+import { notifyUpgradeRequired } from './upgrade';
 
 // Ganti ke domain produksi — saat development bisa override lewat env
 // EXPO_PUBLIC_API_URL kalau perlu test ke server lain.
@@ -6,6 +9,16 @@ export const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_URL || 'https://api.ginnva.id';
 
 const TOKEN_KEY = 'ginnva_customer_token';
+
+// Versi aplikasi dikirim di setiap permintaan supaya server bisa memaksa pembaruan kalau versinya terlalu lama
+// (426, lihat lib/upgrade.ts dan EnforceMinimumAppVersion di API).
+const APP_VERSION = Constants.expoConfig?.version ?? '';
+
+export function appVersionHeaders(): Record<string, string> {
+  if (!APP_VERSION || (Platform.OS !== 'android' && Platform.OS !== 'ios')) return {};
+
+  return { 'X-App-Version': APP_VERSION, 'X-App-Platform': Platform.OS };
+}
 
 export async function getToken(): Promise<string | null> {
   return storage.getItem(TOKEN_KEY);
@@ -39,7 +52,7 @@ export class ApiError extends Error {
 export function buildErrorMessage(json: any): string {
   const errors = json?.errors as Record<string, string[]> | undefined;
   const firstFieldError = errors ? Object.values(errors)[0]?.[0] : null;
-  return firstFieldError || json?.message || 'Terjadi kesalahan. Silakan coba lagi.';
+  return firstFieldError || json?.message || 'Terjadi kesalahan. Coba lagi.';
 }
 
 interface RequestOptions extends RequestInit {
@@ -66,6 +79,7 @@ export async function apiFetch<T = unknown>(
   const finalHeaders: Record<string, string> = {
     Accept: 'application/json',
     'Content-Type': 'application/json',
+    ...appVersionHeaders(),
     ...(headers as Record<string, string>),
   };
 
@@ -87,6 +101,7 @@ export async function apiFetch<T = unknown>(
   const json = await res.json().catch(() => null);
 
   if (!res.ok) {
+    if (res.status === 426) notifyUpgradeRequired(json);
     throw new ApiError(buildErrorMessage(json), res.status, json?.errors);
   }
 

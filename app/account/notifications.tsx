@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
-  Text,
   FlatList,
   Pressable,
   StyleSheet,
@@ -10,13 +9,21 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
+import { AppText as Text } from '@/components/ui/AppText';
+import { FadeInUp } from '@/components/ui/FadeInUp';
+import { PressableScale } from '@/components/ui/PressableScale';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { darkColors, spacing } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { useAppTheme } from '@/lib/theme-context';
 import { hapticLight } from '@/lib/haptics';
+import { isAllowedRoute, setBadgeCount } from '@/lib/notifications';
+import PromoPreferenceCard from '@/components/PromoPreferenceCard';
+
+type IconName = React.ComponentProps<typeof Ionicons>['name'];
 
 interface CustomerNotification {
   id: number;
@@ -59,15 +66,19 @@ export default function NotificationsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [markingAll, setMarkingAll] = useState(false);
+  // Tab jenis pesan: semua, promosi, atau informasi (dikirim ke API sebagai ?category=).
+  const [filter, setFilter] = useState<'all' | 'promo' | 'info'>('all');
+  const categoryQuery = filter === 'all' ? '' : `category=${filter}`;
 
   const fetchNotifications = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch<NotifResponse>('/api/customer/notifications');
+      const res = await apiFetch<NotifResponse>(`/api/customer/notifications${categoryQuery ? `?${categoryQuery}` : ''}`);
       setItems(res.data);
       setUnreadCount(res.unread_count);
+      setBadgeCount(res.unread_count);
       setCurrentPage(res.meta.current_page);
       setLastPage(res.meta.last_page);
     } catch (err) {
@@ -76,7 +87,7 @@ export default function NotificationsScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [categoryQuery]);
 
   // Backend paginate(30) — tanpa ini, notifikasi lebih dari 30 (90 hari
   // terakhir) tidak akan pernah bisa dilihat sama sekali karena meta
@@ -85,7 +96,7 @@ export default function NotificationsScreen() {
     if (loadingMore || loading || currentPage >= lastPage) return;
     setLoadingMore(true);
     try {
-      const res = await apiFetch<NotifResponse>(`/api/customer/notifications?page=${currentPage + 1}`);
+      const res = await apiFetch<NotifResponse>(`/api/customer/notifications?page=${currentPage + 1}${categoryQuery ? `&${categoryQuery}` : ''}`);
       setItems((prev) => [...prev, ...res.data]);
       setCurrentPage(res.meta.current_page);
       setLastPage(res.meta.last_page);
@@ -95,7 +106,7 @@ export default function NotificationsScreen() {
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, loading, currentPage, lastPage]);
+  }, [loadingMore, loading, currentPage, lastPage, categoryQuery]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
@@ -109,11 +120,17 @@ export default function NotificationsScreen() {
       setItems((prev) =>
         prev.map((n) => (n.id === item.id ? { ...n, is_read: true } : n))
       );
-      setUnreadCount((c) => Math.max(0, c - 1));
+      setUnreadCount((c) => {
+        const next = Math.max(0, c - 1);
+        setBadgeCount(next);
+        return next;
+      });
       apiFetch(`/api/customer/notifications/${item.id}/read`, { method: 'POST' }).catch(() => {});
     }
-    // Deep link kalau ada route
-    if (item.data?.route && typeof item.data.route === 'string') {
+    // Deep link kalau ada route — dicek lewat allowlist yang sama dengan push
+    // notification masuk (audit Riwayat Notifikasi 2026-09-30, defense-in-depth
+    // konsisten dengan lib/notifications.ts).
+    if (item.data?.route && isAllowedRoute(item.data.route)) {
       try {
         router.push({ pathname: item.data.route as never, params: item.data.params });
       } catch {
@@ -130,6 +147,7 @@ export default function NotificationsScreen() {
       await apiFetch('/api/customer/notifications/read-all', { method: 'POST' });
       setItems((prev) => prev.map((n) => ({ ...n, is_read: true })));
       setUnreadCount(0);
+      setBadgeCount(0);
     } catch {
       // silent
     } finally {
@@ -137,58 +155,80 @@ export default function NotificationsScreen() {
     }
   };
 
-  const renderItem = ({ item }: { item: CustomerNotification }) => {
+  // Ikon mengikuti tujuan tautan notifikasi (garansi, booking, promo, voucher, poin); lainnya memakai lonceng.
+  const iconFor = (item: CustomerNotification): IconName => {
+    const route = item.data?.route ?? '';
+    if (route.includes('warrant')) return 'shield-checkmark-outline';
+    if (route.includes('booking')) return 'calendar-outline';
+    if (route.includes('promo') || route.includes('voucher')) return 'pricetag-outline';
+    if (route.includes('point') || route.includes('reward')) return 'gift-outline';
+    if (route.includes('invoice')) return 'document-text-outline';
+    return 'notifications-outline';
+  };
+
+  const renderItem = ({ item, index }: { item: CustomerNotification; index: number }) => {
     const unread = !item.is_read;
     const hasLink = !!item.data?.route;
 
     return (
-      <Pressable
-        style={[styles.item, unread && styles.itemUnread]}
-        onPress={() => handleTap(item)}
-      >
-        <View style={[styles.dot, unread ? styles.dotActive : styles.dotRead]} />
-        <View style={styles.itemContent}>
-          <View style={styles.itemTop}>
-            <Text style={[styles.itemTitle, unread && styles.itemTitleBold]} numberOfLines={1}>
-              {item.title}
-            </Text>
-            <Text style={styles.itemTime}>{timeAgo(item.created_at)}</Text>
+      <FadeInUp index={index} enabled={index < 6}>
+        <PressableScale
+          style={[styles.item, unread && styles.itemUnread]}
+          onPress={() => handleTap(item)}
+          accessibilityRole="button"
+          accessibilityLabel={`${unread ? 'Belum dibaca. ' : ''}${item.title}`}
+        >
+          <View style={[styles.itemIcon, unread && styles.itemIconUnread]}>
+            <Ionicons name={iconFor(item)} size={20} color={unread ? '#ffffff' : colors.textMuted} />
           </View>
-          <Text style={styles.itemBody} numberOfLines={2}>{item.body}</Text>
-          {hasLink && (
-            <View style={styles.linkHint}>
-              <Ionicons name="arrow-forward-circle-outline" size={13} color={colors.accent} />
-              <Text style={styles.linkHintText}>Lihat detail</Text>
+          <View style={styles.itemContent}>
+            <View style={styles.itemTop}>
+              <Text style={[styles.itemTitle, unread && styles.itemTitleBold]} numberOfLines={1}>
+                {item.title}
+              </Text>
+              {unread ? <View style={styles.unreadDot} /> : null}
             </View>
-          )}
-        </View>
-      </Pressable>
+            <Text style={styles.itemBody} numberOfLines={2}>{item.body}</Text>
+            <View style={styles.itemFoot}>
+              <Text style={styles.itemTime}>{timeAgo(item.created_at)}</Text>
+              {hasLink ? (
+                <View style={styles.linkHint}>
+                  <Text style={styles.linkHintText}>Lihat detail</Text>
+                  <Ionicons name="arrow-forward" size={12} color={colors.accent} />
+                </View>
+              ) : null}
+            </View>
+          </View>
+        </PressableScale>
+      </FadeInUp>
     );
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-      <View style={styles.header}>
+
+      <LinearGradient pointerEvents="none" colors={[colors.accentSoft, 'transparent']} start={{ x: 1, y: 0 }} end={{ x: 0.2, y: 1 }} style={styles.glow} />
+
+      <View style={styles.topRow}>
         {router.canGoBack() ? (
-          <Pressable onPress={() => router.back()} style={styles.sideButton}>
-            <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+          <Pressable onPress={() => router.back()} style={styles.backButton} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kembali">
+            <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
           </Pressable>
-        ) : (
-          <View style={styles.sideButton} />
-        )}
-        <Text style={styles.headerTitle} numberOfLines={1}>Notifikasi</Text>
-        <View style={styles.sideButton} />
+        ) : null}
+        <Text style={styles.topTitle} numberOfLines={1}>Notifikasi</Text>
       </View>
 
       {!isLoggedIn ? (
         <View style={styles.center}>
-          <Ionicons name="lock-closed-outline" size={36} color={colors.textMuted} />
-          <Text style={styles.emptyTitle}>Login Diperlukan</Text>
-          <Text style={styles.errorText}>Masuk ke akun Anda untuk melihat notifikasi.</Text>
-          <Pressable style={styles.retryBtn} onPress={() => router.push('/auth/login' as never)}>
-            <Text style={styles.retryText}>Masuk Sekarang</Text>
-          </Pressable>
+          <View style={styles.centerIcon}>
+            <Ionicons name="lock-closed-outline" size={30} color={colors.accent} />
+          </View>
+          <Text style={styles.emptyTitle}>Masuk dulu</Text>
+          <Text style={styles.errorText}>Masuk ke akunmu untuk melihat notifikasi.</Text>
+          <PressableScale style={styles.primaryButton} onPress={() => router.push('/auth/login' as never)} accessibilityRole="button">
+            <Text style={styles.primaryButtonText}>Masuk Sekarang</Text>
+          </PressableScale>
         </View>
       ) : loading ? (
         <View style={styles.center}>
@@ -196,50 +236,73 @@ export default function NotificationsScreen() {
         </View>
       ) : error ? (
         <View style={styles.center}>
-          <Ionicons name="cloud-offline-outline" size={32} color={colors.textMuted} />
+          <View style={styles.centerIcon}>
+            <Ionicons name="cloud-offline-outline" size={30} color={colors.accent} />
+          </View>
           <Text style={styles.errorText}>{error}</Text>
-          <Pressable style={styles.retryBtn} onPress={() => fetchNotifications()}>
-            <Text style={styles.retryText}>Coba Lagi</Text>
-          </Pressable>
+          <PressableScale style={styles.primaryButton} onPress={() => fetchNotifications()} accessibilityRole="button">
+            <Text style={styles.primaryButtonText}>Coba Lagi</Text>
+          </PressableScale>
         </View>
       ) : (
         <FlatList
           data={items}
           keyExtractor={(item) => String(item.id)}
           renderItem={renderItem}
+          showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
               onRefresh={() => fetchNotifications(true)}
               tintColor={colors.accent}
+              colors={[colors.accent]}
             />
           }
           ListHeaderComponent={
-            items.length > 0 ? (
-              <View style={styles.listHeader}>
-                <Text style={styles.listHeaderCount}>
-                  {unreadCount > 0 ? `${unreadCount} belum dibaca` : 'Semua sudah dibaca'}
-                </Text>
-                {unreadCount > 0 && (
-                  <Pressable onPress={handleMarkAllRead} disabled={markingAll}>
-                    <Text style={styles.markAllText}>
-                      {markingAll ? 'Memproses...' : 'Tandai semua dibaca'}
-                    </Text>
+            <>
+              <PromoPreferenceCard />
+              <View style={styles.segmentRow}>
+                {([['all', 'Semua'], ['promo', 'Promo'], ['info', 'Informasi']] as const).map(([key, label]) => (
+                  <Pressable
+                    key={key}
+                    onPress={() => setFilter(key)}
+                    style={[styles.segmentChip, filter === key && styles.segmentChipActive]}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: filter === key }}
+                  >
+                    <Text style={[styles.segmentChipText, filter === key && styles.segmentChipTextActive]}>{label}</Text>
                   </Pressable>
-                )}
+                ))}
               </View>
-            ) : null
+              {items.length > 0 ? (
+                <View style={styles.listHeader}>
+                  <Text style={styles.listHeaderCount}>
+                    {unreadCount > 0 ? `${unreadCount} belum dibaca` : 'Semua sudah dibaca'}
+                  </Text>
+                  {unreadCount > 0 && (
+                    <PressableScale style={styles.markAllBtn} onPress={handleMarkAllRead} disabled={markingAll} accessibilityRole="button">
+                      <Ionicons name="checkmark-done-outline" size={16} color={colors.accent} />
+                      <Text style={styles.markAllText}>{markingAll ? 'Memproses...' : 'Tandai semua dibaca'}</Text>
+                    </PressableScale>
+                  )}
+                </View>
+              ) : null}
+            </>
           }
           ListEmptyComponent={
             <View style={styles.center}>
-              <Ionicons name="notifications-off-outline" size={40} color={colors.textMuted} />
-              <Text style={styles.emptyTitle}>Belum Ada Notifikasi</Text>
+              <View style={styles.centerIcon}>
+                <Ionicons name="notifications-off-outline" size={30} color={colors.accent} />
+              </View>
+              <Text style={styles.emptyTitle}>{filter === 'all' ? 'Belum ada notifikasi' : filter === 'promo' ? 'Belum ada promo' : 'Belum ada informasi'}</Text>
               <Text style={styles.emptyText}>
-                Notifikasi tentang garansi, booking, dan info produk akan muncul di sini.
+                {filter === 'all'
+                  ? 'Notifikasi tentang garansi, booking, dan info produk akan muncul di sini.'
+                  : 'Coba tab lain untuk melihat notifikasi jenis lainnya.'}
               </Text>
             </View>
           }
-          contentContainerStyle={items.length === 0 ? styles.emptyContainer : undefined}
+          contentContainerStyle={items.length === 0 ? styles.emptyContainer : styles.listContent}
           onEndReachedThreshold={0.4}
           onEndReached={loadMore}
           ListFooterComponent={
@@ -257,100 +320,51 @@ export default function NotificationsScreen() {
 
 function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.bg,
-  },
-  sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-  center: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    padding: spacing.xl,
-  },
-  errorText: { fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center' },
-  retryBtn: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.accent,
-    borderRadius: radius.pill,
-  },
-  retryText: { color: '#ffffff', fontWeight: '600', fontSize: fontSize.sm },
-  listHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  listHeaderCount: { fontSize: fontSize.xs, color: colors.textSecondary },
-  markAllText: { fontSize: fontSize.xs, color: colors.accent, fontWeight: '600' },
-  item: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    gap: spacing.sm,
-  },
-  itemUnread: { backgroundColor: colors.accentSoft },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginTop: 6,
-    flexShrink: 0,
-  },
-  dotActive: { backgroundColor: colors.accent },
-  dotRead: { backgroundColor: colors.border },
-  itemContent: { flex: 1, gap: 4 },
-  itemTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: spacing.sm,
-  },
-  itemTitle: {
-    flex: 1,
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-    fontWeight: '500',
-  },
-  itemTitleBold: { fontWeight: '700' },
-  itemTime: { fontSize: fontSize.xs, color: colors.textMuted, flexShrink: 0 },
-  itemBody: { fontSize: fontSize.sm, color: colors.textSecondary, lineHeight: 19 },
-  linkHint: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    marginTop: 2,
-  },
-  linkHintText: { fontSize: fontSize.xs, color: colors.accent, fontWeight: '600' },
-  emptyContainer: { flex: 1 },
-  footerLoading: { paddingVertical: spacing.md, alignItems: 'center' },
-  emptyTitle: {
-    fontSize: fontSize.base,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginTop: spacing.sm,
-  },
-  emptyText: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
+    container: { flex: 1, backgroundColor: colors.bg },
+    glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 280 },
+
+    topRow: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 44, paddingHorizontal: 24, paddingTop: spacing.md, paddingBottom: spacing.sm },
+    backButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceElevated },
+    topTitle: { flex: 1, fontSize: 22, fontWeight: '800', letterSpacing: -0.5, color: colors.textPrimary },
+
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 32, paddingVertical: 48 },
+    centerIcon: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+    errorText: { fontSize: 14, lineHeight: 21, color: colors.textSecondary, textAlign: 'center' },
+    primaryButton: { height: 52, paddingHorizontal: 32, borderRadius: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent, marginTop: 6 },
+    primaryButtonText: { fontSize: 15, fontWeight: '800', color: '#ffffff' },
+
+    listContent: { paddingHorizontal: 24, paddingTop: spacing.xs, paddingBottom: 56 },
+    emptyContainer: { flexGrow: 1, paddingHorizontal: 24 },
+
+    // Penyaring jenis pesan: satu pil abu muda berisi tiga segmen; yang dipilih merah.
+    segmentRow: { flexDirection: 'row', padding: 4, borderRadius: 24, backgroundColor: colors.surfaceElevated },
+    segmentChip: { flex: 1, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+    segmentChipActive: { backgroundColor: colors.accent },
+    segmentChipText: { fontSize: 14, fontWeight: '700', color: colors.textSecondary },
+    segmentChipTextActive: { color: '#ffffff', fontWeight: '800' },
+
+    listHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 4 },
+    listHeaderCount: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
+    markAllBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 34, paddingHorizontal: 14, borderRadius: 17, backgroundColor: colors.accentSoft },
+    markAllText: { fontSize: 12, fontWeight: '800', color: colors.accent },
+
+    item: { flexDirection: 'row', alignItems: 'flex-start', gap: 14, padding: 14, marginBottom: 10, borderRadius: 24, backgroundColor: colors.surfaceElevated },
+    itemUnread: { backgroundColor: colors.accentSoft },
+    itemIcon: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg, flexShrink: 0 },
+    itemIconUnread: { backgroundColor: colors.accent },
+    itemContent: { flex: 1, gap: 4 },
+    itemTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    itemTitle: { flex: 1, fontSize: 15, color: colors.textSecondary, fontWeight: '600' },
+    itemTitleBold: { color: colors.textPrimary, fontWeight: '800' },
+    unreadDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.accent },
+    itemBody: { fontSize: 13, lineHeight: 19, color: colors.textSecondary },
+    itemFoot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
+    itemTime: { fontSize: 12, color: colors.textMuted },
+    linkHint: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    linkHintText: { fontSize: 12, color: colors.accent, fontWeight: '800' },
+
+    footerLoading: { paddingVertical: spacing.md, alignItems: 'center' },
+    emptyTitle: { fontSize: 18, fontWeight: '800', color: colors.textPrimary },
+    emptyText: { fontSize: 14, lineHeight: 21, color: colors.textSecondary, textAlign: 'center' },
   });
 }

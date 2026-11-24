@@ -4,7 +4,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { PressableScale } from '@/components/ui/PressableScale';
+import { darkColors, spacing } from '@/constants/theme';
 import { useAppTheme } from '@/lib/theme-context';
 import { PinchZoomImage } from '@/components/ui/PinchZoomImage';
 
@@ -49,16 +50,14 @@ export default function SeriProdukViewScreen() {
     <SafeAreaView style={styles.container} edges={link_url ? ['top', 'left', 'right', 'bottom'] : ['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.sideButton}>
-          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+        <Pressable onPress={() => router.back()} style={styles.backButton} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kembali">
+          <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
         </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>{title || 'Seri Produk'}</Text>
-        <View style={styles.sideButton} />
+        <View style={styles.headerText}>
+          <Text style={styles.headerTitle} numberOfLines={1}>{title || 'Seri Produk'}</Text>
+          {!!subtitle && <Text style={styles.subtitle} numberOfLines={2}>{subtitle}</Text>}
+        </View>
       </View>
-
-      {!!subtitle && (
-        <Text style={styles.subtitle} numberOfLines={2}>{subtitle}</Text>
-      )}
 
       <View style={styles.imageWrap}>
         {image && <PinchZoomImage uri={image} />}
@@ -66,10 +65,10 @@ export default function SeriProdukViewScreen() {
 
       {!!link_url && (
         <View style={styles.footer}>
-          <Pressable style={styles.linkButton} onPress={handleOpenLink}>
+          <PressableScale style={styles.linkButton} onPress={handleOpenLink} accessibilityRole="button">
             <Text style={styles.linkButtonText}>Lihat Selengkapnya</Text>
             <Ionicons name="arrow-forward" size={18} color="#ffffff" />
-          </Pressable>
+          </PressableScale>
         </View>
       )}
     </SafeAreaView>
@@ -79,27 +78,14 @@ export default function SeriProdukViewScreen() {
 function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
-    header: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      paddingHorizontal: spacing.sm, paddingVertical: spacing.sm,
-      borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.bg,
-    },
-    sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-    subtitle: {
-      fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center',
-      paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.xs,
-      backgroundColor: colors.bg,
-    },
+    header: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 24, paddingTop: spacing.md, paddingBottom: spacing.md },
+    backButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceElevated },
+    headerText: { flex: 1, gap: 2 },
+    headerTitle: { fontSize: 20, lineHeight: 26, fontWeight: '800', letterSpacing: -0.4, color: colors.textPrimary },
+    subtitle: { fontSize: 13, lineHeight: 19, color: colors.textSecondary },
     imageWrap: { flex: 1, backgroundColor: colors.bg },
-    footer: {
-      padding: spacing.md, backgroundColor: colors.bg,
-      borderTopWidth: 1, borderTopColor: colors.border,
-    },
-    linkButton: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs,
-      backgroundColor: colors.accent, borderRadius: radius.pill, height: 50,
-    },
-    linkButtonText: { color: '#ffffff', fontSize: fontSize.base, fontWeight: '700' },
+    footer: { paddingHorizontal: 24, paddingTop: 12, paddingBottom: 12, backgroundColor: colors.bg },
+    linkButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 56, borderRadius: 28, backgroundColor: colors.accent },
+    linkButtonText: { color: '#ffffff', fontSize: 16, fontWeight: '800' },
   });
 }

@@ -1,19 +1,18 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Modal,
   View,
-  Text,
-  TextInput,
   FlatList,
   Pressable,
   StyleSheet,
   Platform,
-  Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { AppText as Text, AppTextInput as TextInput } from '@/components/ui/AppText';
+import { darkColors, spacing } from '@/constants/theme';
 import { useAppTheme } from '@/lib/theme-context';
+import { useKeyboardLift } from '@/lib/use-keyboard-lift';
 
 interface Props {
   visible: boolean;
@@ -25,6 +24,8 @@ interface Props {
   searchPlaceholder?: string;
 }
 
+// Tampilan didesain ulang (2026-11-24): lembar bersudut besar, judul tebal, kolom cari pil, dan baris pilihan tanpa garis dengan baris
+// terpilih berlatar lembut. Logika pencarian dan pengangkatan di atas keyboard tidak berubah.
 export function PickerModal({
   visible,
   title,
@@ -56,17 +57,8 @@ export function PickerModal({
   // tinggi keyboard manual lewat Keyboard API, dorong sheet ke atas
   // sejumlah itu, bukan mengandalkan KeyboardAvoidingView sama sekali.
   // Bug dilaporkan user 2026-08-27.
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-  useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSub = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates.height));
-    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-    };
-  }, []);
+  // Kartu diangkat tepat di atas keyboard tanpa mengangkat dua kali bila sistem sudah mengecilkan window modal (lihat lib/use-keyboard-lift.ts).
+  const { keyboardVisible, lift, onBoxLayout } = useKeyboardLift();
 
   const handleSelect = (value: string) => {
     onSelect(value);
@@ -81,14 +73,15 @@ export function PickerModal({
 
   return (
     <Modal visible={visible} animationType={Platform.OS === 'ios' ? 'slide' : 'fade'} transparent onRequestClose={handleClose}>
+      <View style={{ flex: 1 }} onLayout={onBoxLayout}>
       <Pressable style={styles.overlay} onPress={handleClose} />
       <View
         style={[
           styles.sheet,
           {
-            paddingBottom: insets.bottom + spacing.md,
-            marginBottom: keyboardHeight,
-            maxHeight: keyboardHeight ? '55%' : '75%',
+            paddingBottom: keyboardVisible ? spacing.md : insets.bottom + spacing.md,
+            marginBottom: lift,
+            maxHeight: keyboardVisible ? '55%' : '75%',
           },
         ]}
       >
@@ -98,14 +91,14 @@ export function PickerModal({
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>{title}</Text>
-          <Pressable onPress={handleClose} hitSlop={12}>
-            <Ionicons name="close" size={22} color={colors.textSecondary} />
+          <Pressable onPress={handleClose} hitSlop={12} style={styles.closeButton} accessibilityRole="button" accessibilityLabel="Tutup">
+            <Ionicons name="close" size={20} color={colors.textPrimary} />
           </Pressable>
         </View>
 
         {/* Search */}
         <View style={styles.searchWrap}>
-          <Ionicons name="search" size={16} color={colors.textMuted} style={styles.searchIcon} />
+          <Ionicons name="search-outline" size={18} color={colors.textMuted} />
           <TextInput
             style={styles.searchInput}
             placeholder={searchPlaceholder}
@@ -135,17 +128,20 @@ export function PickerModal({
               <Pressable
                 style={[styles.option, isSelected && styles.optionSelected]}
                 onPress={() => handleSelect(item)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isSelected }}
               >
                 <Text style={[styles.optionText, isSelected && styles.optionTextSelected]}>
                   {item}
                 </Text>
                 {isSelected && (
-                  <Ionicons name="checkmark" size={18} color={colors.accent} />
+                  <Ionicons name="checkmark-circle" size={20} color={colors.accent} />
                 )}
               </Pressable>
             );
           }}
         />
+      </View>
       </View>
     </Modal>
   );
@@ -153,88 +149,26 @@ export function PickerModal({
 
 function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-  },
-  sheet: {
-    backgroundColor: colors.bg,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '75%',
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    borderWidth: 1,
-    borderBottomWidth: 0,
-    borderColor: colors.border,
-  },
-  handle: {
-    width: 36,
-    height: 4,
-    backgroundColor: colors.border,
-    borderRadius: 2,
-    alignSelf: 'center',
-    marginBottom: spacing.sm,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-    marginBottom: spacing.xs,
-  },
-  title: {
-    fontSize: fontSize.base,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.sm,
-    marginBottom: spacing.sm,
-    height: 40,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  searchIcon: {
-    marginRight: spacing.xs,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-    height: 40,
-  },
-  option: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 13,
-    paddingHorizontal: spacing.xs,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  optionSelected: {
-    backgroundColor: colors.accentSoft,
-  },
-  optionText: {
-    fontSize: fontSize.sm,
-    color: colors.textPrimary,
-  },
-  optionTextSelected: {
-    fontWeight: '700',
-    color: colors.accent,
-  },
-  empty: {
-    paddingVertical: spacing.xl,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: fontSize.sm,
-    color: colors.textMuted,
-  },
+    overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' },
+    sheet: {
+      backgroundColor: colors.bg,
+      borderTopLeftRadius: 32,
+      borderTopRightRadius: 32,
+      maxHeight: '75%',
+      paddingHorizontal: 24,
+      paddingTop: 12,
+    },
+    handle: { width: 40, height: 4, backgroundColor: colors.borderStrong, borderRadius: 2, alignSelf: 'center', marginBottom: 8 },
+    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, marginBottom: 8 },
+    title: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5, color: colors.textPrimary },
+    closeButton: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceElevated },
+    searchWrap: { flexDirection: 'row', alignItems: 'center', gap: 10, height: 50, paddingHorizontal: 16, marginBottom: 10, borderRadius: 25, backgroundColor: colors.surfaceElevated },
+    searchInput: { flex: 1, fontSize: 15, color: colors.textPrimary, height: 48, padding: 0 },
+    option: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 52, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 18 },
+    optionSelected: { backgroundColor: colors.accentSoft },
+    optionText: { flex: 1, fontSize: 15, color: colors.textPrimary },
+    optionTextSelected: { fontWeight: '800', color: colors.accent },
+    empty: { paddingVertical: 40, alignItems: 'center' },
+    emptyText: { fontSize: 14, color: colors.textMuted },
   });
 }

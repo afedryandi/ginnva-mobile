@@ -1,12 +1,34 @@
 import React, { useEffect } from 'react';
-import { Stack } from 'expo-router';
+import { Stack, router, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from '@/lib/auth-context';
-import { StaffAuthProvider } from '@/lib/staff-auth-context';
+import { StaffAuthProvider, useStaffAuth } from '@/lib/staff-auth-context';
 import { ThemeProvider } from '@/lib/theme-context';
+import { FontsProvider } from '@/lib/fonts';
 import { setupNotifications } from '@/lib/notifications';
 import { checkInstallReferrerOnce } from '@/lib/referral-attribution';
+import UpgradeRequiredModal from '@/components/UpgradeRequiredModal';
+
+/**
+ * Pulihkan sesi karyawan saat aplikasi dibuka ulang (2026-11-10): token tersimpan di SecureStore dan berlaku 30 hari,
+ * tapi aplikasi selalu mendarat di beranda pelanggan, sehingga karyawan terpaksa membuka layar login lagi.
+ * Cukup sekali per pembukaan aplikasi, dan hanya bila aplikasi dibuka di beranda (bukan lewat tautan ke halaman lain).
+ */
+function StaffSessionRestorer() {
+  const { staff, isLoading } = useStaffAuth();
+  const pathname = usePathname();
+  const done = React.useRef(false);
+
+  useEffect(() => {
+    if (isLoading || done.current) return;
+    done.current = true;
+    if (!staff || pathname !== '/') return;
+    router.replace((staff.role === 'partner' ? '/partner/dashboard' : '/staff') as never);
+  }, [isLoading, staff, pathname]);
+
+  return null;
+}
 
 export default function RootLayout() {
   useEffect(() => {
@@ -33,9 +55,12 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
+      <FontsProvider>
       <AuthProvider>
       <StaffAuthProvider>
         <StatusBar style="dark" />
+        <UpgradeRequiredModal />
+        <StaffSessionRestorer />
         <Stack
           screenOptions={{
             headerShown: false,
@@ -62,6 +87,7 @@ export default function RootLayout() {
           <Stack.Screen name="partnership/index" />
           <Stack.Screen name="account/my-warranties" />
           <Stack.Screen name="account/my-bookings" />
+          <Stack.Screen name="account/vehicles" />
           <Stack.Screen name="account/my-gallery" />
           <Stack.Screen name="account/edit-profile" />
           <Stack.Screen name="news/index" />
@@ -82,10 +108,15 @@ export default function RootLayout() {
               tengah, lihat app/staff/index.tsx) — animation:'none' pindah
               ke sini dari staff/bookings/index karena landing page-nya
               sudah bukan Booking Toko lagi. */}
-          <Stack.Screen name="staff/index" options={{ animation: 'none' }} />
-          <Stack.Screen name="staff/bookings/index" />
+          <Stack.Screen name="staff/index" options={{ animation: 'fade', animationDuration: 150 }} />
+          {/* Layar tingkat atas yang dibuka lewat navigasi bawah (components/staff/StaffBottomNav): pudar singkat (150 ms), bukan geser, supaya terasa seperti tab. */}
+          <Stack.Screen name="staff/bookings/index" options={{ animation: 'fade', animationDuration: 150 }} />
+          <Stack.Screen name="staff/spks/index" options={{ animation: 'fade', animationDuration: 150 }} />
+          <Stack.Screen name="staff/attendance/index" options={{ animation: 'fade', animationDuration: 150 }} />
+          <Stack.Screen name="staff/payroll/index" options={{ animation: 'fade', animationDuration: 150 }} />
+          <Stack.Screen name="staff/profile" options={{ animation: 'fade', animationDuration: 150 }} />
           <Stack.Screen name="staff/bookings/[id]" />
-          <Stack.Screen name="partner/dashboard" options={{ animation: 'none' }} />
+          <Stack.Screen name="partner/dashboard" options={{ animation: 'fade', animationDuration: 150 }} />
           <Stack.Screen name="partner/points" />
           <Stack.Screen name="partner/redemptions" />
           <Stack.Screen name="rewards" />
@@ -93,6 +124,7 @@ export default function RootLayout() {
         </Stack>
       </StaffAuthProvider>
       </AuthProvider>
+      </FontsProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );

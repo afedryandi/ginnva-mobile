@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { FadeInUp } from '@/components/ui/FadeInUp';
+import { PressableScale } from '@/components/ui/PressableScale';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { darkColors, spacing } from '@/constants/theme';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAppTheme } from '@/lib/theme-context';
 
@@ -64,54 +67,69 @@ export default function SeriProdukListScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-      <View style={styles.header}>
+      <LinearGradient pointerEvents="none" colors={[colors.accentSoft, 'transparent']} start={{ x: 1, y: 0 }} end={{ x: 0.2, y: 1 }} style={styles.glow} />
+
+      <View style={styles.topRow}>
         {router.canGoBack() ? (
-          <Pressable onPress={() => router.back()} style={styles.sideButton}>
-            <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+          <Pressable onPress={() => router.back()} style={styles.backButton} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kembali">
+            <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
           </Pressable>
-        ) : (
-          <View style={styles.sideButton} />
-        )}
-        <Text style={styles.headerTitle} numberOfLines={1}>Seri Produk</Text>
-        <View style={styles.sideButton} />
+        ) : null}
+      </View>
+
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Seri Produk</Text>
+        <Text style={styles.headerSubtitle}>Ketuk untuk melihat gambar selengkapnya</Text>
       </View>
 
       {loading ? (
         <View style={styles.center}><ActivityIndicator color={colors.accent} /></View>
       ) : error ? (
         <View style={styles.center}>
-          <Ionicons name="cloud-offline-outline" size={32} color={colors.textMuted} />
+          <View style={styles.centerIcon}>
+            <Ionicons name="cloud-offline-outline" size={30} color={colors.accent} />
+          </View>
           <Text style={styles.errorText}>{error}</Text>
-          <Pressable style={styles.retryBtn} onPress={() => fetchData()}>
+          <PressableScale style={styles.retryBtn} onPress={() => fetchData()} accessibilityRole="button">
             <Text style={styles.retryText}>Coba Lagi</Text>
-          </Pressable>
+          </PressableScale>
         </View>
       ) : (
         <FlatList
           data={products}
           keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => fetchData(true)} tintColor={colors.accent} />
+            <RefreshControl refreshing={refreshing} onRefresh={() => fetchData(true)} tintColor={colors.accent} colors={[colors.accent]} />
           }
-          renderItem={({ item }) => (
-            <Pressable style={styles.card} onPress={() => openProduct(item)}>
-              {item.image && (
-                <Image source={{ uri: item.image }} style={styles.cardImage} contentFit="cover" />
-              )}
-              {(item.title || item.subtitle) && (
-                <View style={styles.cardInfo}>
-                  {item.title && <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>}
-                  {item.subtitle && <Text style={styles.cardSubtitle} numberOfLines={1}>{item.subtitle}</Text>}
-                </View>
-              )}
-            </Pressable>
+          renderItem={({ item, index }) => (
+            <FadeInUp index={index} enabled={index < 4}>
+              <PressableScale style={styles.card} onPress={() => openProduct(item)} accessibilityRole="button" accessibilityLabel={item.title ?? 'Seri produk'}>
+                {item.image && (
+                  <Image source={{ uri: item.image }} style={styles.cardImage} contentFit="cover" transition={300} />
+                )}
+                {(item.title || item.subtitle) && (
+                  <View style={styles.cardInfo}>
+                    <View style={styles.cardTextWrap}>
+                      {item.title && <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>}
+                      {item.subtitle && <Text style={styles.cardSubtitle} numberOfLines={1}>{item.subtitle}</Text>}
+                    </View>
+                    <View style={styles.cardArrow}>
+                      <Ionicons name="arrow-forward" size={16} color={colors.accent} />
+                    </View>
+                  </View>
+                )}
+              </PressableScale>
+            </FadeInUp>
           )}
           ListEmptyComponent={
             <View style={styles.emptyBox}>
-              <Ionicons name="images-outline" size={36} color={colors.textMuted} />
+              <View style={styles.centerIcon}>
+                <Ionicons name="images-outline" size={30} color={colors.accent} />
+              </View>
               <Text style={styles.emptyTitle}>Belum Ada Produk</Text>
             </View>
           }
@@ -124,31 +142,32 @@ export default function SeriProdukListScreen() {
 function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
-    header: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      paddingHorizontal: spacing.sm, paddingVertical: spacing.sm,
-      borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.bg,
-    },
-    sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-    center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.xl },
-    errorText: { fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center' },
-    retryBtn: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, backgroundColor: colors.accent, borderRadius: radius.pill },
-    retryText: { color: '#ffffff', fontWeight: '600', fontSize: fontSize.sm },
+    glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 280 },
 
-    listContent: { padding: spacing.md, gap: spacing.md },
-    card: {
-      width: '100%', borderRadius: radius.lg, overflow: 'hidden',
-      backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
-    },
-    // Lebar penuh, 1 kartu per baris — rasio 16:9 supaya lebih proporsional
-    // dibanding persegi (1:1) yang dipakai sebelumnya untuk grid 2 kolom.
-    cardImage: { width: '100%', aspectRatio: 16 / 9 },
-    cardInfo: { padding: spacing.sm, gap: 2 },
-    cardTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
-    cardSubtitle: { fontSize: fontSize.xs, color: colors.textSecondary },
+    topRow: { minHeight: 44, paddingHorizontal: 24, paddingTop: spacing.md },
+    backButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surfaceElevated },
 
-    emptyBox: { alignItems: 'center', padding: spacing.xl, gap: spacing.sm, marginTop: spacing.lg },
-    emptyTitle: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary },
+    header: { paddingHorizontal: 24, paddingTop: spacing.md, paddingBottom: spacing.md, gap: 6 },
+    headerTitle: { fontSize: 30, lineHeight: 38, fontWeight: '800', letterSpacing: -0.8, color: colors.textPrimary },
+    headerSubtitle: { fontSize: 14, lineHeight: 21, color: colors.textSecondary },
+
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 32, paddingBottom: 80 },
+    centerIcon: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+    errorText: { fontSize: 14, lineHeight: 21, color: colors.textSecondary, textAlign: 'center' },
+    retryBtn: { height: 52, paddingHorizontal: 32, borderRadius: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accent, marginTop: 6 },
+    retryText: { color: '#ffffff', fontSize: 15, fontWeight: '800' },
+
+    listContent: { paddingHorizontal: 24, paddingBottom: 40, gap: 16 },
+    card: { borderRadius: 28, overflow: 'hidden', backgroundColor: colors.surfaceElevated },
+    // Lebar penuh, 1 kartu per baris, rasio 16:9.
+    cardImage: { width: '100%', aspectRatio: 16 / 9, backgroundColor: colors.bg },
+    cardInfo: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14, paddingHorizontal: 18 },
+    cardTextWrap: { flex: 1, gap: 2 },
+    cardTitle: { fontSize: 16, fontWeight: '800', letterSpacing: -0.3, color: colors.textPrimary },
+    cardSubtitle: { fontSize: 13, color: colors.textSecondary },
+    cardArrow: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+
+    emptyBox: { alignItems: 'center', padding: 32, gap: 12, marginTop: 24 },
+    emptyTitle: { fontSize: 18, fontWeight: '800', color: colors.textPrimary },
   });
 }

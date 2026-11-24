@@ -13,12 +13,15 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
+import { LinearGradient } from 'expo-linear-gradient';
+import { FadeInUp } from '@/components/ui/FadeInUp';
+import { PressableScale } from '@/components/ui/PressableScale';
+import { darkColors, spacing } from '@/constants/theme';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { useAppTheme } from '@/lib/theme-context';
@@ -63,41 +66,55 @@ export default function AssistantHubScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+      <LinearGradient pointerEvents="none" colors={[colors.accentSoft, 'transparent']} start={{ x: 1, y: 0 }} end={{ x: 0.2, y: 1 }} style={styles.glow} />
+
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Asisten & Chat</Text>
-        <Text style={styles.headerSubtitle}>Pilih cara Anda ingin terhubung dengan kami</Text>
+        <Text style={styles.headerSubtitle}>Pilih cara kamu ingin terhubung dengan kami</Text>
       </View>
 
       <View style={styles.list}>
-        <Pressable style={styles.card} onPress={() => router.push('/assistant/ai' as never)}>
-          <View style={styles.iconWrap}>
-            <Ionicons name="sparkles" size={26} color={colors.accent} />
-          </View>
-          <View style={styles.cardBody}>
+        <FadeInUp index={0}>
+          <PressableScale style={styles.card} onPress={() => router.push('/assistant/ai' as never)} accessibilityRole="button">
+            <View style={styles.cardTop}>
+              <View style={[styles.iconWrap, styles.iconWrapPrimary]}>
+                <Ionicons name="sparkles-outline" size={26} color="#ffffff" />
+              </View>
+              <View style={styles.badge}>
+                <View style={styles.badgeDot} />
+                <Text style={styles.badgeText}>Online 24 jam</Text>
+              </View>
+            </View>
             <Text style={styles.cardTitle}>Asisten AI</Text>
-            <Text style={styles.cardSubtitle}>
-              Tanya produk, garansi, dan perawatan film Ginnva — dijawab otomatis 24 jam
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-        </Pressable>
+            <Text style={styles.cardSubtitle}>Tanya produk, garansi, dan perawatan film Ginnva. Dijawab otomatis kapan saja.</Text>
+            <View style={styles.cardAction}>
+              <Text style={styles.cardActionText}>Mulai bertanya</Text>
+              <Ionicons name="arrow-forward" size={16} color={colors.accent} />
+            </View>
+          </PressableScale>
+        </FadeInUp>
 
-        <Pressable style={styles.card} onPress={handleStorePress} disabled={checkingBookings}>
-          <View style={styles.iconWrap}>
-            <Ionicons name="storefront" size={26} color={colors.accent} />
-          </View>
-          <View style={styles.cardBody}>
+        <FadeInUp index={1}>
+          <PressableScale style={styles.card} onPress={handleStorePress} disabled={checkingBookings} accessibilityRole="button">
+            <View style={styles.cardTop}>
+              <View style={styles.iconWrap}>
+                <Ionicons name="chatbubbles-outline" size={26} color={colors.accent} />
+              </View>
+            </View>
             <Text style={styles.cardTitle}>Chat Booking Instalasi</Text>
-            <Text style={styles.cardSubtitle}>
-              Lihat progress instalasi & chat langsung dengan toko tempat booking Anda
-            </Text>
-          </View>
-          {checkingBookings ? (
-            <ActivityIndicator size="small" color={colors.textMuted} />
-          ) : (
-            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-          )}
-        </Pressable>
+            <Text style={styles.cardSubtitle}>Lihat progress instalasi dan chat langsung dengan toko tempat bookingmu.</Text>
+            <View style={styles.cardAction}>
+              {checkingBookings ? (
+                <ActivityIndicator size="small" color={colors.accent} />
+              ) : (
+                <>
+                  <Text style={styles.cardActionText}>Buka chat</Text>
+                  <Ionicons name="arrow-forward" size={16} color={colors.accent} />
+                </>
+              )}
+            </View>
+          </PressableScale>
+        </FadeInUp>
       </View>
     </SafeAreaView>
   );
@@ -106,30 +123,23 @@ export default function AssistantHubScreen() {
 function createStyles(colors: typeof darkColors) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
-    header: { paddingHorizontal: spacing.md, paddingTop: spacing.lg, paddingBottom: spacing.md },
-    headerTitle: { fontSize: fontSize.xxl, fontWeight: '800', color: colors.textPrimary },
-    headerSubtitle: { fontSize: fontSize.sm, color: colors.textSecondary, marginTop: 4 },
-    list: { paddingHorizontal: spacing.md, gap: spacing.md },
-    card: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.md,
-      padding: spacing.md,
-      borderRadius: radius.lg,
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
-    iconWrap: {
-      width: 52,
-      height: 52,
-      borderRadius: radius.lg,
-      backgroundColor: colors.accentSoft,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    cardBody: { flex: 1 },
-    cardTitle: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary },
-    cardSubtitle: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
+    glow: { position: 'absolute', top: 0, left: 0, right: 0, height: 300 },
+
+    header: { paddingHorizontal: 24, paddingTop: spacing.lg, paddingBottom: spacing.md, gap: 6 },
+    headerTitle: { fontSize: 30, lineHeight: 38, fontWeight: '800', letterSpacing: -0.8, color: colors.textPrimary },
+    headerSubtitle: { fontSize: 14, lineHeight: 21, color: colors.textSecondary },
+
+    list: { paddingHorizontal: 24, gap: 14 },
+    card: { gap: 8, padding: 20, borderRadius: 28, backgroundColor: colors.surfaceElevated },
+    cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+    iconWrap: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+    iconWrapPrimary: { backgroundColor: colors.accent },
+    badge: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 28, paddingHorizontal: 12, borderRadius: 14, backgroundColor: colors.successBg },
+    badgeDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success },
+    badgeText: { fontSize: 12, fontWeight: '800', color: colors.success },
+    cardTitle: { fontSize: 20, lineHeight: 26, fontWeight: '800', letterSpacing: -0.4, color: colors.textPrimary },
+    cardSubtitle: { fontSize: 14, lineHeight: 21, color: colors.textSecondary },
+    cardAction: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6, minHeight: 22 },
+    cardActionText: { fontSize: 14, fontWeight: '800', color: colors.accent },
   });
 }

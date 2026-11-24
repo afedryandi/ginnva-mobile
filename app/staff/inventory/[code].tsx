@@ -1,22 +1,29 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, ActivityIndicator, Alert, RefreshControl } from 'react-native';
+import { View, Pressable, ScrollView, StyleSheet, ActivityIndicator, Alert, RefreshControl, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { Button } from '@/components/ui/Button';
+import { AppText as Text, AppTextInput as TextInput } from '@/components/ui/AppText';
+import { PressableScale } from '@/components/ui/PressableScale';
+import { FadeInUp } from '@/components/ui/FadeInUp';
+import { SkeletonCards } from '@/components/ui/Skeleton';
 import { darkColors, fontSize, spacing, radius } from '@/constants/theme';
 import { staffApiFetch, ApiError } from '@/lib/staff-api';
 import { useAppTheme } from '@/lib/theme-context';
 import { hapticSuccess, hapticError } from '@/lib/haptics';
 import { useStaffAuth } from '@/lib/staff-auth-context';
+import SpkPicker, { SpkOption } from '@/components/staff/SpkPicker';
 
 interface Movement {
   id: number;
   type: 'in' | 'out' | 'correction';
   note: string | null;
   destination_store: { id: number; name: string } | null;
+  store?: { id: number; name: string } | null;
   user: { id: number; name: string } | null;
+  reversed_at?: string | null;
+  reversed_reason?: string | null;
   created_at: string;
 }
 
@@ -61,12 +68,6 @@ interface ShowResponse {
   movements_has_more: boolean;
 }
 
-// 1 kardus/kemasan SELALU 1 unit — tidak ada kuantitas untuk diisi.
-// "Catat Masuk"/"Catat Keluar" cuma butuh catatan opsional (mis. alasan
-// atau tujuan pengiriman). Kalau barangnya punya kode gulungan terkait
-// DAN yang scan full-access, "Catat Keluar" juga minta pilih toko tujuan
-// (staff biasa tidak perlu — otomatis dari toko akun sendiri).
-type MovementForm = { type: 'in' | 'out'; note: string; storeId: number | null } | null;
 
 function formatDateTime(dateString: string): string {
   return new Date(dateString).toLocaleDateString('id-ID', {
@@ -81,7 +82,8 @@ function formatDateTime(dateString: string): string {
 export default function InventoryItemScreen() {
   const { code } = useLocalSearchParams<{ code: string }>();
   const { theme, colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const isDark = theme === 'dark';
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
   const { staff } = useStaffAuth();
   const isFullAccess = staff?.role === 'super_admin' || staff?.role === 'direksi';
 
@@ -91,26 +93,27 @@ export default function InventoryItemScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [form, setForm] = useState<MovementForm>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
   const [markingUsed, setMarkingUsed] = useState(false);
 
   const [usageFormOpen, setUsageFormOpen] = useState(false);
   const [usageMeters, setUsageMeters] = useState('');
   const [usageNote, setUsageNote] = useState('');
+  // SPK terkait pemakaian (wajib): pilih dari daftar atau ketik nomornya. Nomor yang diketik berbeda dari SPK terpilih melepas tautan.
+  const [usageSpkNumber, setUsageSpkNumber] = useState('');
+  // Potongan sisa yang disimpan gudang setelah pemakaian ini (opsional).
+  const [offcutCount, setOffcutCount] = useState('');
+
+  // Potongan sisa tersimpan dari roll ini, untuk dipakai langsung ke SPK (tanpa memo): SPK wajib (ketik atau pilih), bagian mobil wajib.
+  const [offcuts, setOffcuts] = useState<{ id: number; location: string | null; notes: string | null }[]>([]);
+  const [usingOffcutId, setUsingOffcutId] = useState<number | null>(null);
+  const [offcutSpkNumber, setOffcutSpkNumber] = useState('');
+  const [offcutSpk, setOffcutSpk] = useState<{ id: number; spk_number: string; customer_name: string | null } | null>(null);
+  const [offcutCarPart, setOffcutCarPart] = useState('');
+  const [offcutError, setOffcutError] = useState<string | null>(null);
+  const [savingOffcut, setSavingOffcut] = useState(false);
+  const [usageSpk, setUsageSpk] = useState<{ id: number; spk_number: string; customer_name: string | null } | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [recordingUsage, setRecordingUsage] = useState(false);
-
-  // "Kumpulkan Sisa" (diminta 2026-09-14) — pindahkan sisa panjang +
-  // estimasi potongan lebar roll ini ke pool "Sisa Roll" toko+produknya,
-  // supaya bisa dipakai lagi tanpa buka roll baru. Lihat
-  // RollScrapPool::collectFrom() di backend.
-  const [collectFormOpen, setCollectFormOpen] = useState(false);
-  const [collectMeters, setCollectMeters] = useState('');
-  const [collectNote, setCollectNote] = useState('');
-  const [collectError, setCollectError] = useState<string | null>(null);
-  const [collecting, setCollecting] = useState(false);
 
   // "Muat Riwayat Lainnya" — show() cuma kirim 20 baris pertama, baris
   // tambahan yang dimuat manual ditampung terpisah lalu digabung ke
@@ -164,69 +167,10 @@ export default function InventoryItemScreen() {
   // jadi tidak pernah tercatat tujuannya. Sekarang berlaku untuk SEMUA
   // "keluar" oleh full-access, konsisten dengan backend (lihat
   // InventoryController::storeMovement()).
-  const needsStorePicker = (type: 'in' | 'out') =>
-    type === 'out' && isFullAccess;
-
-  const openForm = (type: 'in' | 'out') => {
-    setForm({ type, note: '', storeId: null });
-    setFormError(null);
-  };
-
-  const handleSubmitMovement = () => {
-    if (!form) return;
-
-    if (needsStorePicker(form.type) && !form.storeId) {
-      setFormError('Pilih toko tujuan dulu.');
-      return;
-    }
-
-    const submit = () => {
-      setSubmitting(true);
-      setFormError(null);
-
-      staffApiFetch<{ message: string; data: InventoryItemData }>(
-        `/api/staff/inventory/${encodeURIComponent(code)}/movement`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            type: form.type,
-            note: form.note.trim() || undefined,
-            store_id: needsStorePicker(form.type) ? form.storeId : undefined,
-          }),
-        }
-      )
-        .then((res) => {
-          hapticSuccess();
-          setItem(res.data);
-          setForm(null);
-          Alert.alert('Berhasil', res.message);
-        })
-        .catch((err) => {
-          hapticError();
-          setFormError(err instanceof ApiError ? err.message : 'Gagal mencatat transaksi. Periksa koneksi internet Anda.');
-        })
-        .finally(() => setSubmitting(false));
-    };
-
-    if (form.type === 'out') {
-      Alert.alert(
-        'Catat Barang Keluar',
-        'Tandai barang ini sudah keluar dari gudang?',
-        [
-          { text: 'Batal', style: 'cancel' },
-          { text: 'Catat', style: 'destructive', onPress: submit },
-        ]
-      );
-      return;
-    }
-
-    submit();
-  };
-
   const handleMarkUsed = () => {
     Alert.alert(
       'Tandai Habis',
-      'Tandai kode gulungan barang ini sebagai habis? Kode ini tidak akan muncul lagi di pilihan saat input garansi baru.',
+      'Tandai gulungan ini habis? Kodenya tidak muncul lagi di pilihan garansi baru.',
       [
         { text: 'Batal', style: 'cancel' },
         {
@@ -245,13 +189,35 @@ export default function InventoryItemScreen() {
               })
               .catch((err) => {
                 hapticError();
-                Alert.alert('Gagal', err instanceof ApiError ? err.message : 'Gagal menandai habis. Periksa koneksi internet Anda.');
+                Alert.alert('Gagal', err instanceof ApiError ? err.message : 'Gagal menandai habis. Periksa koneksi internet.');
               })
               .finally(() => setMarkingUsed(false));
           },
         },
       ]
     );
+  };
+
+  const openUsageForm = () => {
+    setUsageFormOpen(true);
+  };
+
+  const resetUsageForm = () => {
+    setUsageMeters('');
+    setUsageNote('');
+    setUsageSpkNumber('');
+    setUsageSpk(null);
+    setOffcutCount('');
+  };
+
+  const pickUsageSpk = (picked: SpkOption) => {
+    setUsageSpk({ id: picked.id, spk_number: picked.spk_number, customer_name: picked.customer_name });
+    setUsageSpkNumber(picked.spk_number);
+  };
+
+  const changeUsageSpkNumber = (text: string) => {
+    setUsageSpkNumber(text);
+    if (usageSpk && text.trim() !== usageSpk.spk_number) setUsageSpk(null);
   };
 
   const handleRecordUsage = () => {
@@ -261,496 +227,533 @@ export default function InventoryItemScreen() {
       return;
     }
 
+    if (!usageSpk && !usageSpkNumber.trim()) {
+      setUsageError('Isi nomor SPK atau pilih dari daftar.');
+      return;
+    }
+
     setRecordingUsage(true);
     setUsageError(null);
 
     staffApiFetch<{ message: string; data: InventoryItemData }>(
       `/api/staff/inventory/${encodeURIComponent(code)}/record-usage`,
-      { method: 'POST', body: JSON.stringify({ meters, note: usageNote.trim() || undefined }) }
+      { method: 'POST', body: JSON.stringify({ meters, note: usageNote.trim() || undefined, spk_id: usageSpk?.id ?? undefined, spk_number: usageSpkNumber.trim() || undefined, offcut_count: parseInt(offcutCount, 10) > 0 ? parseInt(offcutCount, 10) : undefined }) }
     )
       .then((res) => {
         hapticSuccess();
         setItem(res.data);
         setUsageFormOpen(false);
-        setUsageMeters('');
-        setUsageNote('');
+        resetUsageForm();
         Alert.alert('Berhasil', res.message);
       })
       .catch((err) => {
         hapticError();
-        setUsageError(err instanceof ApiError ? err.message : 'Gagal mencatat pemakaian. Periksa koneksi internet Anda.');
+        setUsageError(err instanceof ApiError ? err.message : 'Gagal mencatat pemakaian. Periksa koneksi internet.');
       })
       .finally(() => setRecordingUsage(false));
   };
 
-  const handleCollectScrap = () => {
-    const meters = parseFloat(collectMeters.replace(',', '.'));
-    if (!meters || meters <= 0) {
-      setCollectError('Isi jumlah meter yang valid (lebih dari 0).');
+  // Tanpa izin Ubah akun hanya membaca; gulungan yang dialokasikan ke toko lain hanya boleh digerakkan staf toko itu atau akses penuh
+  // (server menolak keduanya, ini supaya tombolnya tidak ditawarkan lalu ditolak).
+  const canModify = staff?.can_modify_ppf_wf ?? true;
+  const rollOfOtherStore = !!item?.scroll_code?.store && !isFullAccess && item.scroll_code.store.id !== staff?.store_id;
+  const actionsBlocked = !canModify || rollOfOtherStore;
+
+  const hasRoll = !!item?.scroll_code;
+
+  // Daftar potongan sisa tersimpan dimuat saat barang punya gulungan dan akun boleh mengubahnya.
+  useEffect(() => {
+    if (!hasRoll || actionsBlocked) {
+      setOffcuts([]);
+      return;
+    }
+    let cancelled = false;
+    staffApiFetch<{ data: { id: number; location: string | null; notes: string | null }[] }>(`/api/staff/inventory/${encodeURIComponent(code)}/offcuts`)
+      .then((res) => { if (!cancelled) setOffcuts(res.data ?? []); })
+      .catch(() => { if (!cancelled) setOffcuts([]); });
+    return () => { cancelled = true; };
+  }, [code, hasRoll, actionsBlocked, item?.scroll_code?.remaining_length_meters]);
+
+  const resetOffcutForm = () => {
+    setUsingOffcutId(null);
+    setOffcutSpkNumber('');
+    setOffcutSpk(null);
+    setOffcutCarPart('');
+    setOffcutError(null);
+  };
+
+  const pickOffcutSpk = (picked: SpkOption) => {
+    setOffcutSpk({ id: picked.id, spk_number: picked.spk_number, customer_name: picked.customer_name });
+    setOffcutSpkNumber(picked.spk_number);
+  };
+
+  const changeOffcutSpkNumber = (text: string) => {
+    setOffcutSpkNumber(text);
+    if (offcutSpk && text.trim() !== offcutSpk.spk_number) setOffcutSpk(null);
+  };
+
+  const handleUseOffcut = () => {
+    if (usingOffcutId === null) return;
+    if (!offcutSpk && !offcutSpkNumber.trim()) {
+      setOffcutError('Isi nomor SPK atau pilih dari daftar.');
+      return;
+    }
+    if (!offcutCarPart.trim()) {
+      setOffcutError('Isi bagian mobil yang dikerjakan.');
       return;
     }
 
-    setCollecting(true);
-    setCollectError(null);
-
-    staffApiFetch<{ message: string; data: InventoryItemData }>(
-      `/api/staff/inventory/${encodeURIComponent(code)}/collect-scrap`,
-      { method: 'POST', body: JSON.stringify({ meters, note: collectNote.trim() || undefined }) }
+    setSavingOffcut(true);
+    setOffcutError(null);
+    staffApiFetch<{ message: string; data: { id: number; location: string | null; notes: string | null }[] }>(
+      `/api/staff/inventory/${encodeURIComponent(code)}/offcuts/${usingOffcutId}/use`,
+      { method: 'POST', body: JSON.stringify({ spk_id: offcutSpk?.id ?? undefined, spk_number: offcutSpkNumber.trim() || undefined, car_part: offcutCarPart.trim() }) }
     )
       .then((res) => {
         hapticSuccess();
-        setItem(res.data);
-        setCollectFormOpen(false);
-        setCollectMeters('');
-        setCollectNote('');
+        setOffcuts(res.data ?? []);
+        resetOffcutForm();
         Alert.alert('Berhasil', res.message);
       })
       .catch((err) => {
         hapticError();
-        setCollectError(err instanceof ApiError ? err.message : 'Gagal mengumpulkan sisa. Periksa koneksi internet Anda.');
+        setOffcutError(err instanceof ApiError ? err.message : 'Gagal memakai potongan. Periksa koneksi internet.');
       })
-      .finally(() => setCollecting(false));
+      .finally(() => setSavingOffcut(false));
   };
 
+  const remainingRatio = (() => {
+    const total = item?.scroll_code?.total_length_meters;
+    if (total == null) return null;
+    const t = parseFloat(total);
+    if (!t || t <= 0) return null;
+    return Math.max(0, Math.min(1, parseFloat(item?.scroll_code?.remaining_length_meters ?? '0') / t));
+  })();
+  const neutralBg = isDark ? colors.surfaceElevated : '#efeff4';
+  const movementTone = (t: Movement['type']) =>
+    t === 'in'
+      ? { fg: colors.success, bg: colors.successBg }
+      : t === 'out'
+        ? { fg: colors.warning, bg: colors.warningBg }
+        : { fg: colors.textSecondary, bg: neutralBg };
+
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.sideButton}>
-          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
-        </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>Detail Barang</Text>
-        <Pressable onPress={() => router.replace('/staff/inventory/scan' as never)} style={styles.sideButton}>
-          <Ionicons name="scan-outline" size={22} color={colors.accent} />
-        </Pressable>
-      </View>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+        <StatusBar style={isDark ? 'light' : 'dark'} />
 
-      {loading ? (
-        <View style={styles.centerState}>
-          <ActivityIndicator color={colors.accent} />
-          <Text style={styles.centerStateText}>Memuat data barang...</Text>
-        </View>
-      ) : error || !item ? (
-        <View style={styles.centerState}>
-          <Ionicons name="alert-circle" size={32} color={colors.danger} />
-          <Text style={styles.centerStateText}>{error ?? 'Barang tidak ditemukan.'}</Text>
-          <Pressable style={styles.retryButton} onPress={() => router.replace('/staff/inventory/scan' as never)}>
-            <Text style={styles.retryText}>Scan Ulang</Text>
+        <View style={styles.header}>
+          <Pressable onPress={() => router.back()} style={styles.roundButton} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kembali">
+            <Ionicons name="chevron-back" size={22} color={colors.textSecondary} />
           </Pressable>
-        </View>
-      ) : (
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
-        >
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.codeText}>{item.code}</Text>
-                <Text style={styles.nameText}>{item.name}</Text>
-                {item.category && <Text style={styles.categoryText}>{item.category}</Text>}
-              </View>
-              <View style={[styles.statusBadge, item.status === 'in_stock' ? styles.statusInStock : styles.statusOut]}>
-                <Ionicons
-                  name={item.status === 'in_stock' ? 'checkmark-circle' : 'arrow-up-circle'}
-                  size={16}
-                  color={item.status === 'in_stock' ? colors.success : colors.danger}
-                />
-                <Text
-                  style={[
-                    styles.statusText,
-                    { color: item.status === 'in_stock' ? colors.success : colors.danger },
-                  ]}
-                >
-                  {item.status === 'in_stock' ? 'Ada Stok' : 'Sudah Keluar'}
-                </Text>
-              </View>
-            </View>
-
-            {item.scroll_code && (
-              <View style={styles.scrollCodeBox}>
-                <Ionicons name="barcode-outline" size={16} color={colors.textMuted} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.scrollCodeText}>Kode Gulungan: {item.scroll_code.code}</Text>
-                  <Text style={styles.scrollCodeMeta}>
-                    {item.scroll_code.status === 'used'
-                      ? 'Sudah ditandai habis'
-                      : item.scroll_code.store
-                        ? `Dialokasikan ke ${item.scroll_code.store.name}`
-                        : 'Belum dialokasikan ke toko'}
-                  </Text>
-                  {item.scroll_code.total_length_meters !== null && (
-                    <Text style={styles.scrollCodeMeta}>
-                      Sisa Panjang: {parseFloat(item.scroll_code.remaining_length_meters ?? '0').toLocaleString('id-ID')} / {parseFloat(item.scroll_code.total_length_meters).toLocaleString('id-ID')} m
-                    </Text>
-                  )}
-                </View>
-              </View>
-            )}
+          <View style={styles.headerText}>
+            <Text style={styles.title} numberOfLines={1}>Detail Barang</Text>
+            {item ? <Text style={styles.subtitle} numberOfLines={1}>{item.code}</Text> : null}
           </View>
+        </View>
 
-          {item.scroll_code?.total_length_meters !== null && item.scroll_code?.status !== 'used' && !form && !collectFormOpen && (
-            usageFormOpen ? (
+        {loading ? (
+          <SkeletonCards count={3} />
+        ) : error || !item ? (
+          <View style={styles.centerState}>
+            <View style={styles.emptyIconWrap}>
+              <Ionicons name="alert-circle-outline" size={34} color={colors.danger} />
+            </View>
+            <Text style={styles.emptyTitle}>Barang tidak bisa dibuka</Text>
+            <Text style={styles.centerStateText}>{error ?? 'Barang tidak ditemukan.'}</Text>
+            <PressableScale style={styles.primaryButton} onPress={() => router.replace('/staff/inventory/scan' as never)}>
+              <Text style={styles.primaryButtonText}>Scan Ulang</Text>
+            </PressableScale>
+          </View>
+        ) : (
+          <>
+            <ScrollView
+              contentContainerStyle={styles.scrollContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
+            >
+<FadeInUp style={styles.scrollInner}>
+              {/* Hero: siapa barangnya, ada stok atau sudah keluar, dan (bila ada) sisa gulungan sebagai bilah kemajuan. */}
               <View style={styles.card}>
-                <Text style={styles.formTitle}>Catat Pemakaian</Text>
-                <Text style={styles.fieldLabel}>Meter Dipakai</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="0"
-                  placeholderTextColor={colors.textMuted}
-                  value={usageMeters}
-                  onChangeText={setUsageMeters}
-                  keyboardType="decimal-pad"
-                  autoFocus
-                />
-
-                <Text style={styles.fieldLabel}>Catatan (opsional)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Mis. dipakai untuk mobil apa, no. polisi, nama customer"
-                  placeholderTextColor={colors.textMuted}
-                  value={usageNote}
-                  onChangeText={setUsageNote}
-                />
-
-                {usageError && <Text style={styles.errorText}>{usageError}</Text>}
-                <View style={styles.formActions}>
-                  <Pressable
-                    style={styles.cancelButton}
-                    onPress={() => { setUsageFormOpen(false); setUsageMeters(''); setUsageNote(''); setUsageError(null); }}
-                    disabled={recordingUsage}
-                  >
-                    <Text style={styles.cancelButtonText}>Batal</Text>
-                  </Pressable>
-                  <Button
-                    label={recordingUsage ? 'Menyimpan...' : 'Simpan'}
-                    onPress={handleRecordUsage}
-                    loading={recordingUsage}
-                    style={{ flex: 1 }}
-                  />
-                </View>
-              </View>
-            ) : (
-              <Button label="Catat Pemakaian (Meter)" variant="outline" onPress={() => setUsageFormOpen(true)} />
-            )
-          )}
-
-          {item.scroll_code && item.scroll_code.total_length_meters === null && item.scroll_code.status !== 'used' && !form && (
-            <Text style={styles.helperTextSmall}>
-              Kode gulungan ini belum punya data Total Panjang, jadi pemakaian meter belum bisa dicatat — minta admin isi lewat menu Kode Gulungan dulu.
-            </Text>
-          )}
-
-          {item.scroll_code?.status === 'allocated' && !form && !usageFormOpen && !collectFormOpen && (
-            <Button
-              label={markingUsed ? 'Memproses...' : 'Tandai Habis'}
-              variant="outline"
-              onPress={handleMarkUsed}
-              loading={markingUsed}
-            />
-          )}
-
-          {item.scroll_code && item.scroll_code.status !== 'used' && !form && !usageFormOpen && (
-            collectFormOpen ? (
-              <View style={styles.card}>
-                <Text style={styles.formTitle}>Kumpulkan Sisa</Text>
-                <Text style={styles.helperTextSmall}>
-                  Gabungkan sisa panjang + estimasi potongan lebar yang masih bisa dipakai (di luar sisa panjang) ke pool "Sisa Roll" — roll ini akan otomatis ditandai habis.
-                </Text>
-
-                <Text style={styles.fieldLabel}>Total Sisa (meter)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="0"
-                  placeholderTextColor={colors.textMuted}
-                  value={collectMeters}
-                  onChangeText={setCollectMeters}
-                  keyboardType="decimal-pad"
-                  autoFocus
-                />
-
-                <Text style={styles.fieldLabel}>Catatan (opsional)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Mis. kondisi sisa, kenapa segini banyaknya"
-                  placeholderTextColor={colors.textMuted}
-                  value={collectNote}
-                  onChangeText={setCollectNote}
-                />
-
-                {collectError && <Text style={styles.errorText}>{collectError}</Text>}
-                <View style={styles.formActions}>
-                  <Pressable
-                    style={styles.cancelButton}
-                    onPress={() => { setCollectFormOpen(false); setCollectMeters(''); setCollectNote(''); setCollectError(null); }}
-                    disabled={collecting}
-                  >
-                    <Text style={styles.cancelButtonText}>Batal</Text>
-                  </Pressable>
-                  <Button
-                    label={collecting ? 'Menyimpan...' : 'Simpan'}
-                    onPress={handleCollectScrap}
-                    loading={collecting}
-                    style={{ flex: 1 }}
-                  />
-                </View>
-              </View>
-            ) : (
-              <Button label="Kumpulkan Sisa" variant="outline" onPress={() => setCollectFormOpen(true)} />
-            )
-          )}
-
-          {form ? (
-            <View style={styles.card}>
-              <Text style={styles.formTitle}>
-                {form.type === 'in' ? 'Catat Barang Masuk' : 'Catat Barang Keluar'}
-              </Text>
-
-              {needsStorePicker(form.type) && (
-                <>
-                  <Text style={styles.fieldLabel}>Toko Tujuan</Text>
-                  <Text style={styles.helperTextSmall}>
-                    Akun Anda tidak terikat ke 1 toko tertentu, jadi pilih dulu toko tujuan barang keluar ini.
-                  </Text>
-                  <View style={styles.chipRow}>
-                    {stores.map((s) => (
-                      <Pressable
-                        key={s.id}
-                        style={[styles.chip, form.storeId === s.id && styles.chipActive]}
-                        onPress={() => setForm((f) => f && { ...f, storeId: s.id })}
-                      >
-                        <Text style={[styles.chipText, form.storeId === s.id && styles.chipTextActive]}>{s.name}</Text>
-                      </Pressable>
-                    ))}
+                <View style={styles.heroTop}>
+                  <View style={styles.codePill}>
+                    <Ionicons name="pricetag-outline" size={13} color={styles.accentText.color} />
+                    <Text style={styles.codePillText}>{item.code}</Text>
                   </View>
+                  <View style={[styles.statusBadge, item.status === 'in_stock' ? styles.statusInStock : styles.statusOut]}>
+                    <Ionicons
+                      name={item.status === 'in_stock' ? 'checkmark-circle' : 'arrow-up-circle'}
+                      size={14}
+                      color={item.status === 'in_stock' ? colors.success : colors.textSecondary}
+                    />
+                    <Text style={[styles.statusText, { color: item.status === 'in_stock' ? colors.success : colors.textSecondary }]}>
+                      {item.status === 'in_stock' ? 'Ada Stok' : 'Sudah Keluar'}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.nameText}>{item.name}</Text>
+                {item.category ? <Text style={styles.categoryText}>{item.category}</Text> : null}
+
+                {item.scroll_code ? (
+                  <View style={styles.scrollBox}>
+                    <View style={styles.scrollBoxTop}>
+                      <View style={styles.scrollIcon}>
+                        <Ionicons name="barcode-outline" size={18} color={colors.textSecondary} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.scrollCodeText}>Gulungan {item.scroll_code.code}</Text>
+                        <Text style={styles.scrollCodeMeta}>
+                          {item.scroll_code.status === 'used'
+                            ? 'Sudah ditandai habis'
+                            : item.scroll_code.store
+                              ? `Dialokasikan ke ${item.scroll_code.store.name}`
+                              : 'Belum dialokasikan ke toko'}
+                        </Text>
+                      </View>
+                    </View>
+                    {item.scroll_code.total_length_meters !== null ? (
+                      <View style={{ gap: 6 }}>
+                        <View style={styles.progressTrack}>
+                          <View style={[styles.progressFill, { width: `${Math.round((remainingRatio ?? 0) * 100)}%` }]} />
+                        </View>
+                        <Text style={styles.scrollCodeMeta}>
+                          Sisa {parseFloat(item.scroll_code.remaining_length_meters ?? '0').toLocaleString('id-ID')} dari {parseFloat(item.scroll_code.total_length_meters).toLocaleString('id-ID')} m
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+              </View>
+
+              {/* Tindakan gulungan: catat pemakaian meter dan tandai habis. */}
+              {item.scroll_code?.total_length_meters !== null && item.scroll_code?.status !== 'used' && !actionsBlocked && (
+                usageFormOpen ? (
+                  <View style={styles.card}>
+                    <Text style={styles.formTitle}>Catat Pemakaian</Text>
+                    <View style={styles.field}>
+                      <Text style={styles.fieldLabel}>Meter dipakai</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="0"
+                        placeholderTextColor={colors.textMuted}
+                        value={usageMeters}
+                        onChangeText={setUsageMeters}
+                        keyboardType="decimal-pad"
+                        autoFocus
+                      />
+                    </View>
+
+                    <View style={styles.field}>
+                      <Text style={styles.fieldLabel}>Catatan (opsional)</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Mis. dipakai untuk mobil apa, no. polisi, nama customer"
+                        placeholderTextColor={colors.textMuted}
+                        value={usageNote}
+                        onChangeText={setUsageNote}
+                      />
+                    </View>
+
+                    <View style={styles.field}>
+                      <Text style={styles.fieldLabel}>Nomor SPK</Text>
+                      <Text style={styles.helperText}>
+                        Wajib. Ketik nomornya, atau pilih dari daftar lewat tanda panah. Kalau roll ini ternyata cacat, pekerjaan yang memakainya ikut ketahuan.
+                      </Text>
+                      <SpkPicker
+                        number={usageSpkNumber}
+                        onChangeNumber={changeUsageSpkNumber}
+                        linked={usageSpk}
+                        onPick={pickUsageSpk}
+                        endpoint={`/api/staff/inventory/${encodeURIComponent(code)}/spks`}
+                        colors={colors}
+                      />
+                    </View>
+
+                    <View style={styles.field}>
+                      <Text style={styles.fieldLabel}>Potongan sisa disimpan (opsional)</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Jumlah potongan, kosongkan kalau tidak ada"
+                        placeholderTextColor={colors.textMuted}
+                        value={offcutCount}
+                        onChangeText={(v) => setOffcutCount(v.replace(/[^0-9]/g, ''))}
+                        keyboardType="number-pad"
+                        maxLength={2}
+                      />
+                    </View>
+
+                    {usageError ? <Text style={styles.errorText}>{usageError}</Text> : null}
+                    <View style={styles.formActions}>
+                      <PressableScale
+                        style={styles.cancelButton}
+                        onPress={() => { setUsageFormOpen(false); resetUsageForm(); setUsageError(null); }}
+                        disabled={recordingUsage}
+                      >
+                        <Text style={styles.cancelButtonText}>Batal</Text>
+                      </PressableScale>
+                      <PressableScale style={[styles.primaryButton, { flex: 1 }, recordingUsage && styles.disabled]} onPress={handleRecordUsage} disabled={recordingUsage}>
+                        {recordingUsage ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>Simpan</Text>}
+                      </PressableScale>
+                    </View>
+                  </View>
+                ) : (
+                  <PressableScale style={styles.secondaryButton} onPress={openUsageForm} accessibilityRole="button">
+                    <Ionicons name="cut-outline" size={20} color={colors.textPrimary} />
+                    <Text style={styles.secondaryButtonText}>Catat Pemakaian (Meter)</Text>
+                  </PressableScale>
+                )
+              )}
+
+              {offcuts.length > 0 && !usageFormOpen && !actionsBlocked ? (
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Potongan sisa tersimpan ({offcuts.length})</Text>
+                  {offcuts.map((o) => (
+                    <View key={o.id}>
+                      <View style={styles.offcutRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.offcutTitle}>Potongan #{o.id}</Text>
+                          {o.location || o.notes ? <Text style={styles.helperText} numberOfLines={2}>{[o.location, o.notes].filter(Boolean).join(' · ')}</Text> : null}
+                        </View>
+                        {usingOffcutId === o.id ? null : (
+                          <PressableScale style={styles.offcutUseButton} onPress={() => { resetOffcutForm(); setUsingOffcutId(o.id); }} accessibilityRole="button">
+                            <Text style={styles.offcutUseText}>Pakai</Text>
+                          </PressableScale>
+                        )}
+                      </View>
+
+                      {usingOffcutId === o.id ? (
+                        <View style={styles.offcutForm}>
+                          <Text style={styles.fieldLabel}>Nomor SPK</Text>
+                          <SpkPicker
+                            number={offcutSpkNumber}
+                            onChangeNumber={changeOffcutSpkNumber}
+                            linked={offcutSpk}
+                            onPick={pickOffcutSpk}
+                            endpoint={`/api/staff/inventory/${encodeURIComponent(code)}/spks`}
+                            colors={colors}
+                          />
+                          <Text style={[styles.fieldLabel, { marginTop: spacing.sm }]}>Bagian mobil yang dikerjakan</Text>
+                          <TextInput
+                            style={styles.input}
+                            placeholder="Mis. Kaca belakang, Spion kiri"
+                            placeholderTextColor={colors.textMuted}
+                            value={offcutCarPart}
+                            onChangeText={setOffcutCarPart}
+                          />
+                          {offcutError ? <Text style={styles.errorText}>{offcutError}</Text> : null}
+                          <View style={styles.formActions}>
+                            <PressableScale style={styles.cancelButton} onPress={resetOffcutForm} disabled={savingOffcut}>
+                              <Text style={styles.cancelButtonText}>Batal</Text>
+                            </PressableScale>
+                            <PressableScale style={[styles.primaryButton, { flex: 1 }, savingOffcut && styles.disabled]} onPress={handleUseOffcut} disabled={savingOffcut}>
+                              {savingOffcut ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryButtonText}>Pakai Potongan</Text>}
+                            </PressableScale>
+                          </View>
+                        </View>
+                      ) : null}
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+
+              {item.scroll_code && item.scroll_code.total_length_meters === null && item.scroll_code.status !== 'used' ? (
+                <View style={styles.noticeBox}>
+                  <Ionicons name="information-circle-outline" size={18} color={colors.textSecondary} />
+                  <Text style={styles.noticeText}>
+                    Total Panjang gulungan ini belum diisi, jadi pemakaian meter belum bisa dicatat. Minta admin mengisinya di menu Kode Gulungan.
+                  </Text>
+                </View>
+              ) : null}
+
+              {item.scroll_code?.status === 'allocated' && !usageFormOpen && !actionsBlocked ? (
+                <PressableScale style={[styles.secondaryButton, markingUsed && styles.disabled]} onPress={handleMarkUsed} disabled={markingUsed} accessibilityRole="button">
+                  {markingUsed ? <ActivityIndicator color={colors.textPrimary} /> : <Ionicons name="checkmark-done-outline" size={20} color={colors.textPrimary} />}
+                  <Text style={styles.secondaryButtonText}>{markingUsed ? 'Memproses...' : 'Tandai Habis'}</Text>
+                </PressableScale>
+              ) : null}
+
+              {/* Catat masuk/keluar dihapus dari aplikasi (2026-11-23): alokasi produk PPF/WF hanya lewat panel admin. */}
+              {actionsBlocked ? (
+                <View style={styles.noticeBox}>
+                  <Ionicons name="lock-closed-outline" size={18} color={colors.textSecondary} />
+                  <Text style={styles.noticeText}>
+                    {!canModify
+                      ? 'Akun ini hanya bisa melihat data barang. Hubungi admin kalau perlu mencatat pemakaian.'
+                      : `Gulungan ini dialokasikan ke ${item.scroll_code?.store?.name ?? 'toko lain'}. Hanya staf toko itu atau akses penuh yang bisa mencatatnya.`}
+                  </Text>
+                </View>
+              ) : null}
+
+              {item.scroll_code && item.scroll_code.usages.length > 0 ? (
+                <>
+                  <Text style={styles.sectionLabel}>Riwayat pemakaian meter</Text>
+                  {item.scroll_code.usages.map((u) => (
+                    <View key={u.id} style={styles.historyRow}>
+                      <View style={[styles.historyIcon, { backgroundColor: colors.warningBg }]}>
+                        <Ionicons name="cut-outline" size={18} color={colors.warning} />
+                      </View>
+                      <View style={{ flex: 1, gap: 2 }}>
+                        <Text style={styles.historyText}>
+                          {parseFloat(u.meters).toLocaleString('id-ID')} meter{u.user ? ` · ${u.user.name}` : ''}
+                        </Text>
+                        {u.note ? <Text style={styles.historyNote}>{u.note}</Text> : null}
+                        <Text style={styles.historyDate}>{formatDateTime(u.created_at)}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </>
+              ) : null}
+
+              <Text style={styles.sectionLabel}>Riwayat terbaru</Text>
+              {item.movements.length === 0 ? (
+                <View style={styles.noticeBox}>
+                  <Ionicons name="swap-vertical-outline" size={18} color={colors.textSecondary} />
+                  <Text style={styles.noticeText}>Belum ada riwayat keluar/masuk untuk barang ini.</Text>
+                </View>
+              ) : (
+                <>
+                  {[...item.movements, ...extraMovements].map((m) => {
+                    const tone = movementTone(m.type);
+                    return (
+                      <View key={m.id} style={[styles.historyRow, m.reversed_at ? { opacity: 0.55 } : null]}>
+                        <View style={[styles.historyIcon, { backgroundColor: tone.bg }]}>
+                          <Ionicons name={m.type === 'in' ? 'arrow-down' : m.type === 'out' ? 'arrow-up' : 'arrow-undo'} size={18} color={tone.fg} />
+                        </View>
+                        <View style={{ flex: 1, gap: 2 }}>
+                          <Text style={[styles.historyText, m.reversed_at ? { textDecorationLine: 'line-through' } : null]}>
+                            {m.type === 'in' ? 'Masuk' : m.type === 'out' ? 'Keluar' : 'Koreksi'}
+                            {m.destination_store ? ` · ke ${m.destination_store.name}` : ''}
+                            {m.user ? ` · ${m.user.name}` : ''}
+                          </Text>
+                          {m.note ? <Text style={styles.historyNote}>{m.note}</Text> : null}
+                          {m.reversed_at ? (
+                            <View style={styles.reversedPill}>
+                              <Text style={styles.reversedText}>Dibatalkan{m.reversed_reason ? `: ${m.reversed_reason}` : ''}</Text>
+                            </View>
+                          ) : null}
+                          <Text style={styles.historyDate}>{formatDateTime(m.created_at)}</Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+
+                  {hasMoreMovements ? (
+                    <PressableScale style={styles.loadMoreButton} onPress={loadMoreMovements} disabled={loadingMoreMovements}>
+                      {loadingMoreMovements ? <ActivityIndicator size="small" color={colors.accent} /> : <Text style={styles.loadMoreText}>Muat riwayat lainnya</Text>}
+                    </PressableScale>
+                  ) : null}
                 </>
               )}
+            </FadeInUp>
+</ScrollView>
 
-              <Text style={styles.fieldLabel}>Catatan (opsional)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Mis. dikirim ke toko, retur supplier, dll"
-                placeholderTextColor={colors.textMuted}
-                value={form.note}
-                onChangeText={(v) => setForm((f) => f && { ...f, note: v })}
-                autoFocus={!needsStorePicker(form.type)}
-              />
-
-              {formError && <Text style={styles.errorText}>{formError}</Text>}
-
-              <View style={styles.formActions}>
-                <Pressable style={styles.cancelButton} onPress={() => setForm(null)} disabled={submitting}>
-                  <Text style={styles.cancelButtonText}>Batal</Text>
-                </Pressable>
-                <Button
-                  label={submitting ? 'Menyimpan...' : 'Simpan'}
-                  onPress={handleSubmitMovement}
-                  loading={submitting}
-                  style={{ flex: 1 }}
-                />
-              </View>
-            </View>
-          ) : (
-            <View style={styles.actionRow}>
-              <Pressable
-                style={[styles.actionButton, styles.actionIn, item.status === 'in_stock' && styles.actionDisabled]}
-                onPress={() => openForm('in')}
-                disabled={item.status === 'in_stock'}
-              >
-                <Ionicons name="arrow-down-circle" size={22} color="#ffffff" />
-                <Text style={styles.actionButtonText}>Catat Masuk</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.actionButton, styles.actionOut, item.status === 'out' && styles.actionDisabled]}
-                onPress={() => openForm('out')}
-                disabled={item.status === 'out'}
-              >
-                <Ionicons name="arrow-up-circle" size={22} color="#ffffff" />
-                <Text style={styles.actionButtonText}>Catat Keluar</Text>
-              </Pressable>
-            </View>
-          )}
-
-          {item.scroll_code && item.scroll_code.usages.length > 0 && (
-            <>
-              <Text style={styles.historyTitle}>Riwayat Pemakaian Meter</Text>
-              {item.scroll_code.usages.map((u) => (
-                <View key={u.id} style={styles.historyRow}>
-                  <Ionicons name="cut-outline" size={20} color={colors.warning} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.historyText}>
-                      {parseFloat(u.meters).toLocaleString('id-ID')} meter
-                      {u.user ? ` — ${u.user.name}` : ''}
-                    </Text>
-                    {u.note && <Text style={styles.historyNote}>{u.note}</Text>}
-                    <Text style={styles.historyDate}>{formatDateTime(u.created_at)}</Text>
-                  </View>
-                </View>
-              ))}
-            </>
-          )}
-
-          <Text style={styles.historyTitle}>Riwayat Terbaru</Text>
-          {item.movements.length === 0 ? (
-            <Text style={styles.emptyHistoryText}>Belum ada riwayat keluar/masuk untuk barang ini.</Text>
-          ) : (
-            <>
-              {[...item.movements, ...extraMovements].map((m) => (
-                <View key={m.id} style={styles.historyRow}>
-                  <Ionicons
-                    name={m.type === 'in' ? 'arrow-down-circle' : m.type === 'out' ? 'arrow-up-circle' : 'arrow-undo-circle'}
-                    size={20}
-                    color={m.type === 'in' ? colors.success : m.type === 'out' ? colors.danger : colors.textMuted}
-                  />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.historyText}>
-                      {m.type === 'in' ? 'Masuk' : m.type === 'out' ? 'Keluar' : 'Koreksi'}
-                      {m.destination_store ? ` — ke ${m.destination_store.name}` : ''}
-                      {m.user ? ` — ${m.user.name}` : ''}
-                    </Text>
-                    {m.note && <Text style={styles.historyNote}>{m.note}</Text>}
-                    <Text style={styles.historyDate}>{formatDateTime(m.created_at)}</Text>
-                  </View>
-                </View>
-              ))}
-
-              {hasMoreMovements && (
-                <Pressable
-                  style={styles.loadMoreButton}
-                  onPress={loadMoreMovements}
-                  disabled={loadingMoreMovements}
-                >
-                  {loadingMoreMovements ? (
-                    <ActivityIndicator size="small" color={colors.accent} />
-                  ) : (
-                    <Text style={styles.loadMoreText}>Muat Riwayat Lainnya</Text>
-                  )}
-                </Pressable>
-              )}
-            </>
-          )}
-        </ScrollView>
-      )}
+          </>
+        )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-function createStyles(colors: typeof darkColors) {
+function createStyles(colors: typeof darkColors, isDark: boolean) {
+  const screenBg = isDark ? colors.bg : '#f5f5f8';
+  const card = isDark ? colors.surface : '#ffffff';
+  const chip = isDark ? colors.surfaceElevated : '#efeff4';
+  const line = isDark ? colors.border : '#e8e8ee';
+  const accentText = isDark ? '#ff6b8f' : '#cc1042';
+  const shadow = isDark
+    ? {}
+    : { shadowColor: '#14141b', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.06, shadowRadius: 20, elevation: 2 };
+
   return StyleSheet.create({
-    container: { flex: 1, backgroundColor: colors.bg },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: spacing.sm,
-      paddingVertical: spacing.sm,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-      backgroundColor: colors.bg,
-    },
-    sideButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-    headerTitle: { fontSize: fontSize.lg, fontWeight: '700', color: colors.textPrimary, flex: 1, textAlign: 'center' },
-    scrollContent: { padding: spacing.md, paddingBottom: spacing.xxl, gap: spacing.md },
-    centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.xl },
-    centerStateText: { fontSize: fontSize.sm, color: colors.textSecondary, textAlign: 'center' },
-    retryButton: {
-      marginTop: spacing.xs,
-      paddingHorizontal: spacing.lg,
-      paddingVertical: spacing.sm,
-      backgroundColor: colors.accent,
-      borderRadius: radius.pill,
-    },
-    retryText: { color: '#ffffff', fontSize: fontSize.sm, fontWeight: '600' },
-    card: {
-      backgroundColor: colors.surface,
-      borderRadius: radius.lg,
-      padding: spacing.md,
-      borderWidth: 1,
-      borderColor: colors.border,
-      gap: spacing.md,
-    },
-    cardHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
-    codeText: { fontSize: fontSize.xs, fontWeight: '700', color: colors.accent, letterSpacing: 0.5 },
-    nameText: { fontSize: fontSize.xl, fontWeight: '800', color: colors.textPrimary, marginTop: 2 },
-    categoryText: { fontSize: fontSize.sm, color: colors.textSecondary, marginTop: 2 },
-    statusBadge: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      paddingHorizontal: spacing.sm,
-      paddingVertical: 6,
-      borderRadius: radius.pill,
-    },
+    container: { flex: 1, backgroundColor: screenBg },
+    accentText: { color: accentText },
+
+    header: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm + 4, paddingHorizontal: 20, paddingTop: spacing.sm, paddingBottom: spacing.md },
+    roundButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: card, borderWidth: 1, borderColor: line },
+    roundButtonAccent: { backgroundColor: colors.accentSoft, borderColor: 'transparent' },
+    headerText: { flex: 1, gap: 2 },
+    title: { fontSize: 26, fontWeight: '800', letterSpacing: -0.8, color: colors.textPrimary },
+    subtitle: { fontSize: 12.5, fontWeight: '600', color: colors.textMuted, fontVariant: ['tabular-nums'] },
+
+    scrollContent: { paddingHorizontal: 20, paddingTop: spacing.xs, paddingBottom: spacing.xl },
+    scrollInner: { gap: spacing.md },
+    centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, paddingHorizontal: spacing.xl, paddingBottom: 60 },
+    centerStateText: { fontSize: fontSize.sm, color: colors.textMuted, textAlign: 'center', lineHeight: 22 },
+    emptyIconWrap: { width: 80, height: 80, borderRadius: 40, alignItems: 'center', justifyContent: 'center', backgroundColor: card, borderWidth: 1, borderColor: line, ...shadow },
+    emptyTitle: { fontSize: 18, fontWeight: '800', letterSpacing: -0.2, color: colors.textPrimary },
+
+    card: { padding: 18, borderRadius: 24, backgroundColor: card, borderWidth: 1, borderColor: line, gap: spacing.md, ...shadow },
+
+    heroTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    codePill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill, backgroundColor: colors.accentSoft },
+    codePillText: { fontSize: 12, fontWeight: '800', letterSpacing: 0.3, color: accentText },
+    statusBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill },
     statusInStock: { backgroundColor: colors.successBg },
-    statusOut: { backgroundColor: colors.dangerBg },
-    statusText: { fontSize: fontSize.xs, fontWeight: '700' },
-    scrollCodeBox: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.xs,
-      paddingTop: spacing.sm,
-      borderTopWidth: 1,
-      borderTopColor: colors.border,
+    // "Sudah Keluar" adalah keadaan normal, bukan galat: netral, tidak merah.
+    statusOut: { backgroundColor: chip },
+    statusText: { fontSize: 12, fontWeight: '800' },
+    nameText: { fontSize: 24, fontWeight: '800', letterSpacing: -0.7, color: colors.textPrimary },
+    categoryText: { fontSize: fontSize.sm, fontWeight: '500', color: colors.textSecondary, marginTop: -8 },
+
+    scrollBox: { padding: 14, borderRadius: 18, backgroundColor: chip, gap: spacing.sm + 2 },
+    scrollBoxTop: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm + 2 },
+    scrollIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: card },
+    scrollCodeText: { fontSize: fontSize.sm, fontWeight: '800', color: colors.textPrimary },
+    scrollCodeMeta: { fontSize: 12.5, fontWeight: '500', color: colors.textSecondary, marginTop: 1 },
+    progressTrack: { height: 8, borderRadius: 4, backgroundColor: isDark ? colors.border : '#dcdce4', overflow: 'hidden' },
+    progressFill: { height: 8, borderRadius: 4, backgroundColor: colors.accent },
+
+    secondaryButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 52, borderRadius: radius.pill, backgroundColor: card, borderWidth: 1, borderColor: line, ...shadow },
+    secondaryButtonText: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
+    primaryButton: {
+      height: 52, paddingHorizontal: spacing.xl, alignItems: 'center', justifyContent: 'center', borderRadius: radius.pill, backgroundColor: colors.accent,
+      shadowColor: colors.accent, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.22, shadowRadius: 16, elevation: 3,
     },
-    scrollCodeText: { fontSize: fontSize.sm, fontWeight: '600', color: colors.textPrimary },
-    scrollCodeMeta: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
-    actionRow: { flexDirection: 'row', gap: spacing.sm },
-    actionButton: {
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: spacing.xs,
-      height: 52,
-      borderRadius: radius.pill,
-    },
-    actionIn: { backgroundColor: colors.success },
-    actionOut: { backgroundColor: colors.danger },
-    actionDisabled: { opacity: 0.4 },
-    actionButtonText: { color: '#ffffff', fontSize: fontSize.sm, fontWeight: '700' },
-    formTitle: { fontSize: fontSize.base, fontWeight: '700', color: colors.textPrimary },
-    fieldLabel: { fontSize: fontSize.xs, color: colors.textMuted, marginBottom: spacing.xs },
-    helperTextSmall: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: -4, marginBottom: spacing.xs },
-    chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginBottom: spacing.sm },
-    chip: {
-      paddingHorizontal: spacing.sm,
-      paddingVertical: 6,
-      borderRadius: radius.pill,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.surface,
-    },
-    chipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-    chipText: { fontSize: fontSize.xs, fontWeight: '600', color: colors.textSecondary },
+    primaryButtonText: { fontSize: fontSize.sm, fontWeight: '700', color: '#ffffff' },
+    disabled: { opacity: 0.6 },
+    disabledStrong: { opacity: 0.35 },
+
+    offcutRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.sm },
+    offcutTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary },
+    offcutUseButton: { paddingHorizontal: 16, height: 36, borderRadius: radius.pill, backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
+    offcutUseText: { fontSize: fontSize.sm, fontWeight: '700', color: colors.accent },
+    offcutForm: { paddingBottom: spacing.sm },
+    noticeBox: { flexDirection: 'row', gap: spacing.sm, padding: 14, borderRadius: 18, backgroundColor: chip },
+    noticeText: { flex: 1, fontSize: 12.5, fontWeight: '500', lineHeight: 19, color: colors.textSecondary },
+
+    formTitle: { fontSize: 20, fontWeight: '800', letterSpacing: -0.4, color: colors.textPrimary },
+    field: { gap: 6 },
+    fieldLabel: { fontSize: 13, fontWeight: '700', color: colors.textMuted },
+    helperText: { fontSize: 12, fontWeight: '500', color: colors.textMuted, lineHeight: 18 },
+    input: { minHeight: 50, borderRadius: 18, paddingHorizontal: 16, fontSize: fontSize.sm, color: colors.textPrimary, backgroundColor: chip },
+    errorText: { fontSize: fontSize.sm, fontWeight: '600', color: colors.danger },
+    formActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+    cancelButton: { paddingHorizontal: spacing.lg, height: 52, alignItems: 'center', justifyContent: 'center' },
+    cancelButtonText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '700' },
+
+    chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    chip: { height: 38, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center', borderRadius: radius.pill, backgroundColor: chip },
+    chipActive: { backgroundColor: colors.accent },
+    chipText: { fontSize: 13, fontWeight: '700', color: colors.textSecondary },
     chipTextActive: { color: '#ffffff' },
-    input: {
-      height: 48,
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: radius.md,
-      paddingHorizontal: spacing.md,
-      fontSize: fontSize.sm,
-      color: colors.textPrimary,
-    },
-    errorText: { fontSize: fontSize.sm, color: colors.danger, marginTop: spacing.sm },
-    formActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
-    cancelButton: { paddingHorizontal: spacing.lg, alignItems: 'center', justifyContent: 'center' },
-    cancelButtonText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
-    historyTitle: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textPrimary, marginTop: spacing.sm },
-    emptyHistoryText: { fontSize: fontSize.sm, color: colors.textMuted },
-    loadMoreButton: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.sm, marginTop: spacing.xs },
-    loadMoreText: { fontSize: fontSize.sm, fontWeight: '600', color: colors.accent },
-    historyRow: {
-      flexDirection: 'row',
-      gap: spacing.sm,
-      backgroundColor: colors.surface,
-      borderRadius: radius.md,
-      padding: spacing.sm,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
-    historyText: { fontSize: fontSize.sm, fontWeight: '600', color: colors.textPrimary },
-    historyNote: { fontSize: fontSize.xs, color: colors.textSecondary, marginTop: 2 },
-    historyDate: { fontSize: fontSize.xs, color: colors.textMuted, marginTop: 2 },
+
+
+    sectionLabel: { fontSize: 13, fontWeight: '700', letterSpacing: 0.2, color: colors.textMuted, marginTop: spacing.sm, marginLeft: 4 },
+    historyRow: { flexDirection: 'row', gap: spacing.sm + 4, padding: 14, borderRadius: 22, backgroundColor: card, borderWidth: 1, borderColor: line, ...shadow },
+    historyIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+    historyText: { fontSize: fontSize.sm, fontWeight: '800', letterSpacing: -0.1, color: colors.textPrimary },
+    historyNote: { fontSize: 12.5, color: colors.textSecondary, lineHeight: 18 },
+    historyDate: { fontSize: 11.5, fontWeight: '500', color: colors.textMuted, fontVariant: ['tabular-nums'] },
+    reversedPill: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill, backgroundColor: colors.dangerBg },
+    reversedText: { fontSize: 12, fontWeight: '700', color: colors.danger },
+    loadMoreButton: { alignItems: 'center', justifyContent: 'center', height: 48, borderRadius: radius.pill, backgroundColor: chip },
+    loadMoreText: { fontSize: fontSize.sm, fontWeight: '700', color: colors.textSecondary },
+
+    footer: { flexDirection: 'row', gap: spacing.sm + 2, paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12, backgroundColor: screenBg, borderTopWidth: 1, borderTopColor: line },
+    actionButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 56, borderRadius: radius.pill },
+    actionIn: { backgroundColor: colors.success, shadowColor: colors.success, shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.25, shadowRadius: 18, elevation: 4 },
+    actionOut: { backgroundColor: colors.accent, shadowColor: colors.accent, shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.28, shadowRadius: 18, elevation: 4 },
+    actionButtonText: { color: '#ffffff', fontSize: fontSize.sm, fontWeight: '700' },
   });
 }
