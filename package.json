@@ -37,7 +37,7 @@
     "expo-video": "~3.0.16",
     "react": "19.1.0",
     "react-dom": "^19.1.0",
-    "react-native": "0.81.5",
+    "react-native": "0.88.1",
     "react-native-play-install-referrer": "^1.1.9",
     "react-native-qrcode-svg": "^6.3.21",
     "react-native-render-html": "^6.3.4",
